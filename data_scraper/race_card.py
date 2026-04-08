@@ -7,124 +7,133 @@ import time
 import random
 
 class RaceCardScraper:
-    """終極強韌版：使用 Session 維持 Cookie 並支援自動場地切換"""
+    """絕地求生版：不看 HTML 標籤，直接掃描文字流特徵"""
 
     def __init__(self):
         self.base_url = "https://racing.hkjc.com/racing/information/Chinese/Racing/RaceCard.aspx"
         self.session = requests.Session()
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
             "Accept-Language": "zh-HK,zh;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Referer": "https://racing.hkjc.com/racing/information/Chinese/Racing/RaceCard.aspx"
+            "Referer": "https://racing.hkjc.com/"
         }
 
     def get_all_races_info(self, race_date: str = "") -> List[Dict[str, Any]]:
-        """獲取當日所有場次，自動探測場地"""
+        """獲取當日所有場次，自動識別場地"""
         date_str = race_date if race_date else datetime.now().strftime("%Y/%m/%d")
-        
-        # 1. 建立 Session 並存取首頁以獲取 Cookie
         print(f">>> 正在初始化連線: {date_str}")
+        
         try:
-            init_url = f"{self.base_url}?RaceDate={date_str}&RaceNo=1"
-            resp = self.session.get(init_url, headers=self.headers, timeout=15)
-            
-            # 2. 探測場次數量
+            # 先嘗試獲取第一場以獲取 Cookie 和場次清單
+            resp = self.session.get(f"{self.base_url}?RaceDate={date_str}&RaceNo=1", headers=self.headers, timeout=15)
             soup = BeautifulSoup(resp.text, 'lxml')
-            race_tabs = soup.select(".race_tab_active, .race_tab_inactive, a[href*='RaceNo=']")
+            
+            # 獲取場次數量
             race_nos = set()
-            for tab in race_tabs:
-                m = re.search(r'RaceNo=(\d+)', str(tab))
+            for a in soup.select("a[href*='RaceNo=']"):
+                m = re.search(r'RaceNo=(\d+)', a.get('href', ''))
                 if m: race_nos.add(int(m.group(1)))
             
-            race_count = max(race_nos) if race_nos else 1
-            print(f">>> 偵測到 {race_count} 場賽事，開始解析數據...")
+            race_count = max(race_nos) if race_nos else 9
+            print(f">>> 偵測到 {race_count} 場賽事，開始提取數據...")
 
             races = []
             for i in range(1, race_count + 1):
-                race_url = f"{self.base_url}?RaceDate={date_str}&RaceNo={i}"
-                print(f">>> 正在同步第 {i} 場...")
-                race_info = self.scrape_single_race_html(race_url, i)
+                url = f"{self.base_url}?RaceDate={date_str}&RaceNo={i}"
+                print(f">>> 正在抓取第 {i} 場...")
+                race_info = self.scrape_by_feature(url, i)
                 if race_info and race_info.get("entries"):
                     races.append(race_info)
                 time.sleep(random.uniform(1, 2))
             
             return races
         except Exception as e:
-            print(f">>> [錯誤] 抓取流程中斷: {e}")
+            print(f">>> [錯誤] 連線異常: {e}")
             return []
 
-    def scrape_single_race_html(self, url: str, race_no: int) -> Dict[str, Any]:
-        """精確解析 HTML 表格"""
+    def scrape_by_feature(self, url: str, race_no: int) -> Dict[str, Any]:
+        """特徵解析法：直接從文字流提取數據"""
         try:
             resp = self.session.get(url, headers=self.headers, timeout=10)
+            # 使用 BeautifulSoup 清理出純文字流
             soup = BeautifulSoup(resp.text, 'lxml')
             
-            # 1. 解析 Header (對應截圖紅框)
+            # 1. 識別場地、班次、路程
             full_text = soup.get_text(separator=' ', strip=True)
             venue = "HV" if "跑馬地" in full_text else "ST"
             
-            race_class = "未知"; distance = 0; going = "好地"
-            # 班次
-            class_match = re.search(r"(第[一二三四五]班|公開賽)", full_text)
-            if class_match: race_class = class_match.group(1)
-            # 路程
-            dist_match = re.search(r"(\d{4})米", full_text)
-            if dist_match: distance = int(dist_match.group(1))
-            # 場況
-            going_match = re.search(r"(好地|黏地|濕地|快地)", full_text)
-            if going_match: going = going_match.group(1)
-
             race_data = {
                 "race_no": race_no, "venue": venue, 
-                "race_class": race_class, "distance": distance, "going": going,
+                "race_class": "未知", "distance": 0, "going": "好地",
                 "entries": []
             }
-
-            # 2. 解析表格
-            table = soup.select_one("table.table_border_hide")
-            if not table:
-                for t in soup.find_all("table"):
-                    if "馬名" in t.get_text():
-                        table = t
-                        break
             
-            if not table: return {}
+            # 提取班次路程
+            class_m = re.search(r"(第[一二三四五]班|公開賽)", full_text)
+            if class_m: race_data["race_class"] = class_m.group(1)
+            dist_m = re.search(r"(\d{4})米", full_text)
+            if dist_m: race_data["distance"] = int(dist_m.group(1))
+            going_m = re.search(r"(好地|黏地|濕地|快地)", full_text)
+            if going_m: race_data["going"] = going_m.group(1)
 
-            rows = table.find_all("tr")
-            processed_codes = set()
+            # 2. 暴力掃描馬匹行
+            # 我們找尋包含馬匹編號 (字母+3位數字) 的行
+            rows = soup.find_all("tr")
             for row in rows:
-                tds = row.find_all("td")
-                if len(tds) < 10: continue
-                
-                link = row.find("a", href=re.compile(r"HorseId="))
-                if not link: continue
-                
-                code_match = re.search(r"HorseId=([A-Z]\d{3})", link.get('href', ''), re.I)
+                # 將整行轉為以 | 分割的文字，這能極大程度保留欄位感
+                line = row.get_text(separator='|', strip=True)
+                code_match = re.search(r"([A-Z]\d{3})", line)
                 if not code_match: continue
-                horse_code = code_match.group(1)
                 
-                if horse_code in processed_codes: continue
-                processed_codes.add(horse_code)
+                horse_code = code_match.group(1)
+                parts = line.split('|')
+                if len(parts) < 8: continue
                 
                 try:
+                    # 這是馬會排位表的「物理規律」
+                    # [0]是馬號, [2]或[3]是馬名, 緊接編號, 接著負磅, 騎師, 檔位, 練馬師, 評分
                     entry = {
-                        "horse_no": int(re.sub(r'\D', '', tds[0].text.strip())) if tds[0].text.strip().isdigit() else 0,
+                        "horse_no": 0,
                         "horse_code": horse_code,
-                        "horse_name": re.sub(r"[\(\（].*?[\)\）]", "", link.get_text(strip=True)).strip(),
-                        "actual_weight": int(re.sub(r'\D', '', tds[4].text.strip())) if tds[4].text.strip() else 0,
-                        "jockey": tds[5].get_text(strip=True),
-                        "draw": int(re.sub(r'\D', '', tds[6].text.strip())) if tds[6].text.strip() else 0,
-                        "trainer": tds[7].get_text(strip=True),
-                        "rating": int(re.sub(r'\D', '', tds[8].text.strip())) if tds[8].text.strip() else 0
+                        "horse_name": "未知",
+                        "jockey": "未知",
+                        "trainer": "未知",
+                        "draw": 0,
+                        "actual_weight": 0,
+                        "rating": 0
                     }
-                    entry["jockey"] = re.sub(r"\(.*?\)", "", entry["jockey"]).strip()
-                    race_data["entries"].append(entry)
+                    
+                    # 遍歷分割出的片段，根據特徵填入
+                    nums = []
+                    for p in parts:
+                        p = p.strip()
+                        if p.isdigit(): nums.append(int(p))
+                        # 識別馬名 (非數字、非編號、長度 2-4)
+                        if not entry["horse_name"] != "未知" and 2 <= len(p) <= 4 and not any(c.isdigit() for c in p):
+                            entry["horse_name"] = p
+                    
+                    # 從數字池中按邏輯提取
+                    if nums:
+                        entry["horse_no"] = nums[0]
+                        for n in nums:
+                            if 100 <= n <= 145: entry["actual_weight"] = n
+                            elif 1 <= n <= 14 and entry["draw"] == 0 and n != entry["horse_no"]: entry["draw"] = n
+                            elif 20 <= n <= 135 and entry["rating"] == 0: entry["rating"] = n
+                    
+                    # 提取騎師與練馬師 (通常在特定欄位附近)
+                    # 這裡做一個保險：取馬名之後的兩個純文字片段
+                    names = [p for p in parts if 2 <= len(p) <= 4 and not any(c.isdigit() for c in p) and p != entry["horse_name"]]
+                    if len(names) >= 2:
+                        entry["jockey"] = names[0]
+                        entry["trainer"] = names[1]
+
+                    if entry["horse_code"]:
+                        race_data["entries"].append(entry)
                 except:
                     continue
             
             if race_data["entries"]:
-                print(f"    - 成功抓取 {len(race_data['entries'])} 匹馬")
+                print(f"    - 成功提取 {len(race_data['entries'])} 匹馬")
             return race_data
         except:
             return {}
