@@ -57,16 +57,42 @@ class RaceCardScraper:
         return races
 
     def scrape_single_race_brute_force(self, url: str, race_no: int, venue: str) -> Dict[str, Any]:
-        """暴力解析：不論表格結構，直接搜尋馬匹編號特徵"""
+        """暴力解析：包含 Header 班次、路程、場況"""
         try:
             resp = self.session.get(url, headers=self.headers, timeout=10)
             html = resp.text
-            
-            race_data = {"race_no": race_no, "venue": venue, "entries": []}
-            
-            # 終極正則：匹配 [馬名] [編號] [騎師] [練馬師] [負磅] [檔位]
-            # 我們先找出所有的馬匹編號 (如 G368)，再根據它所在的行進行分割
             soup = BeautifulSoup(html, 'lxml')
+            
+            # 1. 抓取 Header 資訊 (對應截圖紅框)
+            # 尋找包含「班」、「米」、「地」的文字區塊
+            header_text = soup.get_text(separator=' ', strip=True)
+            
+            race_class = "未知"
+            distance = 0
+            going = "好地"
+            
+            # 提取班次 (如: 第五班, 第一班)
+            class_match = re.search(r"(第[一二三四五]班|公開賽|條件限制賽)", header_text)
+            if class_match: race_class = class_match.group(1)
+            
+            # 提取路程 (如: 1200米)
+            dist_match = re.search(r"(\d{4})米", header_text)
+            if dist_match: distance = int(dist_match.group(1))
+            
+            # 提取場地狀況 (如: 好地, 黏地, 濕地)
+            going_match = re.search(r"(好地|黏地|好至黏地|好至快地|濕地)", header_text)
+            if going_match: going = going_match.group(1)
+
+            race_data = {
+                "race_no": race_no, 
+                "venue": venue, 
+                "race_class": race_class,
+                "distance": distance,
+                "going": going,
+                "entries": []
+            }
+            
+            processed_codes = set()
             rows = soup.find_all("tr")
             
             processed_codes = set()

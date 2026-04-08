@@ -46,9 +46,16 @@ async def run_daily_scraper():
         for race_info in races_info:
             race_date = datetime.now()
             venue = race_info.get("venue", "ST")
-            race = repo.create_race(race_date, venue, race_info["race_no"])
+            race = repo.create_race(
+                race_date, 
+                venue, 
+                race_info["race_no"],
+                race_class=race_info.get("race_class", ""),
+                distance=race_info.get("distance", 0),
+                going=race_info.get("going", "")
+            )
             
-            print(f">>> 正在同步場次 {race.race_no} ({venue}) 的馬匹數據...")
+            print(f">>> 正在同步場次 {race.race_no} ({venue} | {race.distance}m | {race.going}) 的馬匹數據...")
             for entry_data in race_info["entries"]:
                 horse = repo.get_or_create_horse(entry_data["horse_code"], entry_data["horse_name"])
                 jockey = repo.get_or_create_jockey(entry_data["jockey"])
