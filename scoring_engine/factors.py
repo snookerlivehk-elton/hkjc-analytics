@@ -109,11 +109,15 @@ class FactorCalculator:
         display = pd.Series(["無數據"] * len(self.df), index=self.df.index)
         return raw_scores, display
 
-    # 15. 近期狀態 (Recent Form - Last 6 Runs) - 真實邏輯：計算過去 6 場的平均名次
+    # 15. 近期狀態 (Recent Form - Last 6 Runs) - 真實邏輯：加權計算過去 6 場的平均名次
     def _calculate_recent_form(self):
         from database.models import HorseHistory, Horse
         scores = []
         displays = []
+        
+        # 定義權重：越近的比賽權重越高 (最近 1 場權重 6，最遠權重 1)
+        # 如果只有 3 場，權重則是 3, 2, 1
+        
         for _, row in self.df.iterrows():
             # 查詢該馬匹最近 6 場往績
             history = self.session.query(HorseHistory)\
@@ -127,20 +131,30 @@ class FactorCalculator:
                 displays.append("無往績紀錄")
                 continue
             
-            # 計算平均名次 (名次越小，分數越高)
+            # 過濾出有效名次 (>0)，忽略退出等異常紀錄
             ranks = [h.rank for h in history if h.rank > 0]
             if not ranks:
                 scores.append(5.0)
                 displays.append("近期無有效名次")
                 continue
             
-            avg_rank = sum(ranks) / len(ranks)
-            # 轉換為 0-10 分：1名 10分, 14名 0分
-            score = max(0, min(10, (14 - avg_rank) * 0.75))
+            # 加權平均計算
+            n = len(ranks)
+            weights = list(range(n, 0, -1)) # e.g. [6, 5, 4, 3, 2, 1]
+            total_weight = sum(weights)
+            
+            weighted_sum = sum(r * w for r, w in zip(ranks, weights))
+            weighted_avg_rank = weighted_sum / total_weight
+            
+            # 轉換為 0-10 分：
+            # 假設最差名次是 14 名。加權平均 1 名 = 10分，加權平均 14 名 = 0分
+            # 公式: (14 - avg_rank) / 13 * 10
+            score = max(0, min(10, (14 - weighted_avg_rank) / 13 * 10))
             scores.append(score)
             
-            recent_str = "/".join(str(r) for r in ranks[:6])
-            displays.append(f"近仗: {recent_str} (均 {avg_rank:.1f})")
+            # 組合顯示字串
+            recent_str = "-".join(str(r) for r in ranks)
+            displays.append(f"近仗: {recent_str} (加權均名次 {weighted_avg_rank:.1f})")
             
         return pd.Series(scores, index=self.df.index), pd.Series(displays, index=self.df.index)
 
