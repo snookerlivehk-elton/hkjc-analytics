@@ -75,9 +75,15 @@ async def run_daily_scraper():
                         trainer_id=trainer.id,
                         horse_no=entry_data["horse_no"],
                         draw=entry_data["draw"],
-                        actual_weight=entry_data["actual_weight"]
+                        actual_weight=entry_data["actual_weight"],
+                        rating=entry_data["rating"] # 存入評分
                     )
                     session.add(entry)
+                    session.flush()
+                
+                # 同步賠率 (如果有)
+                if entry_data.get("win_odds"):
+                    repo.update_odds(entry.id, entry_data["win_odds"], 0.0, "Live")
             
             session.commit()
             print(f">>> 場次 {race.race_no} 數據同步完成，執行計分中...")
