@@ -130,7 +130,7 @@ def clear_database(session):
         return False
 
 def load_races(session: Session):
-    """載入所有可選賽事"""
+    """載入所有可選賽事 (日期由新到舊排序)"""
     return session.query(Race).order_by(Race.race_date.desc(), Race.race_no.asc()).all()
 
 def get_db_status(session: Session):
