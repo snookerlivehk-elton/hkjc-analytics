@@ -17,6 +17,10 @@ from utils.logger import logger
 
 async def run_daily_scraper():
     """執行每日自動抓取流程"""
+    # 確保資料庫表結構已建立
+    from database.connection import init_db
+    init_db()
+    
     session = get_session()
     repo = RacingRepository(session)
     
