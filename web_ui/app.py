@@ -33,20 +33,14 @@ import subprocess
 os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "/app/playwright_browsers"
 
 def trigger_scraper():
-    """使用 Popen 實現實時日誌串流輸出"""
+    """使用 Popen 實現實時日誌串流輸出 (穩定版)"""
     st.markdown("### 🚀 爬蟲執行進度")
     log_placeholder = st.empty() 
     full_log = ""
     
     try:
         env = os.environ.copy()
-        
-        # 啟動前檢查瀏覽器是否已安裝在指定目錄
-        if not os.path.exists(os.environ["PLAYWRIGHT_BROWSERS_PATH"]):
-            st.info("首次執行，正在初始化雲端瀏覽器環境...")
-            subprocess.run(["python3", "-m", "playwright", "install", "chromium"], env=env)
-
-        # 使用 Popen 開啟進程
+        # 直接執行，不再檢查 Playwright
         process = subprocess.Popen(
             ["python3", "scripts/run_scraper.py"],
             stdout=subprocess.PIPE,

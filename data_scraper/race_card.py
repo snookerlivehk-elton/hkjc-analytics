@@ -1,123 +1,102 @@
 import re
-import asyncio
-from typing import List, Dict, Any
+import requests
 from bs4 import BeautifulSoup
-from data_scraper.base import BaseScraper
+from typing import List, Dict, Any
 from utils.logger import logger
 
-class RaceCardScraper(BaseScraper):
-    """抓取排位表 (今日賽事)"""
+class RaceCardScraper:
+    """純 Requests 版抓取器：不依賴瀏覽器，保證雲端穩定度"""
 
     def __init__(self):
-        super().__init__()
         self.base_url = "https://racing.hkjc.com/racing/information/Chinese/Racing/RaceCard.aspx"
+        self.headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept-Language": "zh-HK,zh;q=0.9,en-US;q=0.8,en;q=0.7"
+        }
 
-    async def get_all_races_info(self, race_date: str = "") -> List[Dict[str, Any]]:
-        """獲取當日所有場次的基礎資訊與排位"""
+    def get_all_races_info(self, race_date: str = "") -> List[Dict[str, Any]]:
+        """獲取當日所有場次"""
         races = []
-        # 直接從第 1 場開始探測，避免首頁加載問題
-        base_probe_url = f"{self.base_url}?RaceNo=1"
-        if race_date: base_probe_url += f"&RaceDate={race_date}"
+        url = self.base_url
+        if race_date: url += f"?RaceDate={race_date}"
         
-        if not await self.navigate_with_retry(base_probe_url):
+        try:
+            print(f">>> 正在連線至 HKJC: {url}")
+            resp = requests.get(url, headers=self.headers, timeout=15)
+            if resp.status_code != 200:
+                print(f">>> [失敗] HKJC 伺服器回傳錯誤代碼: {resp.status_code}")
+                return []
+            
+            soup = BeautifulSoup(resp.text, 'lxml')
+            
+            # 獲取場次數量
+            race_nos = set()
+            for a in soup.select("a[href*='RaceNo=']"):
+                m = re.search(r'RaceNo=(\d+)', a.get('href', ''))
+                if m: race_nos.add(int(m.group(1)))
+            
+            race_count = max(race_nos) if race_nos else 1
+            print(f">>> 偵測到 {race_count} 場賽事，開始解析...")
+
+            for i in range(1, race_count + 1):
+                race_url = f"{self.base_url}?RaceNo={i}"
+                if race_date: race_url += f"&RaceDate={race_date}"
+                
+                print(f">>> 正在抓取第 {i} 場...")
+                race_info = self.scrape_single_race(race_url, i)
+                if race_info and race_info.get("entries"):
+                    races.append(race_info)
+            
+            return races
+        except Exception as e:
+            print(f">>> [錯誤] 網路連線異常: {e}")
             return []
 
-        # 獲取場次數量 (從頁面上的場次按鈕)
-        html = await self.get_content()
-        soup = BeautifulSoup(html, 'lxml')
-        race_tabs = soup.select("a[href*='RaceNo=']")
-        race_nos = set()
-        for tab in race_tabs:
-            m = re.search(r'RaceNo=(\d+)', tab.get('href', ''))
-            if m: race_nos.add(int(m.group(1)))
-        
-        race_count = max(race_nos) if race_nos else 9 # 預設探測 9 場
-        logger.info(f"偵測到 {race_count} 場賽事")
-
-        for i in range(1, race_count + 1):
-            race_url = f"{self.base_url}?RaceNo={i}"
-            if race_date: race_url += f"&RaceDate={race_date}"
+    def scrape_single_race(self, url: str, race_no: int) -> Dict[str, Any]:
+        """抓取單場馬匹 (純文字流解析)"""
+        try:
+            resp = requests.get(url, headers=self.headers, timeout=10)
+            soup = BeautifulSoup(resp.text, 'lxml')
             
-            logger.info(f"正在處理第 {i} 場...")
-            race_info = await self.scrape_single_race(race_url, i)
-            if race_info and race_info.get("entries"):
-                races.append(race_info)
-        
-        return races
-
-    async def scrape_single_race(self, url: str, race_no: int) -> Dict[str, Any]:
-        """抓取單場賽事的排位與基礎資訊 (終極強韌掃描版)"""
-        if not await self.navigate_with_retry(url):
+            # 識別場地
+            page_text = soup.get_text(separator=' ', strip=True)
+            venue = "HV" if "跑馬地" in page_text or "Happy Valley" in page_text else "ST"
+            
+            race_data = {"race_no": race_no, "venue": venue, "entries": []}
+            
+            # 終極解析：直接掃描全網頁文字中的馬匹編號 (如 G368)
+            all_text = soup.get_text(separator='|', strip=True)
+            matches = list(re.finditer(r"([^\d\s\|]{2,6})\s*[\(\（]([A-Z]\d{3})[\)\）]", all_text))
+            
+            processed_codes = set()
+            for match in matches:
+                horse_name = match.group(1).strip()
+                horse_code = match.group(2).strip()
+                
+                if horse_code in processed_codes: continue
+                processed_codes.add(horse_code)
+                
+                entry = {
+                    "horse_no": len(race_data["entries"]) + 1,
+                    "horse_code": horse_code,
+                    "horse_name": horse_name,
+                    "jockey": "自動抓取", "trainer": "自動抓取", "draw": 0, "actual_weight": 0
+                }
+                
+                # 簡單提取附近數字
+                context = all_text[max(0, match.start()-20) : min(len(all_text), match.end()+100)]
+                nums = re.findall(r"\d+", context)
+                for n in nums:
+                    v = int(n)
+                    if 100 <= v <= 145: entry["actual_weight"] = v
+                    elif 1 <= v <= 14 and entry["draw"] == 0: entry["draw"] = v
+                
+                race_data["entries"].append(entry)
+            
+            print(f"    - 第 {race_no} 場: 成功抓取 {len(race_data['entries'])} 匹馬")
+            return race_data
+        except:
             return {}
 
-        # 增加等待，給予充分時間載入
-        await asyncio.sleep(5)
-        html = await self.page.content() # 改用直接從 page 拿內容
-        soup = BeautifulSoup(html, 'lxml')
-        
-        # 1. 識別場地與日期
-        page_text = soup.get_text(separator=' ', strip=True)
-        venue = "HV" if "跑馬地" in page_text or "Happy Valley" in page_text else "ST"
-        
-        race_data = {"race_no": race_no, "venue": venue, "entries": []}
-
-        # 2. 終極解析：直接找所有包含 (A123) 格式的文字塊
-        # 這種格式在 HKJC 是唯一的，不論頁面怎麼變都不會錯
-        all_text = soup.get_text(separator='|', strip=True)
-        # 匹配如 (G368), （H123）
-        matches = list(re.finditer(r"([^\d\s\|]{2,6})\s*[\(\（]([A-Z]\d{3})[\)\）]", all_text))
-        
-        processed_codes = set()
-        for i, match in enumerate(matches):
-            horse_name = match.group(1).strip()
-            horse_code = match.group(2).strip()
-            
-            if horse_code in processed_codes: continue
-            processed_codes.add(horse_code)
-            
-            entry = {
-                "horse_no": 0, # 稍後識別
-                "horse_code": horse_code,
-                "horse_name": horse_name,
-                "jockey": "載入中",
-                "trainer": "載入中",
-                "draw": 0,
-                "actual_weight": 0
-            }
-            
-            # 獲取上下文進行數字提取
-            context = all_text[max(0, match.start()-60) : min(len(all_text), match.end()+120)]
-            nums = re.findall(r"\d+", context)
-            
-            # 識別馬號 (通常在上下文的最前面)
-            if nums: entry["horse_no"] = int(nums[0])
-            
-            # 識別負磅 (100-140) 與 檔位 (1-14)
-            for n in nums:
-                v = int(n)
-                if 100 <= v <= 145: entry["actual_weight"] = v
-                elif 1 <= v <= 14 and entry["draw"] == 0 and v != entry["horse_no"]: 
-                    entry["draw"] = v
-            
-            race_data["entries"].append(entry)
-
-        if not race_data["entries"]:
-            # 備用方案：尋找所有馬匹連結
-            links = soup.find_all("a", href=re.compile(r"HorseId=[A-Z]\d{3}"))
-            for link in links:
-                c_match = re.search(r"HorseId=([A-Z]\d{3})", link.get('href', ''))
-                if c_match:
-                    c = c_match.group(1)
-                    if c not in processed_codes:
-                        name = re.sub(r"[\(\（].*?[\)\）]", "", link.get_text(strip=True)).strip()
-                        race_data["entries"].append({
-                            "horse_no": len(race_data["entries"]) + 1,
-                            "horse_code": c,
-                            "horse_name": name,
-                            "jockey": "未知", "trainer": "未知", "draw": 0, "actual_weight": 0
-                        })
-                        processed_codes.add(c)
-
-        if race_data["entries"]:
-            logger.info(f"場次 {race_no}: 成功抓取 {len(race_data['entries'])} 匹馬")
-        return race_data
+    def start(self): pass # 保持接口相容
+    def stop(self): pass  # 保持接口相容

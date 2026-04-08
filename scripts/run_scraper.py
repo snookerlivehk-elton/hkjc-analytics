@@ -31,19 +31,16 @@ async def run_daily_scraper():
     repo = RacingRepository(session)
     engine = ScoringEngine(session)
     
-    print(">>> 正在啟動 Playwright 爬蟲...")
-    race_card_scraper = RaceCardScraper()
+    print(">>> 正在啟動穩定版爬蟲 (Requests Mode)...")
+    scraper = RaceCardScraper()
     
     try:
-        await race_card_scraper.start()
-        print(">>> 瀏覽器啟動成功，正在連線至 HKJC 排位表...")
-        races_info = await race_card_scraper.get_all_races_info()
+        races_info = scraper.get_all_races_info()
         
         if not races_info:
             print(">>> [嘗試重試] 初始抓取無資料，正在嘗試備用路徑...")
-            # 嘗試一個帶日期的 URL
             today_str = datetime.now().strftime("%Y/%m/%d")
-            races_info = await race_card_scraper.get_all_races_info(race_date=today_str)
+            races_info = scraper.get_all_races_info(race_date=today_str)
 
         if not races_info:
             print(">>> [失敗] 仍無法抓取賽事資訊。這通常是因為 HKJC 封鎖了伺服器 IP 或今日確實無賽事。")
