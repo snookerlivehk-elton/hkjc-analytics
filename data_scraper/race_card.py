@@ -60,7 +60,7 @@ class RaceCardScraper:
             race_data = {"race_no": race_no, "venue": venue, "entries": []}
             
             # 定位表格
-            table = soup.select_one("table.table_border_hide")
+            table = soup.select_one("table.starter")
             if not table: return {}
 
             rows = table.find_all("tr")
@@ -69,28 +69,28 @@ class RaceCardScraper:
                 if len(tds) < 10: continue
                 
                 # 提取馬名與編號
-                link = row.find("a", href=re.compile(r"HorseId="))
+                link = row.find("a", href=re.compile(r"horseid=", re.I))
                 if not link: continue
                 
                 raw_name = link.get_text(strip=True)
                 # --- 過濾機制：如果馬名包含「馬名」或「Horse」，代表這是表頭，跳過 ---
                 if "馬名" in raw_name or "Horse" in raw_name: continue
                 
-                code_match = re.search(r"HorseId=([A-Z]\d{3})", link.get('href', ''), re.I)
+                code_match = re.search(r"([A-Z]\d{3})", link.get('href', ''), re.I)
                 if not code_match: continue
-                horse_code = code_match.group(1)
+                horse_code = code_match.group(1).upper()
                 
                 try:
-                    # 精確對位：[0]馬號 [4]負磅 [5]騎師 [6]檔位 [7]練馬師 [8]評分
+                    # 精確對位：[0]馬號 [3]馬名 [4]烙號 [5]負磅 [6]騎師 [8]檔位 [9]練馬師 [11]評分
                     entry = {
                         "horse_no": int(re.sub(r'\D', '', tds[0].text.strip())) if tds[0].text.strip().isdigit() else 0,
                         "horse_code": horse_code,
                         "horse_name": re.sub(r"[\(\（].*?[\)\）]", "", raw_name).strip(),
-                        "actual_weight": int(re.sub(r'\D', '', tds[4].text.strip())) if tds[4].text.strip().isdigit() else 0,
-                        "jockey": tds[5].get_text(strip=True),
-                        "draw": int(re.sub(r'\D', '', tds[6].text.strip())) if tds[6].text.strip().isdigit() else 0,
-                        "trainer": tds[7].get_text(strip=True),
-                        "rating": int(re.sub(r'\D', '', tds[8].text.strip())) if tds[8].text.strip().isdigit() else 0
+                        "actual_weight": int(re.sub(r'\D', '', tds[5].text.strip())) if tds[5].text.strip().isdigit() else 0,
+                        "jockey": tds[6].get_text(strip=True),
+                        "draw": int(re.sub(r'\D', '', tds[8].text.strip())) if tds[8].text.strip().isdigit() else 0,
+                        "trainer": tds[9].get_text(strip=True),
+                        "rating": int(re.sub(r'\D', '', tds[11].text.strip())) if tds[11].text.strip().isdigit() else 0
                     }
                     
                     # 再次校驗：如果騎師名字裡有數字或奇怪符號，標記為未知
