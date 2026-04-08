@@ -61,25 +61,18 @@ async def backfill_horse_history():
                 ).first()
 
                 if not existing:
-                    # 處理場地與距離 (例如: ST / 草地 / "C" / 1200)
-                    venue_parts = rec["venue"].split("/")
-                    dist = 0
-                    if venue_parts:
-                        dist_match = re.search(r"\d+", venue_parts[-1])
-                        if dist_match: dist = int(dist_match.group())
-
                     hh = HorseHistory(
                         horse_id=horse.id,
                         race_date=race_date,
-                        venue=rec["venue"],
-                        race_class=rec["class"],
-                        distance=dist,
-                        rank=int(rec["rank"]) if rec["rank"].isdigit() else 0,
-                        draw=int(rec["draw"]) if rec["draw"].isdigit() else 0,
-                        jockey_name=rec["jockey"],
-                        weight=int(re.sub(r'\D', '', rec["weight"])) if re.sub(r'\D', '', rec["weight"]) else 0,
-                        rating=int(re.sub(r'\D', '', rec["rating"])) if re.sub(r'\D', '', rec["rating"]) else 0,
-                        finish_time=rec["finish_time"]
+                        venue=rec.get("venue", ""),
+                        race_class=rec.get("race_class", ""),
+                        distance=int(rec.get("distance", 0)) if str(rec.get("distance", "")).isdigit() else 0,
+                        rank=int(str(rec.get("rank", "0"))) if str(rec.get("rank", "")).isdigit() else 0,
+                        draw=int(str(rec.get("draw", "0"))) if str(rec.get("draw", "")).isdigit() else 0,
+                        jockey_name=rec.get("jockey", ""),
+                        weight=int(re.sub(r'\D', '', str(rec.get("weight", "")))) if re.sub(r'\D', '', str(rec.get("weight", ""))) else 0,
+                        rating=int(re.sub(r'\D', '', str(rec.get("rating", "")))) if re.sub(r'\D', '', str(rec.get("rating", ""))) else 0,
+                        finish_time=rec.get("finish_time", "")
                     )
                     session.add(hh)
                     new_count += 1

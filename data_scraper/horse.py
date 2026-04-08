@@ -21,7 +21,7 @@ class HorseScraper:
         # 策略：嘗試不同的年份前綴，直到成功訪問
         # 例如 K 開頭通常是 2024，J 開頭是 2023
         current_year = datetime.now().year
-        prefixes = [f"HK_{current_year}_", f"HK_{current_year-1}_", f"HK_{current_year-2}_", ""]
+        prefixes = [f"HK_{year}_" for year in range(current_year, current_year - 10, -1)] + [""]
         
         for prefix in prefixes:
             full_id = f"{prefix}{horse_code}"
@@ -49,12 +49,15 @@ class HorseScraper:
                             "rank": tds[1].get_text(strip=True),
                             "date": tds[2].get_text(strip=True),
                             "venue": tds[3].get_text(strip=True),
-                            "class": tds[4].get_text(strip=True),
+                            "distance": tds[4].get_text(strip=True),
+                            "condition": tds[5].get_text(strip=True),
+                            "race_class": tds[6].get_text(strip=True),
                             "draw": tds[7].get_text(strip=True),
-                            "jockey": tds[6].get_text(strip=True),
-                            "weight": tds[5].get_text(strip=True),
                             "rating": tds[8].get_text(strip=True),
-                            "finish_time": tds[9].get_text(strip=True)
+                            "trainer": tds[9].get_text(strip=True),
+                            "jockey": tds[10].get_text(strip=True),
+                            "weight": tds[13].get_text(strip=True),
+                            "finish_time": tds[15].get_text(strip=True) if len(tds) > 15 else ""
                         }
                         history.append(record)
                     except:
