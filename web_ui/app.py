@@ -71,10 +71,21 @@ def create_dummy_data(session):
     """生成一筆測試用的賽事數據 (先清理舊的避免重複)"""
     try:
         from scripts.test_phase3 import setup_dummy_race
-        from database.models import Race
-        # 先刪除同樣 ID 的測試賽事
-        session.query(Race).filter_by(race_id="TEST-RACE-1").delete()
-        session.commit()
+        from database.models import Race, RaceEntry, ScoringFactor, RaceResult
+        
+        # 找到測試賽事
+        test_race = session.query(Race).filter_by(race_id="TEST-RACE-1").first()
+        if test_race:
+            # 1. 找到所有關聯的 Entry IDs
+            entry_ids = [e.id for e in test_race.entries]
+            if entry_ids:
+                # 2. 由下而上刪除所有關聯數據
+                session.query(ScoringFactor).filter(ScoringFactor.entry_id.in_(entry_ids)).delete(synchronize_session=False)
+                session.query(RaceResult).filter(RaceResult.entry_id.in_(entry_ids)).delete(synchronize_session=False)
+                session.query(RaceEntry).filter(RaceEntry.race_id == test_race.id).delete(synchronize_session=False)
+            # 3. 刪除賽事本身
+            session.delete(test_race)
+            session.commit()
         
         race_id = setup_dummy_race()
         engine = ScoringEngine(session)
