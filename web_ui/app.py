@@ -13,7 +13,9 @@ if root_path not in sys.path:
 from database.connection import get_session, init_db
 from database.models import Race, RaceEntry, ScoringFactor, ScoringWeight, Horse
 from scoring_engine.core import ScoringEngine
+from scripts.run_scraper import run_daily_scraper
 from utils.logger import logger
+import asyncio
 
 # 設定頁面配置
 st.set_page_config(page_title="HKJC 每場賽事獨立計分排名系統", layout="wide")
@@ -23,6 +25,17 @@ init_db()
 
 def get_db():
     return get_session()
+
+async def trigger_scraper():
+    """在 UI 中執行的抓取任務"""
+    with st.spinner("正在抓取 HKJC 最新數據，請稍候..."):
+        try:
+            await run_daily_scraper()
+            st.success("數據抓取完成！")
+            return True
+        except Exception as e:
+            st.error(f"抓取失敗: {e}")
+            return False
 
 def load_races(session: Session):
     """載入所有可選賽事"""
@@ -64,7 +77,15 @@ def main():
     session = get_db()
     
     # Sidebar: 賽事選擇
-    st.sidebar.header("🔍 賽事選擇")
+    st.sidebar.header("🔍 賽事管理")
+    
+    # 新增：抓取/更新按鈕
+    if st.sidebar.button("🔄 更新當日賽事數據"):
+        if asyncio.run(trigger_scraper()):
+            st.rerun()
+    
+    st.sidebar.markdown("---")
+    
     races = load_races(session)
     if not races:
         st.sidebar.warning("資料庫中尚無賽事數據，請先執行抓取與計分。")
