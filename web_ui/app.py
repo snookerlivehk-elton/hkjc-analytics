@@ -91,7 +91,7 @@ def main():
     
     # 新增：抓取/更新按鈕
     if st.sidebar.button("🔄 更新當日賽事數據"):
-        if asyncio.run(trigger_scraper()):
+        if trigger_scraper():
             st.rerun()
     
     st.sidebar.markdown("---")
