@@ -49,7 +49,8 @@ async def run_daily_scraper():
         print(f">>> 成功發現 {len(races_info)} 場賽事，開始同步數據...")
         for race_info in races_info:
             race_date = datetime.now()
-            venue = "HV" if "跑馬地" in race_info.get("header", "") else "ST"
+            # 從爬蟲回傳的數據中獲取場地，若無則預設 ST
+            venue = race_info.get("venue", "ST")
             race = repo.create_race(race_date, venue, race_info["race_no"])
             
             print(f">>> 正在同步場次 {race.race_no} ({venue}) 的馬匹數據...")
