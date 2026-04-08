@@ -51,6 +51,18 @@ def load_races(session: Session):
     """載入所有可選賽事"""
     return session.query(Race).order_by(Race.race_date.desc(), Race.race_no.asc()).all()
 
+def get_db_status(session: Session):
+    """獲取資料庫各表統計數量"""
+    from database.models import Race, Horse, Jockey, Trainer, RaceEntry, ScoringFactor
+    return {
+        "賽事 (Races)": session.query(Race).count(),
+        "馬匹 (Horses)": session.query(Horse).count(),
+        "騎師 (Jockeys)": session.query(Jockey).count(),
+        "練馬師 (Trainers)": session.query(Trainer).count(),
+        "排位紀錄 (Entries)": session.query(RaceEntry).count(),
+        "計分結果 (Scores)": session.query(ScoringFactor).count()
+    }
+
 def load_scoring_data(session: Session, race_id: int):
     """載入特定賽事的計分結果數據"""
     entries = session.query(RaceEntry).filter_by(race_id=race_id).all()
@@ -95,6 +107,13 @@ def main():
             st.rerun()
     
     st.sidebar.markdown("---")
+    
+    # 顯示資料庫狀態
+    st.sidebar.subheader("📊 數據取得狀態")
+    status = get_db_status(session)
+    for label, count in status.items():
+        color = "green" if count > 0 else "red"
+        st.sidebar.markdown(f"{label}: :{color}[{count}]")
     
     races = load_races(session)
     if not races:
