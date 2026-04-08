@@ -14,12 +14,12 @@ aptPkgs = [
     "libpango-1.0-0",
     "libcairo2",
     "libasound2",
-    "libxshmfence1",
-    "libnss3"
+    "libxshmfence1"
 ]
 
 [phases.build]
 cmds = [
     "pip install -r requirements.txt", 
+    "playwright install chromium",
     "python scripts/init_db.py"
 ]
