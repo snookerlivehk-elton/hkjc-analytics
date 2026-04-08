@@ -46,69 +46,72 @@ class RaceCardScraper(BaseScraper):
         return races
 
     async def scrape_single_race(self, url: str, race_no: int) -> Dict[str, Any]:
-        """抓取單場賽事的排位與基礎資訊 (終極強韌版)"""
+        """抓取單場賽事的排位與基礎資訊 (雙模穩定版)"""
         if not await self.navigate_with_retry(url):
             return {}
 
-        # 1. 等待核心表格 ID 出現 (HKJC 專屬 ID)
-        try:
-            await self.page.wait_for_selector("#racecardlist, .table_border_hide", timeout=20000)
-        except:
-            logger.warning(f"場次 {race_no}: 等待表格 ID 超時，嘗試強制解析")
+        # 增加等待，確保 AJAX 載入
+        await asyncio.sleep(5)
         
-        await asyncio.sleep(3) # 給 AJAX 更多時間
         html = await self.get_content()
         soup = BeautifulSoup(html, 'lxml')
         
-        # 2. 解析場地 (從頁面文字找)
+        # 1. 識別場地
         page_text = soup.get_text()
-        header_text = f"第 {race_no} 場"
-        header_tag = soup.select_one(".font_white.f_left.f_fs14.f_fwb")
-        if header_tag: header_text = header_tag.text.strip()
+        venue = "HV" if "跑馬地" in page_text or "Happy Valley" in page_text else "ST"
         
-        race_data = {"race_no": race_no, "header": header_text, "entries": []}
+        race_data = {"race_no": race_no, "venue": venue, "entries": []}
 
-        # 3. 解析馬匹行 (尋找包含 HorseId 的連結)
-        # 這是最穩定的方法，因為馬名連結一定包含 HorseId
-        rows = soup.select("tr")
-        for row in rows:
-            link = row.select_one("a[href*='HorseId=']")
-            if not link: continue
-            
+        # 2. 核心解析邏輯：尋找所有馬匹連結 (不論是在排位表還是賽果頁)
+        # 尋找 HorseId= 或 Horse.aspx?HorseId=
+        links = soup.find_all("a", href=re.compile(r"HorseId=[A-Z]\d{3}"))
+        
+        processed_codes = set()
+        for link in links:
             href = link.get('href', '')
             code_match = re.search(r"HorseId=([A-Z]\d{3})", href)
             if not code_match: continue
             
             horse_code = code_match.group(1)
-            # 避免重複
-            if any(e["horse_code"] == horse_code for e in race_data["entries"]): continue
+            if horse_code in processed_codes: continue
+            processed_codes.add(horse_code)
             
             try:
-                tds = row.select("td")
-                td_texts = [td.get_text(strip=True) for td in tds]
+                row = link.find_parent("tr")
+                if not row: continue
                 
-                # 智能提取馬名 (過濾括號)
+                tds = row.find_all("td")
+                td_texts = [td.get_text(separator=' ', strip=True) for td in tds]
+                
+                # 智能提取：馬號 (通常是行內的第一個數字)
+                horse_no_match = re.search(r"^\d+", " ".join(td_texts[:2]))
+                horse_no = int(horse_no_match.group(0)) if horse_no_match else 0
+                
+                # 提取純中文馬名
                 horse_name = re.sub(r"[\(\（].*?[\)\）]", "", link.get_text(strip=True)).strip()
-                
-                # 提取馬號 (通常在第一或二格)
-                horse_no_raw = re.sub(r'\D', '', td_texts[0])
-                horse_no = int(horse_no_raw) if horse_no_raw else 0
                 
                 entry = {
                     "horse_no": horse_no,
                     "horse_code": horse_code,
                     "horse_name": horse_name,
-                    "jockey": td_texts[3] if len(td_texts) > 3 else "",
-                    "trainer": td_texts[4] if len(td_texts) > 4 else "",
+                    "jockey": "",
+                    "trainer": "",
                     "draw": 0,
                     "actual_weight": 0
                 }
                 
-                # 從所有 TD 中掃描負磅(100-140) 與 檔位(1-14)
-                for txt in td_texts:
+                # 遍歷 TD 識別負磅、檔位、騎練
+                for i, txt in enumerate(td_texts):
+                    # 識別騎師/練馬師 (長度 2-4 的純文字)
+                    if not entry["jockey"] and 2 <= len(txt) <= 4 and i > 1:
+                        entry["jockey"] = txt
+                    elif not entry["trainer"] and 2 <= len(txt) <= 4 and i > 2:
+                        entry["trainer"] = txt
+                    
+                    # 識別數字
                     if txt.isdigit():
                         v = int(txt)
-                        if 100 <= v <= 145: entry["actual_weight"] = v
+                        if 100 <= v <= 140: entry["actual_weight"] = v
                         elif 1 <= v <= 14 and entry["draw"] == 0 and v != horse_no: entry["draw"] = v
                 
                 race_data["entries"].append(entry)
@@ -117,7 +120,4 @@ class RaceCardScraper(BaseScraper):
 
         if race_data["entries"]:
             logger.info(f"場次 {race_no}: 成功抓取 {len(race_data['entries'])} 匹馬")
-        else:
-            logger.error(f"場次 {race_no}: 抓取失敗，HTML 長度: {len(html)}")
-            
         return race_data

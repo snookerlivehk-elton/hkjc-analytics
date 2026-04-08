@@ -77,6 +77,7 @@ def create_dummy_data(session):
         st.sidebar.success("✅ 測試數據生成成功！")
         return True
     except Exception as e:
+        session.rollback() # 發生錯誤時必須回滾，防止頁面報錯
         st.sidebar.error(f"❌ 生成失敗: {e}")
         return False
 
@@ -95,6 +96,7 @@ def clear_database(session):
         st.sidebar.success("✅ 資料庫已清空！")
         return True
     except Exception as e:
+        session.rollback()
         st.sidebar.error(f"❌ 清空失敗: {e}")
         return False
 
