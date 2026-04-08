@@ -13,6 +13,16 @@ from database.connection import get_session, init_db
 from database.models import Horse, HorseHistory
 from data_scraper.horse import HorseScraper
 from utils.logger import logger
+import re
+
+def parse_hkjc_date(date_str: str):
+    """支援多種 HKJC 日期格式 (DD/MM/YY 或 DD/MM/YYYY)"""
+    for fmt in ("%d/%m/%y", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(date_str, fmt)
+        except ValueError:
+            continue
+    return None
 
 async def backfill_horse_history():
     """為資料庫中的馬匹回填歷史往績"""
@@ -22,7 +32,7 @@ async def backfill_horse_history():
     session = get_session()
     scraper = HorseScraper()
     
-    # 1. 獲取所有需要回填的馬匹 (可以根據需求篩選，例如今日有賽事的馬)
+    # 1. 獲取所有需要回填的馬匹
     horses = session.query(Horse).all()
     print(f">>> 發現 {len(horses)} 匹馬需要處理...")
 
@@ -40,12 +50,9 @@ async def backfill_horse_history():
         new_count = 0
         for rec in history_records:
             try:
-                # 簡單去重：根據馬匹 ID 和日期
-                race_date = None
-                try:
-                    # 格式可能是 DD/MM/YYYY
-                    race_date = datetime.strptime(rec["date"], "%d/%m/%Y")
-                except:
+                # 使用強化版的日期解析
+                race_date = parse_hkjc_date(rec["date"])
+                if not race_date:
                     continue
 
                 existing = session.query(HorseHistory).filter_by(
@@ -54,16 +61,10 @@ async def backfill_horse_history():
                 ).first()
 
                 if not existing:
-                    # 解析數字欄位
-                    def safe_int(val):
-                        try: return int(re.sub(r'\D', '', val))
-                        except: return 0
-                    
-                    import re
                     # 處理場地與距離 (例如: ST / 草地 / "C" / 1200)
                     venue_parts = rec["venue"].split("/")
                     dist = 0
-                    if len(venue_parts) > 0:
+                    if venue_parts:
                         dist_match = re.search(r"\d+", venue_parts[-1])
                         if dist_match: dist = int(dist_match.group())
 
@@ -76,8 +77,8 @@ async def backfill_horse_history():
                         rank=int(rec["rank"]) if rec["rank"].isdigit() else 0,
                         draw=int(rec["draw"]) if rec["draw"].isdigit() else 0,
                         jockey_name=rec["jockey"],
-                        weight=int(rec["weight"]) if rec["weight"].isdigit() else 0,
-                        rating=int(rec["rating"]) if rec["rating"].isdigit() else 0,
+                        weight=int(re.sub(r'\D', '', rec["weight"])) if re.sub(r'\D', '', rec["weight"]) else 0,
+                        rating=int(re.sub(r'\D', '', rec["rating"])) if re.sub(r'\D', '', rec["rating"]) else 0,
                         finish_time=rec["finish_time"]
                     )
                     session.add(hh)
