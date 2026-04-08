@@ -80,6 +80,24 @@ def create_dummy_data(session):
         st.sidebar.error(f"❌ 生成失敗: {e}")
         return False
 
+def clear_database(session):
+    """清空資料庫中所有賽事相關數據"""
+    try:
+        from database.models import Race, Horse, Jockey, Trainer, RaceEntry, ScoringFactor, RaceResult
+        session.query(ScoringFactor).delete()
+        session.query(RaceResult).delete()
+        session.query(RaceEntry).delete()
+        session.query(Race).delete()
+        session.query(Horse).delete()
+        session.query(Jockey).delete()
+        session.query(Trainer).delete()
+        session.commit()
+        st.sidebar.success("✅ 資料庫已清空！")
+        return True
+    except Exception as e:
+        st.sidebar.error(f"❌ 清空失敗: {e}")
+        return False
+
 def load_races(session: Session):
     """載入所有可選賽事"""
     return session.query(Race).order_by(Race.race_date.desc(), Race.race_no.asc()).all()
@@ -144,6 +162,10 @@ def main():
     
     if st.sidebar.button("📝 生成一筆測試數據"):
         if create_dummy_data(session):
+            st.rerun()
+    
+    if st.sidebar.button("🗑️ 清空資料庫數據"):
+        if clear_database(session):
             st.rerun()
     
     st.sidebar.markdown("---")
