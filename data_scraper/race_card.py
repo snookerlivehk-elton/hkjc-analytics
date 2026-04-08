@@ -56,65 +56,58 @@ class RaceCardScraper:
             return []
 
     def scrape_single_race(self, url: str, race_no: int, venue: str) -> Dict[str, Any]:
-        """抓取單場馬匹 (連結屬性解析法)"""
+        """抓取單場馬匹 (暴力掃描偵錯版)"""
+        import time
+        import random
         try:
-            resp = requests.get(url, headers=self.headers, timeout=10)
-            soup = BeautifulSoup(resp.text, 'lxml')
+            # 加入隨機延遲，防止被封鎖
+            time.sleep(random.uniform(1.5, 3.5))
+            
+            resp = requests.get(url, headers=self.headers, timeout=15)
+            html_content = resp.text
+            soup = BeautifulSoup(html_content, 'lxml')
             
             race_data = {"race_no": race_no, "venue": venue, "entries": []}
             processed_codes = set()
 
-            # 尋找所有包含馬匹編號的連結 (例如 href 包含 horse_id=H123)
-            # 在新版網頁，這通常是最穩定的標誌
-            links = soup.find_all("a", href=True)
-            for link in links:
-                href = link.get('href', '')
-                # 匹配連結中的編號，如 horse_id=H123 或 HorseId=H123
-                code_match = re.search(r"[hH]orse[iI]d=([A-Z]\d{3})", href)
-                if not code_match: continue
-                
-                horse_code = code_match.group(1)
-                if horse_code in processed_codes: continue
-                processed_codes.add(horse_code)
-                
-                # 提取馬名 (過濾掉括號)
-                raw_name = link.get_text(strip=True)
-                horse_name = re.sub(r"[\(\（].*?[\)\）]", "", raw_name).strip()
-                if not horse_name or len(horse_name) > 6: continue
+            # --- 核心解析：暴力掃描模式 ---
+            # 不看標籤，直接在整個 HTML 原始碼中找馬匹編號
+            # 尋找格式如：HorseId=G368, HorseId\">G368, (G368) 等
+            all_horse_codes = re.findall(r"HorseId=([A-Z]\d{3})", html_content, re.I)
+            # 也找括號內的編號 (中文版特徵)
+            all_horse_codes += re.findall(r"[\(\（]([A-Z]\d{3})[\)\）]", html_content)
+            
+            # 去重
+            unique_codes = []
+            for c in all_horse_codes:
+                if c not in processed_codes:
+                    unique_codes.append(c)
+                    processed_codes.add(c)
+
+            if not unique_codes:
+                print(f"    - [警告] 第 {race_no} 場抓到 0 匹馬。網頁片段摘要：")
+                print(f"      {html_content[:500]}...") # 印出前 500 字元供診斷
+                return race_data
+
+            # 根據抓到的編號，嘗試補齊馬名
+            for code in unique_codes:
+                # 在 HTML 中找編號附近的文字作為馬名
+                # 簡單邏輯：尋找編號前 20 個字元內的中文
+                name_match = re.search(r"([^\d\s\|]{2,6})\s*[\(\（]" + code, html_content)
+                horse_name = name_match.group(1).strip() if name_match else f"馬匹 {code}"
                 
                 entry = {
                     "horse_no": len(race_data["entries"]) + 1,
-                    "horse_code": horse_code,
+                    "horse_code": code,
                     "horse_name": horse_name,
                     "jockey": "自動抓取", "trainer": "自動抓取", "draw": 0, "actual_weight": 0
                 }
-                
-                # 向上找表格行 TR，提取馬號、騎師、練馬師、負磅、檔位
-                row = link.find_parent("tr")
-                if row:
-                    tds = row.find_all("td")
-                    if len(tds) > 5:
-                        # 馬號通常在第一格
-                        h_no_text = tds[0].get_text(strip=True)
-                        if h_no_text.isdigit(): entry["horse_no"] = int(h_no_text)
-                        
-                        # 騎練通常在固定位置 (根據 WebFetch 結果)
-                        entry["jockey"] = tds[3].get_text(strip=True)
-                        entry["trainer"] = tds[4].get_text(strip=True)
-                        
-                        # 掃描整行數字識別負磅與檔位
-                        nums = re.findall(r"\d+", row.get_text())
-                        for n in nums:
-                            v = int(n)
-                            if 100 <= v <= 145: entry["actual_weight"] = v
-                            elif 1 <= v <= 14 and entry["draw"] == 0 and v != entry["horse_no"]: entry["draw"] = v
-
                 race_data["entries"].append(entry)
             
-            print(f"    - 第 {race_no} 場: 成功抓取 {len(race_data['entries'])} 匹馬")
+            print(f"    - 第 {race_no} 場: 暴力掃描成功，抓取 {len(race_data['entries'])} 匹馬")
             return race_data
         except Exception as e:
-            print(f"    - 抓取異常: {e}")
+            print(f"    - [錯誤] 第 {race_no} 場抓取崩潰: {e}")
             return {}
 
     def start(self): pass
