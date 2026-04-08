@@ -13,9 +13,9 @@ if root_path not in sys.path:
 from database.connection import get_session, init_db
 from database.models import Race, RaceEntry, ScoringFactor, ScoringWeight, Horse
 from scoring_engine.core import ScoringEngine
-from scripts.run_scraper import run_daily_scraper
 from utils.logger import logger
 import asyncio
+import subprocess
 
 # 設定頁面配置
 st.set_page_config(page_title="HKJC 每場賽事獨立計分排名系統", layout="wide")
@@ -26,15 +26,25 @@ init_db()
 def get_db():
     return get_session()
 
-async def trigger_scraper():
-    """在 UI 中執行的抓取任務"""
-    with st.spinner("正在抓取 HKJC 最新數據，請稍候..."):
+def trigger_scraper():
+    """使用獨立進程執行抓取任務，避免 Streamlit 逾時"""
+    with st.spinner("🚀 正在啟動雲端爬蟲與計分引擎，大約需要 1-2 分鐘..."):
         try:
-            await run_daily_scraper()
-            st.success("數據抓取完成！")
-            return True
+            # 使用 subprocess 執行腳本，並捕獲輸出
+            result = subprocess.run(
+                ["python", "scripts/run_scraper.py"],
+                capture_output=True,
+                text=True,
+                timeout=300
+            )
+            if result.returncode == 0:
+                st.success("✅ 數據更新成功！正在刷新頁面...")
+                return True
+            else:
+                st.error(f"❌ 抓取失敗！詳細錯誤資訊：\n{result.stderr}")
+                return False
         except Exception as e:
-            st.error(f"抓取失敗: {e}")
+            st.error(f"❌ 系統錯誤: {e}")
             return False
 
 def load_races(session: Session):
