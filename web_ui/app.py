@@ -68,16 +68,21 @@ def test_db_connection(session):
         st.sidebar.error(f"❌ 資料庫連線失敗: {e}")
 
 def create_dummy_data(session):
-    """生成一筆測試用的賽事數據"""
+    """生成一筆測試用的賽事數據 (先清理舊的避免重複)"""
     try:
         from scripts.test_phase3 import setup_dummy_race
+        from database.models import Race
+        # 先刪除同樣 ID 的測試賽事
+        session.query(Race).filter_by(race_id="TEST-RACE-1").delete()
+        session.commit()
+        
         race_id = setup_dummy_race()
         engine = ScoringEngine(session)
         engine.score_race(race_id)
-        st.sidebar.success("✅ 測試數據生成成功！")
+        st.sidebar.success("✅ 測試數據已重置並生成！")
         return True
     except Exception as e:
-        session.rollback() # 發生錯誤時必須回滾，防止頁面報錯
+        session.rollback()
         st.sidebar.error(f"❌ 生成失敗: {e}")
         return False
 
