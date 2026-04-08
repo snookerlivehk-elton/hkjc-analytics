@@ -2,6 +2,7 @@ import re
 import requests
 from bs4 import BeautifulSoup
 from typing import List, Dict, Any
+from datetime import datetime
 from utils.logger import logger
 
 class HorseScraper:
