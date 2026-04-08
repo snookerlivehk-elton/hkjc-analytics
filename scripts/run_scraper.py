@@ -17,23 +17,22 @@ from utils.logger import logger
 
 async def run_daily_scraper():
     """執行每日自動抓取流程"""
-    # 確保資料庫表結構已建立
+    print(">>> 正在初始化資料庫...")
     from database.connection import init_db
     init_db()
     
+    print(">>> 正在建立連線...")
     session = get_session()
     repo = RacingRepository(session)
     
+    print(">>> 正在啟動爬蟲...")
     race_card_scraper = RaceCardScraper()
     odds_scraper = OddsScraper()
     horse_scraper = HorseScraper()
     
     try:
-        # 1. 啟動瀏覽器
         await race_card_scraper.start()
-        
-        # 2. 獲取當日排位表 (今日賽事)
-        logger.info("開始抓取排位表...")
+        print(">>> 瀏覽器啟動成功，開始抓取排位表...")
         races_info = await race_card_scraper.get_all_races_info()
         
         for race_info in races_info:

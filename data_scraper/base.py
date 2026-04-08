@@ -22,13 +22,19 @@ class BaseScraper:
         self.delay = config.get("scraping.rate_limit_delay", 2.0)
 
     async def start(self):
-        """啟動 Playwright 瀏覽器"""
+        """啟動 Playwright 瀏覽器 (強化版)"""
         if not self.playwright:
             self.playwright = await async_playwright().start()
-            self.browser = await self.playwright.chromium.launch(headless=self.headless)
-            self.context = await self.browser.new_context(user_agent=self.user_agent)
+            self.browser = await self.playwright.chromium.launch(
+                headless=self.headless,
+                args=["--disable-blink-features=AutomationControlled"] # 隱藏自動化特徵
+            )
+            self.context = await self.browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+                viewport={"width": 1920, "height": 1080}
+            )
             self.page = await self.context.new_page()
-            logger.info("Playwright 瀏覽器已啟動")
+            logger.info("Playwright 瀏覽器已啟動 (隱身模式)")
 
     async def stop(self):
         """關閉瀏覽器並釋放資源"""
@@ -39,20 +45,19 @@ class BaseScraper:
         logger.info("Playwright 瀏覽器已關閉")
 
     async def navigate_with_retry(self, url: str, retries: int = 3) -> bool:
-        """導向 URL 並包含重試機制"""
+        """導向 URL 並包含重試機制 (務實版)"""
         for i in range(retries):
             try:
-                # 隨機延遲以避免被封鎖
                 actual_delay = self.delay * (0.8 + random.random() * 0.4)
                 await asyncio.sleep(actual_delay)
                 
                 logger.info(f"正在導向: {url} (嘗試 {i+1}/{retries})")
-                await self.page.goto(url, wait_until="domcontentloaded", timeout=self.timeout)
+                # 使用 domcontentloaded 以快速進入，後續再等待特定元素
+                await self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
                 return True
             except Exception as e:
                 logger.warning(f"導向失敗 {url}: {e}")
                 if i == retries - 1:
-                    logger.error(f"達到最大重試次數: {url}")
                     return False
         return False
 
