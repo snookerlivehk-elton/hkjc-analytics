@@ -29,34 +29,42 @@ def get_db():
 import os
 
 def trigger_scraper():
-    """使用獨立進程執行抓取任務，並傳遞環境變數"""
-    with st.spinner("🚀 正在啟動雲端爬蟲，請勿關閉網頁..."):
-        try:
-            # 獲取目前環境變數 (包含 DATABASE_URL)
-            env = os.environ.copy()
-            # 改用 python3 以符合 Linux 伺服器標準
-            result = subprocess.run(
-                ["python3", "scripts/run_scraper.py"],
-                capture_output=True,
-                text=True,
-                timeout=300,
-                env=env
-            )
+    """使用 Popen 實現實時日誌串流輸出"""
+    st.markdown("### 🚀 爬蟲執行進度")
+    log_placeholder = st.empty() # 建立一個動態更新的區塊
+    full_log = ""
+    
+    try:
+        env = os.environ.copy()
+        # 使用 Popen 開啟進程，並讀取即時輸出
+        process = subprocess.Popen(
+            ["python3", "scripts/run_scraper.py"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, # 合併錯誤輸出到 stdout
+            text=True,
+            env=env,
+            bufsize=1 # 行緩衝
+        )
+
+        # 持續讀取輸出直到進程結束
+        for line in iter(process.stdout.readline, ""):
+            full_log += line
+            # 即時更新 UI 上的代碼框
+            log_placeholder.code(full_log)
             
-            # 顯示抓取日誌供除錯
-            if result.stdout:
-                with st.expander("查看抓取日誌"):
-                    st.code(result.stdout)
-            
-            if result.returncode == 0:
-                st.success("✅ 執行完成！請檢查下方數據狀態。")
-                return True
-            else:
-                st.error(f"❌ 抓取失敗！詳細錯誤：\n{result.stderr}")
-                return False
-        except Exception as e:
-            st.error(f"❌ 系統錯誤: {e}")
+        process.stdout.close()
+        return_code = process.wait()
+
+        if return_code == 0:
+            st.success("✅ 數據更新成功！正在刷新頁面...")
+            return True
+        else:
+            st.error(f"❌ 執行結束，但代碼顯示異常 (Exit Code: {return_code})")
             return False
+            
+    except Exception as e:
+        st.error(f"❌ 系統錯誤: {e}")
+        return False
 
 def test_db_connection(session):
     """測試資料庫寫入功能"""
