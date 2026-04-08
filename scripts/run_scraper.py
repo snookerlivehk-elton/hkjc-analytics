@@ -50,6 +50,7 @@ async def run_daily_scraper():
             return
 
         print(f">>> 成功發現 {len(races_info)} 場賽事，開始同步數據...")
+        for race_info in races_info:
             race_date = datetime.now()
             venue = "HV" if "跑馬地" in race_info.get("header", "") else "ST"
             race = repo.create_race(race_date, venue, race_info["race_no"])
