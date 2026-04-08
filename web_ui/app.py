@@ -34,9 +34,9 @@ def trigger_scraper():
         try:
             # 獲取目前環境變數 (包含 DATABASE_URL)
             env = os.environ.copy()
-            # 執行腳本
+            # 改用 python3 以符合 Linux 伺服器標準
             result = subprocess.run(
-                ["python", "scripts/run_scraper.py"],
+                ["python3", "scripts/run_scraper.py"],
                 capture_output=True,
                 text=True,
                 timeout=300,

@@ -61,50 +61,53 @@ class RaceCardScraper(BaseScraper):
         soup = BeautifulSoup(html, 'lxml')
         race_data = {"race_no": race_no, "entries": []}
 
-        # 核心解析邏輯：尋找所有包含 (字母+3位數字) 特徵的行
-        rows = soup.select("tr")
-        for row in rows:
-            text = row.get_text(separator=' ', strip=True)
-            # 支援半形 () 與 全形 （） 括號
-            code_match = re.search(r"[\(\（]([A-Z]\d{3})[\)\）]", text)
+        # 核心解析邏輯：改用「馬匹連結」定位法
+        # 尋找所有包含 HorseId=XXX 的 <a> 標籤
+        horse_links = soup.select("a[href*='HorseId=']")
+        for link in horse_links:
+            href = link.get('href', '')
+            code_match = re.search(r"HorseId=([A-Z]\d{3})", href)
             if code_match:
                 horse_code = code_match.group(1)
+                # 避免重複處理同一匹馬
+                if any(e["horse_code"] == horse_code for e in race_data["entries"]):
+                    continue
+                
                 try:
+                    # 向上尋找所在的 TR 行
+                    row = link.find_parent("tr")
+                    if not row: continue
+                    
+                    text = row.get_text(separator=' ', strip=True)
                     tds = row.select("td")
-                    # 清理每個單元格的文字
                     td_texts = [td.text.strip() for td in tds]
                     
-                    # 提取馬號 (行首數字)
-                    horse_no_match = re.search(r"^(\d+)", text)
-                    horse_no = int(horse_no_match.group(1)) if horse_no_match else 0
+                    # 提取馬號 (該行第一個數字)
+                    horse_no_match = re.search(r"^\d+", text)
+                    horse_no = int(horse_no_match.group(0)) if horse_no_match else 0
                     
-                    # 提取馬名
-                    name_part = re.split(r"[\(\（]", text)[0].split()[-1]
+                    # 提取馬名：拿掉括號及其內容，只保留純文字
+                    raw_name = link.get_text(strip=True)
+                    horse_name = re.sub(r"[\(\（].*?[\)\）]", "", raw_name).strip()
                     
                     entry = {
                         "horse_no": horse_no,
                         "horse_code": horse_code,
-                        "horse_name": name_part,
-                        "jockey": "",
-                        "trainer": "",
+                        "horse_name": horse_name,
+                        "jockey": td_texts[3] if len(td_texts) > 3 else "",
+                        "trainer": td_texts[4] if len(td_texts) > 4 else "",
                         "draw": 0,
                         "actual_weight": 0
                     }
                     
-                    # 智能識別數字欄位
+                    # 識別負磅與檔位
                     nums = re.findall(r"\d+", text)
                     for n in nums:
                         v = int(n)
                         if 100 <= v <= 140: entry["actual_weight"] = v
                         elif 1 <= v <= 14 and entry["draw"] == 0 and v != horse_no: entry["draw"] = v
                     
-                    # 嘗試從固定位置獲取騎練 (HKJC 常用位置)
-                    if len(td_texts) >= 5:
-                        entry["jockey"] = td_texts[3]
-                        entry["trainer"] = td_texts[4]
-
-                    if entry["horse_code"]:
-                        race_data["entries"].append(entry)
+                    race_data["entries"].append(entry)
                 except:
                     continue
 

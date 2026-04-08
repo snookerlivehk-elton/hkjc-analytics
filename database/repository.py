@@ -16,6 +16,10 @@ class RacingRepository:
             horse = Horse(code=code, name_ch=name_ch)
             self.session.add(horse)
             self.session.flush()
+        elif not horse.name_ch or horse.name_ch == "未知":
+            # 如果舊紀錄沒有名字，補上新抓到的名字
+            horse.name_ch = name_ch
+            self.session.flush()
         return horse
 
     def get_or_create_jockey(self, name_ch: str) -> Jockey:
