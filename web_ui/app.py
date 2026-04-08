@@ -217,29 +217,7 @@ def main():
     session = get_db()
     
     # Sidebar: 賽事選擇
-    st.sidebar.header("🔍 賽事管理")
-    
-    # 新增：抓取/更新按鈕
-    if st.sidebar.button("🔄 更新當日賽事數據"):
-        if trigger_scraper():
-            st.rerun()
-    
-    if st.sidebar.button("📚 回填馬匹歷史往績"):
-        if trigger_history_backfill():
-            st.rerun()
-    
-    if st.sidebar.button("🔌 測試資料庫連線"):
-        test_db_connection(session)
-    
-    if st.sidebar.button("📝 生成一筆測試數據"):
-        if create_dummy_data(session):
-            st.rerun()
-    
-    if st.sidebar.button("🗑️ 清空資料庫數據"):
-        if clear_database(session):
-            st.rerun()
-    
-    st.sidebar.markdown("---")
+    st.sidebar.header("🔍 賽事選擇")
     
     # 顯示資料庫狀態
     st.sidebar.subheader("📊 數據取得狀態")
@@ -247,6 +225,8 @@ def main():
     for label, count in status.items():
         color = "green" if count > 0 else "red"
         st.sidebar.markdown(f"{label}: :{color}[{count}]")
+    
+    st.sidebar.markdown("---")
     
     races = load_races(session)
     if not races:

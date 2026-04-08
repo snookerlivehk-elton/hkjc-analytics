@@ -59,64 +59,68 @@ class RaceCardScraper:
             return []
 
     def scrape_single_race_html(self, url: str, race_no: int) -> Dict[str, Any]:
-        """從桌面版 HTML 中暴力提取數據"""
+        """精確表格對位解析：徹底解決騎練錯位問題"""
         try:
             resp = requests.get(url, headers=self.headers, timeout=10)
-            html = resp.text
-            soup = BeautifulSoup(html, 'lxml')
+            soup = BeautifulSoup(resp.text, 'lxml')
             
-            # 1. 識別場地 (HV/ST)
-            venue = "HV" if "跑馬地" in html else "ST"
+            # 1. 識別場地
+            venue = "HV" if "跑馬地" in resp.text else "ST"
+            race_data = {"race_no": race_no, "venue": venue, "entries": []}
             
-            race_data = {
-                "race_no": race_no, "venue": venue, 
-                "race_class": "未知", "distance": 0, "going": "好地",
-                "entries": []
-            }
+            # 2. 定位排位表
+            # 桌面版通常在 class="table_border_hide" 的表格中
+            table = soup.select_one("table.table_border_hide")
+            if not table:
+                # 備用方案：尋找包含「馬名」文字的表格
+                for t in soup.find_all("table"):
+                    if "馬名" in t.get_text():
+                        table = t
+                        break
             
-            # 2. 暴力解析馬匹行
-            # 桌面版特徵：馬匹編號在括號內，如 (G368)
-            rows = soup.find_all("tr")
+            if not table: return {}
+
+            rows = table.find_all("tr")
             processed_codes = set()
 
             for row in rows:
-                text = row.get_text(separator='|', strip=True)
-                # 搜尋馬匹編號特徵 (字母+3位數字)
-                code_match = re.search(r"([A-Z]\d{3})", text)
-                if not code_match: continue
+                tds = row.find_all("td")
+                if len(tds) < 10: continue
                 
+                # 尋找馬名連結與 HorseId
+                link = row.find("a", href=re.compile(r"HorseId="))
+                if not link: continue
+                
+                code_match = re.search(r"HorseId=([A-Z]\d{3})", link.get('href', ''), re.I)
+                if not code_match: continue
                 horse_code = code_match.group(1)
+                
                 if horse_code in processed_codes: continue
                 processed_codes.add(horse_code)
                 
-                # 分割欄位
-                parts = text.split('|')
-                if len(parts) < 5: continue
-                
                 try:
+                    # --- 根據馬會桌面版標準索引對位 ---
+                    # [0]馬號 [1]6次近績 [2]綵衣 [3]馬名 [4]負磅 [5]騎師 [6]檔位 [7]練馬師 [8]評分
                     entry = {
-                        "horse_no": len(race_data["entries"]) + 1,
+                        "horse_no": int(re.sub(r'\D', '', tds[0].text.strip())) if tds[0].text.strip().isdigit() else 0,
                         "horse_code": horse_code,
-                        "horse_name": re.sub(r"[\(\（].*?[\)\）]", "", parts[2]).strip() if len(parts) > 2 else "未知",
-                        "jockey": parts[3] if len(parts) > 3 else "未知",
-                        "trainer": parts[4] if len(parts) > 4 else "未知",
-                        "actual_weight": 0, "draw": 0, "rating": 0
+                        "horse_name": re.sub(r"[\(\（].*?[\)\）]", "", link.get_text(strip=True)).strip(),
+                        "actual_weight": int(re.sub(r'\D', '', tds[4].text.strip())) if tds[4].text.strip().isdigit() else 0,
+                        "jockey": tds[5].get_text(strip=True),
+                        "draw": int(re.sub(r'\D', '', tds[6].text.strip())) if tds[6].text.strip().isdigit() else 0,
+                        "trainer": tds[7].get_text(strip=True),
+                        "rating": int(re.sub(r'\D', '', tds[8].text.strip())) if tds[8].text.strip().isdigit() else 0
                     }
                     
-                    # 識別負磅、檔位、評分
-                    nums = re.findall(r"\d+", text)
-                    for n in nums:
-                        v = int(n)
-                        if 100 <= v <= 145: entry["actual_weight"] = v
-                        elif 1 <= v <= 14 and entry["draw"] == 0: entry["draw"] = v
-                        elif 20 <= v <= 130 and entry["rating"] == 0: entry["rating"] = v
+                    # 清理騎師名稱 (移除減磅括號如 -2)
+                    entry["jockey"] = re.sub(r"\(.*?\)", "", entry["jockey"]).strip()
                     
                     race_data["entries"].append(entry)
-                except:
+                except Exception as e:
                     continue
             
             if race_data["entries"]:
-                print(f"    - 成功抓取 {len(race_data['entries'])} 匹馬")
+                print(f"    - 第 {race_no} 場: 成功抓取 {len(race_data['entries'])} 匹馬 (精確對位)")
             return race_data
         except:
             return {}
