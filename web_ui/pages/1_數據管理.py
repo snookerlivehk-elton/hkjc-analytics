@@ -99,7 +99,7 @@ with col2:
             st.success("✅ 資料庫已完全清空！")
         session.close()
 
-    st.subheader("🔌 系統測試")
+    st.subheader("🔌 系統測試與升級")
     if st.button("🔌 測試資料庫連線", use_container_width=True):
         session = get_session()
         try:
@@ -109,3 +109,19 @@ with col2:
         except Exception as e:
             st.error(f"❌ 連線失敗: {e}")
         session.close()
+        
+    if st.button("🆙 執行資料庫欄位升級 (新增原始數據欄位)", use_container_width=True):
+        try:
+            env = os.environ.copy()
+            process = subprocess.Popen(
+                ["python3", "scripts/upgrade_db.py"],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, env=env, bufsize=1
+            )
+            out, _ = process.communicate()
+            if process.returncode == 0:
+                st.success(f"✅ 升級腳本執行完成！\n\n```\n{out}\n```")
+            else:
+                st.error(f"❌ 執行失敗: {out}")
+        except Exception as e:
+            st.error(f"❌ 系統錯誤: {e}")

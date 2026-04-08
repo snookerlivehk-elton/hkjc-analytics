@@ -41,6 +41,7 @@ def load_factor_data(session: Session, race_id: int):
             # 儲存分數，使用中文描述作為欄位名
             desc = factor_desc_map.get(f.factor_name, f.factor_name)
             row[desc] = round(f.score, 2)
+            row[f"{desc}_raw"] = f.raw_data_display if f.raw_data_display else "無數據"
             
         data.append(row)
         
@@ -86,11 +87,17 @@ else:
                 for i, factor in enumerate(available_factors):
                     with factor_tabs[i]:
                         # 提取基本資訊與該因子的分數
-                        view_cols = ["馬號", "馬名", "檔位", "負磅", "評分", factor]
+                        view_cols = ["馬號", "馬名", "檔位", "負磅", "評分", f"{factor}_raw", factor]
                         factor_df = df[view_cols].copy()
                         
+                        # 重新命名欄位讓 UI 更清晰
+                        factor_df = factor_df.rename(columns={
+                            f"{factor}_raw": "原始數據 (分析基礎)",
+                            factor: "系統標準化得分 (0-10分)"
+                        })
+                        
                         # 根據該因子分數進行降序排序
-                        factor_df = factor_df.sort_values(by=factor, ascending=False).reset_index(drop=True)
+                        factor_df = factor_df.sort_values(by="系統標準化得分 (0-10分)", ascending=False).reset_index(drop=True)
                         
                         # 加上名次標籤
                         factor_df.index = factor_df.index + 1

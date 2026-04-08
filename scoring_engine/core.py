@@ -49,15 +49,18 @@ class ScoringEngine:
         calculator = FactorCalculator(self.session, df)
         
         factor_raw_scores = {}
+        factor_displays = {}
         for factor_name in self.weights.keys():
-            raw_scores = calculator.calculate(factor_name)
+            raw_scores, displays = calculator.calculate(factor_name)
             factor_raw_scores[factor_name] = raw_scores
+            factor_displays[factor_name] = displays
 
         # 4. 核心功能：進行相對百分位排名 (0-10 分)
         # 確保所有分數都在本場馬匹內做相對比較
         scored_df = df.copy()
         for factor_name, raw_vals in factor_raw_scores.items():
             scored_df[f"{factor_name}_score"] = calculate_relative_percentile(raw_vals, score_range=(0, 10))
+            scored_df[f"{factor_name}_display"] = factor_displays[factor_name]
 
         # 5. 計算加權總分與排名
         total_score = np.zeros(len(scored_df))
@@ -96,6 +99,7 @@ class ScoringEngine:
                         self.session.add(sf)
                     
                     sf.score = row[f"{factor_name}_score"]
+                    sf.raw_data_display = row[f"{factor_name}_display"]
                     sf.weight_at_time = self.weights[factor_name]
         
         self.session.commit()

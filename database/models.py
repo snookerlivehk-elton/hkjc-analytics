@@ -120,6 +120,7 @@ class ScoringFactor(Base):
     
     factor_name = Column(String(50), nullable=False)  # 條件名稱 (e.g. jockey_trainer_bond)
     raw_value = Column(Float)  # 原始數據值
+    raw_data_display = Column(String(255), nullable=True) # 透明化原始數據文字 (e.g., "同程勝率 45%")
     score = Column(Float)      # 0-10 分 (相對排名得分)
     weight_at_time = Column(Float) # 計算時使用的權重
     
