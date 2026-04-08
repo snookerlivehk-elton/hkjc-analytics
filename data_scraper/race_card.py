@@ -52,85 +52,79 @@ class RaceCardScraper:
             return []
 
     def scrape_by_feature(self, url: str, race_no: int) -> Dict[str, Any]:
-        """特徵解析法：直接從文字流提取數據"""
+        """精確對位解析：利用表格索引鎖定欄位，徹底解決位移問題"""
         try:
             resp = self.session.get(url, headers=self.headers, timeout=10)
-            # 使用 BeautifulSoup 清理出純文字流
             soup = BeautifulSoup(resp.text, 'lxml')
             
-            # 1. 識別場地、班次、路程
+            # 1. 識別基本資訊
             full_text = soup.get_text(separator=' ', strip=True)
             venue = "HV" if "跑馬地" in full_text else "ST"
-            
             race_data = {
                 "race_no": race_no, "venue": venue, 
                 "race_class": "未知", "distance": 0, "going": "好地",
                 "entries": []
             }
             
-            # 提取班次路程
+            # 提取班次、路程
             class_m = re.search(r"(第[一二三四五]班|公開賽)", full_text)
             if class_m: race_data["race_class"] = class_m.group(1)
             dist_m = re.search(r"(\d{4})米", full_text)
             if dist_m: race_data["distance"] = int(dist_m.group(1))
-            going_m = re.search(r"(好地|黏地|濕地|快地)", full_text)
-            if going_m: race_data["going"] = going_m.group(1)
 
-            # 2. 暴力掃描馬匹行
-            # 我們找尋包含馬匹編號 (字母+3位數字) 的行
+            # 2. 精確解析表格 TR
             rows = soup.find_all("tr")
+            processed_codes = set()
+
             for row in rows:
-                # 將整行轉為以 | 分割的文字，這能極大程度保留欄位感
-                line = row.get_text(separator='|', strip=True)
-                code_match = re.search(r"([A-Z]\d{3})", line)
-                if not code_match: continue
+                tds = row.find_all("td")
+                # 關鍵：馬會標準排位表行至少有 10 個 td
+                if len(tds) < 10: continue
                 
+                # 尋找包含馬匹編號的連結 (例如 HorseId=G368)
+                link = row.find("a", href=re.compile(r"HorseId="))
+                if not link: continue
+                
+                code_match = re.search(r"HorseId=([A-Z]\d{3})", link.get('href', ''), re.I)
+                if not code_match: continue
                 horse_code = code_match.group(1)
-                parts = line.split('|')
-                if len(parts) < 8: continue
+                
+                if horse_code in processed_codes: continue
+                processed_codes.add(horse_code)
                 
                 try:
-                    # 這是馬會排位表的「物理規律」
-                    # [0]是馬號, [2]或[3]是馬名, 緊接編號, 接著負磅, 騎師, 檔位, 練馬師, 評分
+                    # --- 根據馬會桌面版標準順序進行垂直對位 ---
+                    # 索引 [0]: 馬號
+                    # 索引 [3]: 馬名 (link 所在格)
+                    # 索引 [4]: 負磅
+                    # 索引 [5]: 騎師
+                    # 索引 [6]: 檔位
+                    # 索引 [7]: 練馬師
+                    # 索引 [8]: 評分
+                    
                     entry = {
-                        "horse_no": 0,
+                        "horse_no": int(re.sub(r'\D', '', tds[0].text.strip())) if tds[0].text.strip().isdigit() else 0,
                         "horse_code": horse_code,
-                        "horse_name": "未知",
-                        "jockey": "未知",
-                        "trainer": "未知",
-                        "draw": 0,
-                        "actual_weight": 0,
-                        "rating": 0
+                        "horse_name": re.sub(r"[\(\（].*?[\)\）]", "", link.get_text(strip=True)).strip(),
+                        "jockey": tds[5].get_text(strip=True),
+                        "trainer": tds[7].get_text(strip=True),
+                        "actual_weight": int(re.sub(r'\D', '', tds[4].text.strip())) if tds[4].text.strip().isdigit() else 0,
+                        "draw": int(re.sub(r'\D', '', tds[6].text.strip())) if tds[6].text.strip().isdigit() else 0,
+                        "rating": int(re.sub(r'\D', '', tds[8].text.strip())) if tds[8].text.strip().isdigit() else 0
                     }
                     
-                    # 遍歷分割出的片段，根據特徵填入
-                    nums = []
-                    for p in parts:
-                        p = p.strip()
-                        if p.isdigit(): nums.append(int(p))
-                        # 識別馬名 (非數字、非編號、長度 2-4)
-                        if not entry["horse_name"] != "未知" and 2 <= len(p) <= 4 and not any(c.isdigit() for c in p):
-                            entry["horse_name"] = p
+                    # 清理騎師名稱 (有些會帶減磅數字，如「鍾易禮 (-2)」)
+                    entry["jockey"] = re.sub(r"\(.*?\)", "", entry["jockey"]).strip()
                     
-                    # 從數字池中按邏輯提取
-                    if nums:
-                        entry["horse_no"] = nums[0]
-                        for n in nums:
-                            if 100 <= n <= 145: entry["actual_weight"] = n
-                            elif 1 <= n <= 14 and entry["draw"] == 0 and n != entry["horse_no"]: entry["draw"] = n
-                            elif 20 <= n <= 135 and entry["rating"] == 0: entry["rating"] = n
-                    
-                    # 提取騎師與練馬師 (通常在特定欄位附近)
-                    # 這裡做一個保險：取馬名之後的兩個純文字片段
-                    names = [p for p in parts if 2 <= len(p) <= 4 and not any(c.isdigit() for c in p) and p != entry["horse_name"]]
-                    if len(names) >= 2:
-                        entry["jockey"] = names[0]
-                        entry["trainer"] = names[1]
-
-                    if entry["horse_code"]:
-                        race_data["entries"].append(entry)
+                    race_data["entries"].append(entry)
                 except:
                     continue
+            
+            if race_data["entries"]:
+                print(f"    - 第 {race_no} 場: 精確抓取 {len(race_data['entries'])} 匹馬")
+            return race_data
+        except:
+            return {}
             
             if race_data["entries"]:
                 print(f"    - 成功提取 {len(race_data['entries'])} 匹馬")
