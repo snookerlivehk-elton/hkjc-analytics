@@ -67,6 +67,19 @@ def test_db_connection(session):
     except Exception as e:
         st.sidebar.error(f"❌ 資料庫連線失敗: {e}")
 
+def create_dummy_data(session):
+    """生成一筆測試用的賽事數據"""
+    try:
+        from scripts.test_phase3 import setup_dummy_race
+        race_id = setup_dummy_race()
+        engine = ScoringEngine(session)
+        engine.score_race(race_id)
+        st.sidebar.success("✅ 測試數據生成成功！")
+        return True
+    except Exception as e:
+        st.sidebar.error(f"❌ 生成失敗: {e}")
+        return False
+
 def load_races(session: Session):
     """載入所有可選賽事"""
     return session.query(Race).order_by(Race.race_date.desc(), Race.race_no.asc()).all()
@@ -128,6 +141,10 @@ def main():
     
     if st.sidebar.button("🔌 測試資料庫連線"):
         test_db_connection(session)
+    
+    if st.sidebar.button("📝 生成一筆測試數據"):
+        if create_dummy_data(session):
+            st.rerun()
     
     st.sidebar.markdown("---")
     

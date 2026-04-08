@@ -6,14 +6,21 @@ from database.models import Base
 # 預設使用 SQLite，未來可改為 PostgreSQL 連線字串
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/hkjc_racing.db")
 
-# 修正 Railway 的 postgres:// 網址為 postgresql:// (SQLAlchemy 2.0 要求)
+# 修正 Railway 的 postgres:// 網址為 postgresql://
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+# 生產環境 (Postgres) 需要 SSL 設定
+connect_args = {}
+if "postgresql" in DATABASE_URL:
+    connect_args = {"sslmode": "require"}
+elif "sqlite" in DATABASE_URL:
+    connect_args = {"check_same_thread": False}
 
 engine = create_engine(
     DATABASE_URL, 
     echo=False,
-    connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {}
+    connect_args=connect_args
 )
 
 # 建立 Session 工廠
