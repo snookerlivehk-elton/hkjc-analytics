@@ -1,110 +1,125 @@
+import re
 import requests
-import json
+from bs4 import BeautifulSoup
 from typing import List, Dict, Any
 from datetime import datetime
-from utils.logger import logger
+import time
+import random
 
 class RaceCardScraper:
-    """傳奇突破版：直連馬會 GraphQL 數據中心 (100% 穩定、含賠率)"""
+    """絕地求生版：對準最原始桌面版 .aspx 網址，不依賴任何 API"""
 
     def __init__(self):
-        # 這是 2026 年馬會最核心的數據接口
-        self.api_url = "https://info.cld.hkjc.com/graphql/base/"
+        # 桌面版網址是目前最穩定的數據源
+        self.base_url = "https://racing.hkjc.com/racing/information/Chinese/Racing/RaceCard.aspx"
         self.headers = {
-            "Content-Type": "application/json",
-            "x-apollo-operation-name": "racing",
-            "apollo-require-preflight": "true",
-            "Origin": "https://bet.hkjc.com",
-            "Referer": "https://bet.hkjc.com/",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language": "zh-HK,zh;q=0.9,en-US;q=0.8",
+            "Referer": "https://racing.hkjc.com/racing/information/Chinese/Racing/RaceCard.aspx"
         }
 
     def get_all_races_info(self, race_date: str = "") -> List[Dict[str, Any]]:
-        """獲取當日所有場次及完整數據 (馬名、騎練、賠率)"""
-        # 格式化日期為 YYYY-MM-DD
-        date_str = race_date.replace("/", "-") if race_date else datetime.now().strftime("%Y-%m-%d")
-        
-        # 我們先嘗試探測 HV，如果不對再試 ST
+        """獲取當日所有場次"""
         races = []
-        for venue in ["HV", "ST"]:
-            print(f">>> 正在從數據中心提取 {venue} 賽事數據 ({date_str})...")
-            venue_races = self._fetch_from_graphql(date_str, venue)
-            if venue_races:
-                print(f">>> [成功] 發現 {len(venue_races)} 場賽事！")
-                races.extend(venue_races)
-                break # 找到有資料的場地就停止
+        # 日期格式 YYYY/MM/DD
+        date_str = race_date if race_date else datetime.now().strftime("%Y/%m/%d")
         
-        return races
-
-    def _fetch_from_graphql(self, date_str: str, venue: str) -> List[Dict[str, Any]]:
-        """向 GraphQL 發送查詢請求"""
-        query = """
-        query racing($date: String, $venueCode: String) {
-          raceMeetings(date: $date, venueCode: $venueCode) {
-            venueCode
-            races {
-              no
-              raceClassCh
-              distance
-              goingCh
-              runners {
-                no
-                nameCh
-                horseCode
-                jockey { nameCh }
-                trainer { nameCh }
-                draw
-                weight
-                rtg
-                winOdds
-              }
-            }
-          }
-        }
-        """
-        payload = {
-            "operationName": "racing",
-            "variables": {"date": date_str, "venueCode": venue},
-            "query": query
-        }
-
         try:
-            resp = requests.post(self.api_url, headers=self.headers, json=payload, timeout=15)
-            if resp.status_code != 200: return []
+            print(f">>> 正在連線至馬會桌面版頁面: {date_str}")
+            # 1. 先探測第一場，確認今日是否有賽事
+            url = f"{self.base_url}?RaceDate={date_str}&RaceNo=1"
+            resp = requests.get(url, headers=self.headers, timeout=15)
             
-            data = resp.json()
-            meetings = data.get("data", {}).get("raceMeetings", [])
-            if not meetings: return []
+            if "馬名" not in resp.text and "Horse" not in resp.text:
+                print(">>> [警告] 頁面未發現馬匹表格，今日可能無賽事。")
+                return []
+            
+            soup = BeautifulSoup(resp.text, 'lxml')
+            # 獲取總場次
+            race_nos = set()
+            for a in soup.select("a[href*='RaceNo=']"):
+                m = re.search(r'RaceNo=(\d+)', a.get('href', ''))
+                if m: race_nos.add(int(m.group(1)))
+            
+            race_count = max(race_nos) if race_nos else 1
+            print(f">>> 成功！偵測到 {race_count} 場賽事，開始同步數據...")
 
-            formatted_races = []
-            for m in meetings:
-                v_code = m.get("venueCode")
-                for r in m.get("races", []):
-                    race_info = {
-                        "race_no": r.get("no"),
-                        "venue": v_code,
-                        "race_class": r.get("raceClassCh", "未知"),
-                        "distance": r.get("distance", 0),
-                        "going": r.get("goingCh", "好地"),
-                        "entries": []
-                    }
-                    for h in r.get("runners", []):
-                        race_info["entries"].append({
-                            "horse_no": h.get("no"),
-                            "horse_code": h.get("horseCode"),
-                            "horse_name": h.get("nameCh"),
-                            "jockey": h.get("jockey", {}).get("nameCh", "未知"),
-                            "trainer": h.get("trainer", {}).get("nameCh", "未知"),
-                            "draw": h.get("draw", 0),
-                            "actual_weight": h.get("weight", 0),
-                            "rating": h.get("rtg", 0),
-                            "win_odds": h.get("winOdds", 0.0) # 順便抓到賠率了！
-                        })
-                    formatted_races.append(race_info)
-            return formatted_races
+            for i in range(1, race_count + 1):
+                print(f">>> 正在同步第 {i} 場數據...")
+                race_url = f"{self.base_url}?RaceDate={date_str}&RaceNo={i}"
+                race_info = self.scrape_single_race_html(race_url, i)
+                if race_info and race_info.get("entries"):
+                    races.append(race_info)
+                time.sleep(random.uniform(1, 2)) # 模擬真人翻頁
+            
+            return races
         except Exception as e:
-            print(f">>> [警告] {venue} 數據提取異常: {e}")
+            print(f">>> [錯誤] 連線異常: {e}")
             return []
+
+    def scrape_single_race_html(self, url: str, race_no: int) -> Dict[str, Any]:
+        """從桌面版 HTML 中暴力提取數據"""
+        try:
+            resp = requests.get(url, headers=self.headers, timeout=10)
+            html = resp.text
+            soup = BeautifulSoup(html, 'lxml')
+            
+            # 1. 識別場地 (HV/ST)
+            venue = "HV" if "跑馬地" in html else "ST"
+            
+            race_data = {
+                "race_no": race_no, "venue": venue, 
+                "race_class": "未知", "distance": 0, "going": "好地",
+                "entries": []
+            }
+            
+            # 2. 暴力解析馬匹行
+            # 桌面版特徵：馬匹編號在括號內，如 (G368)
+            rows = soup.find_all("tr")
+            processed_codes = set()
+
+            for row in rows:
+                text = row.get_text(separator='|', strip=True)
+                # 搜尋馬匹編號特徵 (字母+3位數字)
+                code_match = re.search(r"([A-Z]\d{3})", text)
+                if not code_match: continue
+                
+                horse_code = code_match.group(1)
+                if horse_code in processed_codes: continue
+                processed_codes.add(horse_code)
+                
+                # 分割欄位
+                parts = text.split('|')
+                if len(parts) < 5: continue
+                
+                try:
+                    entry = {
+                        "horse_no": len(race_data["entries"]) + 1,
+                        "horse_code": horse_code,
+                        "horse_name": re.sub(r"[\(\（].*?[\)\）]", "", parts[2]).strip() if len(parts) > 2 else "未知",
+                        "jockey": parts[3] if len(parts) > 3 else "未知",
+                        "trainer": parts[4] if len(parts) > 4 else "未知",
+                        "actual_weight": 0, "draw": 0, "rating": 0
+                    }
+                    
+                    # 識別負磅、檔位、評分
+                    nums = re.findall(r"\d+", text)
+                    for n in nums:
+                        v = int(n)
+                        if 100 <= v <= 145: entry["actual_weight"] = v
+                        elif 1 <= v <= 14 and entry["draw"] == 0: entry["draw"] = v
+                        elif 20 <= v <= 130 and entry["rating"] == 0: entry["rating"] = v
+                    
+                    race_data["entries"].append(entry)
+                except:
+                    continue
+            
+            if race_data["entries"]:
+                print(f"    - 成功抓取 {len(race_data['entries'])} 匹馬")
+            return race_data
+        except:
+            return {}
 
     def start(self): pass
     def stop(self): pass
