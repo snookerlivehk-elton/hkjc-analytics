@@ -1,83 +1,106 @@
 import re
 import requests
-import json
+from bs4 import BeautifulSoup
 from typing import List, Dict, Any
 from datetime import datetime
-from utils.logger import logger
+import time
+import random
 
 class RaceCardScraper:
-    """終極穩定版：使用 HKJC 官方 JSON 數據源 (不依賴網頁渲染)"""
+    """終極穩定版：雙場地自動探測 + 寬鬆特徵解析"""
 
     def __init__(self):
-        # 使用 HKJC 內部數據接口 (這是在雲端最穩定的方式)
-        self.api_url = "https://racing.hkjc.com/racing/content/v1/racecard/chinese"
+        self.base_url = "https://racing.hkjc.com/zh-hk/local/information/racecard"
         self.headers = {
             "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1",
-            "Referer": "https://racing.hkjc.com/zh-hk/local/information/racecard"
+            "Accept-Language": "zh-HK,zh;q=0.9,en-US;q=0.8,en;q=0.7"
         }
 
     def get_all_races_info(self, race_date: str = "") -> List[Dict[str, Any]]:
-        """透過 JSON 接口獲取所有賽事數據"""
-        races = []
-        date_str = race_date.replace("/", "-") if race_date else datetime.now().strftime("%Y-%m-%d")
+        """獲取當日所有場次 (雙場地自動嘗試)"""
+        formatted_date = race_date if race_date else datetime.now().strftime("%Y/%m/%d")
         
-        # 1. 探測今日場次數量
-        try:
-            print(f">>> 正在連線至官方數據接口: {date_str}")
-            # 注意：這裡我們嘗試先拿第一場，順便帶出所有場次清單
-            url = f"{self.api_url}?date={date_str}&raceno=1"
-            resp = requests.get(url, headers=self.headers, timeout=15)
-            
-            if resp.status_code != 200:
-                # 備援：如果 API 失敗，嘗試舊版穩定路徑
-                return self._fallback_fetch(date_str)
-            
-            data = resp.json()
-            # 獲取總場次
-            race_count = data.get("totalRaces", 9)
-            print(f">>> 成功連線！偵測到 {race_count} 場賽事，開始同步數據...")
+        # 1. 嘗試找出今日到底是跑哪裡
+        print(f">>> 正在探測今日賽事資訊 ({formatted_date})...")
+        venue = self._detect_venue(formatted_date)
+        print(f">>> 確定今日場地: {venue}")
 
-            for i in range(1, race_count + 1):
-                print(f">>> 正在抓取第 {i} 場數據...")
-                race_info = self.scrape_single_race_api(date_str, i)
-                if race_info:
-                    races.append(race_info)
+        races = []
+        # 2. 抓取場次 (通常 1-11 場)
+        for i in range(1, 12):
+            url = f"{self.base_url}?racedate={formatted_date}&Racecourse={venue}&RaceNo={i}"
+            print(f">>> 正在同步第 {i} 場數據...")
+            race_info = self.scrape_single_race(url, i, venue)
             
-            return races
-        except Exception as e:
-            print(f">>> [警告] 接口連線異常，切換至備援掃描模式: {e}")
-            return self._fallback_fetch(date_str)
+            if race_info and race_info.get("entries"):
+                races.append(race_info)
+            else:
+                # 如果連第一場都抓不到，代表真的沒比賽了
+                if i == 1: 
+                    print(">>> [警告] 第一場無數據，今日可能無賽事。")
+                    break
+                # 如果是中間場次沒數據，可能是結束了
+                break
+        
+        return races
 
-    def scrape_single_race_api(self, date_str: str, race_no: int) -> Dict[str, Any]:
-        """從 API 獲取單場細節"""
-        url = f"{self.api_url}?date={date_str}&raceno={race_no}"
+    def _detect_venue(self, date_str: str) -> str:
+        """透過嘗試連線來判斷場地"""
+        for v in ["HV", "ST"]:
+            url = f"{self.base_url}?racedate={date_str}&Racecourse={v}&RaceNo=1"
+            try:
+                resp = requests.get(url, headers=self.headers, timeout=10)
+                # 只要網頁原始碼出現馬匹編號特徵 (如 G368)，就代表這個場地是對的
+                if re.search(r"\([A-Z]\d{3}\)", resp.text):
+                    return v
+            except:
+                continue
+        return "HV" # 最終保底
+
+    def scrape_single_race(self, url: str, race_no: int, venue: str) -> Dict[str, Any]:
+        """抓取單場馬匹 (最寬鬆解析邏輯)"""
         try:
+            time.sleep(random.uniform(0.5, 1.5))
             resp = requests.get(url, headers=self.headers, timeout=10)
-            data = resp.json()
+            html = resp.text
             
-            venue = "HV" if "Happy Valley" in data.get("venueEn", "") else "ST"
             race_data = {"race_no": race_no, "venue": venue, "entries": []}
             
-            # 解析馬匹清單
-            for horse in data.get("horses", []):
-                race_data["entries"].append({
-                    "horse_no": horse.get("horseNo"),
-                    "horse_code": horse.get("horseCode"),
-                    "horse_name": horse.get("horseName"),
-                    "jockey": horse.get("jockeyName"),
-                    "trainer": horse.get("trainerName"),
-                    "draw": horse.get("draw"),
-                    "actual_weight": horse.get("weight"),
-                    "rating": horse.get("rating")
-                })
+            # 終極正則：匹配馬名 + 編號 (不論中間夾雜什麼符號)
+            # 格式：中文(2-6字) + ... + (字母+3位數字)
+            matches = re.finditer(r"([^\d\s\<\>]{2,6})\s*[\(\（]([A-Z]\d{3})[\)\）]", html)
+            
+            processed_codes = set()
+            for match in matches:
+                name, code = match.group(1).strip(), match.group(2).strip()
+                if "馬匹" in name or "編號" in name: continue
+                if code in processed_codes: continue
+                processed_codes.add(code)
+                
+                entry = {
+                    "horse_no": len(race_data["entries"]) + 1,
+                    "horse_code": code,
+                    "horse_name": name,
+                    "jockey": "自動獲取", "trainer": "自動獲取", "draw": 0, "actual_weight": 0
+                }
+                
+                # 在 HTML 片段中找數字 (負磅與檔位)
+                context = html[max(0, match.start()-100) : min(len(html), match.end()+300)]
+                nums = re.findall(r">(\d+)<", context) # 只找被標籤包裹的純數字，準確率最高
+                if not nums: nums = re.findall(r"\d+", context)
+                
+                for n in nums:
+                    v = int(n)
+                    if 100 <= v <= 145: entry["actual_weight"] = v
+                    elif 1 <= v <= 14 and entry["draw"] == 0: entry["draw"] = v
+                
+                race_data["entries"].append(entry)
+            
+            if race_data["entries"]:
+                print(f"    - 成功抓取 {len(race_data['entries'])} 匹馬")
             return race_data
         except:
-            return None
-
-    def _fallback_fetch(self, date_str: str) -> List[Dict[str, Any]]:
-        """如果 JSON 接口失敗，使用最原始的文字掃描 (最後保險)"""
-        # ... (保留先前的暴力掃描邏輯作為備援)
-        return []
+            return {}
 
     def start(self): pass
     def stop(self): pass

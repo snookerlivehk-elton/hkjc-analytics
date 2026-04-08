@@ -35,21 +35,16 @@ async def run_daily_scraper():
     scraper = RaceCardScraper()
     
     try:
+        print(">>> 正在啟動穩定版爬蟲...")
         races_info = scraper.get_all_races_info()
         
         if not races_info:
-            print(">>> [嘗試重試] 初始抓取無資料，正在嘗試備用路徑...")
-            today_str = datetime.now().strftime("%Y/%m/%d")
-            races_info = scraper.get_all_races_info(race_date=today_str)
-
-        if not races_info:
-            print(">>> [失敗] 仍無法抓取賽事資訊。這通常是因為 HKJC 封鎖了伺服器 IP 或今日確實無賽事。")
+            print(">>> [失敗] 仍無法抓取賽事資訊。這通常是因為今日確實無賽事。")
             return
 
         print(f">>> 成功發現 {len(races_info)} 場賽事，開始同步數據...")
         for race_info in races_info:
             race_date = datetime.now()
-            # 從爬蟲回傳的數據中獲取場地，若無則預設 ST
             venue = race_info.get("venue", "ST")
             race = repo.create_race(race_date, venue, race_info["race_no"])
             
