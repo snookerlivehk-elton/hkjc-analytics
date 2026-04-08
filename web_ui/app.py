@@ -10,13 +10,16 @@ root_path = str(Path(__file__).resolve().parent.parent)
 if root_path not in sys.path:
     sys.path.append(root_path)
 
-from database.connection import get_session
+from database.connection import get_session, init_db
 from database.models import Race, RaceEntry, ScoringFactor, ScoringWeight, Horse
 from scoring_engine.core import ScoringEngine
 from utils.logger import logger
 
 # 設定頁面配置
 st.set_page_config(page_title="HKJC 每場賽事獨立計分排名系統", layout="wide")
+
+# 初始化資料庫 (確保在雲端環境表結構存在)
+init_db()
 
 def get_db():
     return get_session()
