@@ -1,101 +1,110 @@
+import re
 import requests
+from bs4 import BeautifulSoup
 from typing import List, Dict, Any
 from datetime import datetime
 import time
 
 class RaceCardScraper:
-    """終極突破版：直接呼叫 HKJC 內部 JSON API (不依賴任何 HTML 渲染)"""
+    """最終穩定版：使用 zh-hk 穩定路徑 + 垂直數據對位解析"""
 
     def __init__(self):
-        # 這是 HKJC 新版網頁背後真正拿資料的 API
-        self.api_url = "https://racing.hkjc.com/racing/content/v1/racecard/chinese"
+        # 對準你提供的穩定網址格式
+        self.base_url = "https://racing.hkjc.com/zh-hk/local/information/racecard"
         self.headers = {
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Referer": "https://racing.hkjc.com/zh-hk/local/information/racecard",
-            "Accept": "application/json, text/plain, */*"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept-Language": "zh-HK,zh;q=0.9,en-US;q=0.8,en;q=0.7"
         }
 
     def get_all_races_info(self, race_date: str = "") -> List[Dict[str, Any]]:
-        """透過 JSON 接口獲取所有賽事數據"""
-        races = []
-        # 將 2026/04/08 轉為 2026-04-08，這是 API 的格式要求
-        formatted_date = race_date.replace("/", "-") if race_date else datetime.now().strftime("%Y-%m-%d")
+        """獲取當日所有場次，並自動探測 HV/ST"""
+        formatted_date = race_date if race_date else datetime.now().strftime("%Y/%m/%d")
         
-        try:
-            print(f">>> 正在連線至 HKJC 內部 API ({formatted_date})...")
-            
-            # 1. 探測第一場，順便拿回整天的基本資訊
-            probe_url = f"{self.api_url}?date={formatted_date}&raceno=1"
-            resp = requests.get(probe_url, headers=self.headers, timeout=15)
-            
-            if resp.status_code != 200:
-                print(f">>> [失敗] API 拒絕連線，狀態碼: {resp.status_code}")
-                return []
-            
-            data = resp.json()
-            
-            # API 會直接告訴我們今天總共有幾場
-            race_count = data.get("totalRaces", 0)
-            if race_count == 0:
-                print(">>> [警告] API 回傳賽事數量為 0，今日可能無賽事。")
-                return []
-                
-            print(f">>> 成功連線！API 確認今日有 {race_count} 場賽事，開始同步...")
+        # 1. 探測今日場地 (嘗試 HV 與 ST)
+        print(f">>> 正在探測今日賽事場地 ({formatted_date})...")
+        venue = "HV" # 預設
+        for v in ["HV", "ST"]:
+            url = f"{self.base_url}?racedate={formatted_date}&Racecourse={v}&RaceNo=1"
+            resp = requests.get(url, headers=self.headers, timeout=10)
+            if "馬名" in resp.text:
+                venue = v
+                break
+        print(f">>> 確定今日場地為: {venue}")
 
-            # 2. 逐場抓取詳細資料
-            for i in range(1, race_count + 1):
-                print(f">>> 正在同步第 {i} 場數據...")
-                race_info = self.scrape_single_race_api(formatted_date, i)
-                if race_info and race_info.get("entries"):
-                    races.append(race_info)
-                time.sleep(1) # 溫柔地請求，避免被擋
+        races = []
+        # 2. 逐場抓取 (1-11 場)
+        for i in range(1, 12):
+            race_url = f"{self.base_url}?racedate={formatted_date}&Racecourse={venue}&RaceNo={i}"
+            print(f">>> 正在同步第 {i} 場數據...")
+            race_info = self.scrape_single_race_html(race_url, i, venue)
             
-            return races
+            if race_info and race_info.get("entries"):
+                races.append(race_info)
+            else:
+                if i == 1: print(">>> [警告] 第一場無數據，請檢查網址或日期。")
+                break
+            time.sleep(1)
             
-        except Exception as e:
-            print(f">>> [錯誤] API 連線異常: {e}")
-            return []
+        return races
 
-    def scrape_single_race_api(self, date_str: str, race_no: int) -> Dict[str, Any]:
-        """從 JSON API 獲取單場細節，這保證 100% 準確且不漏字"""
-        url = f"{self.api_url}?date={date_str}&raceno={race_no}"
+    def scrape_single_race_html(self, url: str, race_no: int, venue: str) -> Dict[str, Any]:
+        """精確解析 HTML 表格數據"""
         try:
             resp = requests.get(url, headers=self.headers, timeout=10)
-            data = resp.json()
-            
-            # 判斷場地
-            venue_en = data.get("venueEn", "")
-            venue = "HV" if "Happy Valley" in venue_en else "ST"
-            
+            soup = BeautifulSoup(resp.text, 'lxml')
             race_data = {"race_no": race_no, "venue": venue, "entries": []}
             
-            # 直接讀取結構化的馬匹陣列
-            horses = data.get("horses", [])
-            for h in horses:
+            # 尋找所有表格行
+            rows = soup.find_all("tr")
+            processed_horses = set()
+
+            for row in rows:
+                tds = row.find_all("td")
+                if len(tds) < 8: continue
+                
+                # 特徵識別：馬號通常在第 1 格且為純數字
+                h_no_raw = tds[0].get_text(strip=True)
+                if not h_no_raw.isdigit(): continue
+                
+                # 提取馬名與編號
+                # 新版結構：馬名可能在第 3 格，且包含 (G368) 這種編號
+                name_cell = tds[2].get_text(separator=' ', strip=True)
+                code_match = re.search(r"([A-Z]\d{3})", name_cell)
+                if not code_match: continue
+                
+                horse_code = code_match.group(1)
+                if horse_code in processed_horses: continue
+                processed_horses.add(horse_code)
+                
+                # 清理馬名 (去掉編號)
+                horse_name = re.sub(r"[\(\（].*?[\)\）]", "", name_cell).strip()
+                
                 entry = {
-                    "horse_no": int(h.get("horseNo", 0)),
-                    "horse_code": h.get("horseCode", ""),
-                    "horse_name": h.get("horseName", ""),
-                    "jockey": h.get("jockeyName", ""),
-                    "trainer": h.get("trainerName", ""),
-                    "draw": int(h.get("draw", 0)) if h.get("draw") else 0,
-                    "actual_weight": int(h.get("weight", 0)) if h.get("weight") else 0
+                    "horse_no": int(h_no_raw),
+                    "horse_code": horse_code,
+                    "horse_name": horse_name,
+                    "jockey": tds[3].get_text(strip=True),
+                    "trainer": tds[4].get_text(strip=True),
+                    "actual_weight": 0,
+                    "draw": 0
                 }
                 
-                # 如果有馬匹編號，才加入清單
-                if entry["horse_code"]:
-                    race_data["entries"].append(entry)
+                # 解析負磅 (通常在第 5 格)
+                weight_raw = re.sub(r'\D', '', tds[5].get_text(strip=True))
+                if weight_raw: entry["actual_weight"] = int(weight_raw)
+                
+                # 解析檔位 (通常在第 6 格)
+                draw_raw = re.sub(r'\D', '', tds[6].get_text(strip=True))
+                if draw_raw: entry["draw"] = int(draw_raw)
+                
+                race_data["entries"].append(entry)
             
             if race_data["entries"]:
-                print(f"    - 成功透過 API 抓取 {len(race_data['entries'])} 匹馬")
-            
+                print(f"    - 成功抓取 {len(race_data['entries'])} 匹馬")
             return race_data
-            
         except Exception as e:
-            print(f"    - [錯誤] 第 {race_no} 場 API 抓取失敗: {e}")
+            print(f"    - [錯誤] 解析異常: {e}")
             return {}
 
-    # 保持介面相容，避免 run_scraper.py 報錯
-    def scrape_single_race(self, url: str, race_no: int, venue: str): pass
     def start(self): pass
     def stop(self): pass
