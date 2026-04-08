@@ -65,21 +65,21 @@ class RaceCardScraper(BaseScraper):
         rows = soup.select("tr")
         for row in rows:
             text = row.get_text(separator=' ', strip=True)
-            # 尋找馬匹編號特徵，例如 (G368) 或 (H123)
-            code_match = re.search(r"\(([A-Z]\d{3})\)", text)
+            # 支援半形 () 與 全形 （） 括號
+            code_match = re.search(r"[\(\（]([A-Z]\d{3})[\)\）]", text)
             if code_match:
                 horse_code = code_match.group(1)
                 try:
-                    # 提取該行所有數字
                     tds = row.select("td")
+                    # 清理每個單元格的文字
                     td_texts = [td.text.strip() for td in tds]
                     
-                    # 第一個數字通常是馬號
-                    horse_no_raw = re.search(r"(\d+)", text)
-                    horse_no = int(horse_no_raw.group(1)) if horse_no_raw else 0
+                    # 提取馬號 (行首數字)
+                    horse_no_match = re.search(r"^(\d+)", text)
+                    horse_no = int(horse_no_match.group(1)) if horse_no_match else 0
                     
-                    # 提取馬名 (編號前的文字)
-                    name_part = text.split(f"({horse_code})")[0].split()[-1]
+                    # 提取馬名
+                    name_part = re.split(r"[\(\（]", text)[0].split()[-1]
                     
                     entry = {
                         "horse_no": horse_no,
@@ -91,21 +91,20 @@ class RaceCardScraper(BaseScraper):
                         "actual_weight": 0
                     }
                     
-                    # 嘗試從 TD 內容識別騎師、練馬師等
+                    # 智能識別數字欄位
+                    nums = re.findall(r"\d+", text)
+                    for n in nums:
+                        v = int(n)
+                        if 100 <= v <= 140: entry["actual_weight"] = v
+                        elif 1 <= v <= 14 and entry["draw"] == 0 and v != horse_no: entry["draw"] = v
+                    
+                    # 嘗試從固定位置獲取騎練 (HKJC 常用位置)
                     if len(td_texts) >= 5:
-                        # 尋找 100-140 之間的數字 (負磅)
-                        for t in td_texts:
-                            clean_t = re.sub(r'\D', '', t)
-                            if clean_t.isdigit():
-                                v = int(clean_t)
-                                if 100 <= v <= 140: entry["actual_weight"] = v
-                                elif 1 <= v <= 14 and entry["draw"] == 0: entry["draw"] = v
-                        
-                        # 騎練通常在固定位置
-                        entry["jockey"] = td_texts[3] if len(td_texts) > 3 else ""
-                        entry["trainer"] = td_texts[4] if len(td_texts) > 4 else ""
+                        entry["jockey"] = td_texts[3]
+                        entry["trainer"] = td_texts[4]
 
-                    race_data["entries"].append(entry)
+                    if entry["horse_code"]:
+                        race_data["entries"].append(entry)
                 except:
                     continue
 
