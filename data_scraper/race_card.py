@@ -53,7 +53,7 @@ class RaceCardScraper:
             return []
 
     def scrape_single_race(self, url: str, race_no: int) -> Dict[str, Any]:
-        """抓取單場馬匹 (純文字流解析)"""
+        """抓取單場馬匹 (雙重掃描穩定版)"""
         try:
             resp = requests.get(url, headers=self.headers, timeout=10)
             soup = BeautifulSoup(resp.text, 'lxml')
@@ -63,39 +63,72 @@ class RaceCardScraper:
             venue = "HV" if "跑馬地" in page_text or "Happy Valley" in page_text else "ST"
             
             race_data = {"race_no": race_no, "venue": venue, "entries": []}
-            
-            # 終極解析：直接掃描全網頁文字中的馬匹編號 (如 G368)
-            all_text = soup.get_text(separator='|', strip=True)
-            matches = list(re.finditer(r"([^\d\s\|]{2,6})\s*[\(\（]([A-Z]\d{3})[\)\）]", all_text))
-            
             processed_codes = set()
-            for match in matches:
-                horse_name = match.group(1).strip()
-                horse_code = match.group(2).strip()
+
+            # 策略 1: 尋找所有馬匹連結 (包含 HorseId=G368 這種格式)
+            horse_links = soup.select("a[href*='HorseId=']")
+            for link in horse_links:
+                href = link.get('href', '')
+                code_match = re.search(r"HorseId=([A-Z]\d{3})", href)
+                if not code_match: continue
                 
+                horse_code = code_match.group(1)
                 if horse_code in processed_codes: continue
                 processed_codes.add(horse_code)
+                
+                # 取得馬名：拿掉括號
+                raw_name = link.get_text(strip=True)
+                horse_name = re.sub(r"[\(\（].*?[\)\）]", "", raw_name).strip()
+                if not horse_name: continue # 跳過空名稱
                 
                 entry = {
                     "horse_no": len(race_data["entries"]) + 1,
                     "horse_code": horse_code,
                     "horse_name": horse_name,
-                    "jockey": "自動抓取", "trainer": "自動抓取", "draw": 0, "actual_weight": 0
+                    "jockey": "自動獲取", "trainer": "自動獲取", "draw": 0, "actual_weight": 0
                 }
                 
-                # 簡單提取附近數字
-                context = all_text[max(0, match.start()-20) : min(len(all_text), match.end()+100)]
-                nums = re.findall(r"\d+", context)
-                for n in nums:
-                    v = int(n)
-                    if 100 <= v <= 145: entry["actual_weight"] = v
-                    elif 1 <= v <= 14 and entry["draw"] == 0: entry["draw"] = v
-                
+                # 策略 2: 向上找 TR 行，提取更多數字 (負磅、檔位)
+                row = link.find_parent("tr")
+                if row:
+                    tds = row.select("td")
+                    td_texts = [td.get_text(strip=True) for td in tds]
+                    # 提取馬號 (第一個數字)
+                    if tds and tds[0].text.strip().isdigit():
+                        entry["horse_no"] = int(tds[0].text.strip())
+                    
+                    # 掃描整行數字
+                    nums = re.findall(r"\d+", row.get_text())
+                    for n in nums:
+                        v = int(n)
+                        if 100 <= v <= 145: entry["actual_weight"] = v
+                        elif 1 <= v <= 14 and entry["draw"] == 0 and v != entry["horse_no"]: entry["draw"] = v
+                    
+                    # 提取騎練 (通常在 3, 4 欄)
+                    if len(td_texts) > 4:
+                        entry["jockey"] = td_texts[3]
+                        entry["trainer"] = td_texts[4]
+
                 race_data["entries"].append(entry)
             
+            # 如果還是沒抓到，嘗試策略 3: 文字流掃描 (備援)
+            if not race_data["entries"]:
+                all_text = soup.get_text(separator='|', strip=True)
+                matches = re.finditer(r"([^\d\s\|]{2,6})\s*[\(\（]([A-Z]\d{3})[\)\）]", all_text)
+                for match in matches:
+                    name, code = match.group(1).strip(), match.group(2).strip()
+                    if code not in processed_codes:
+                        race_data["entries"].append({
+                            "horse_no": len(race_data["entries"]) + 1,
+                            "horse_code": code, "horse_name": name,
+                            "jockey": "備援抓取", "trainer": "備援抓取", "draw": 0, "actual_weight": 0
+                        })
+                        processed_codes.add(code)
+
             print(f"    - 第 {race_no} 場: 成功抓取 {len(race_data['entries'])} 匹馬")
             return race_data
-        except:
+        except Exception as e:
+            print(f"    - 第 {race_no} 場: 抓取錯誤: {e}")
             return {}
 
     def start(self): pass # 保持接口相容

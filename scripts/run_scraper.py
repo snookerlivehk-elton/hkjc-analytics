@@ -86,7 +86,9 @@ async def run_daily_scraper():
         print(f">>> [錯誤] 抓取流程發生崩潰: {e}")
         session.rollback()
     finally:
-        await race_card_scraper.stop()
+        # 修正變數名稱錯誤
+        if 'scraper' in locals() and hasattr(scraper, 'stop'):
+            scraper.stop()
         session.close()
 
 if __name__ == "__main__":
