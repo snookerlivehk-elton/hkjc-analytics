@@ -1,5 +1,6 @@
 import asyncio
 import sys
+import os
 from pathlib import Path
 from datetime import datetime
 
@@ -18,14 +19,19 @@ from utils.logger import logger
 
 async def run_daily_scraper():
     """執行每日自動抓取流程"""
-    print(">>> 正在初始化資料庫...")
+    print(">>> 正在初始化資料庫結構...")
     init_db()
+    
+    # 顯示目前連線對象 (隱藏密碼)
+    db_url = os.getenv("DATABASE_URL", "sqlite")
+    target = db_url.split('@')[-1] if '@' in db_url else '本地 SQLite'
+    print(f">>> 資料庫目標: {target}")
     
     session = get_session()
     repo = RacingRepository(session)
     engine = ScoringEngine(session)
     
-    print(">>> 正在啟動爬蟲...")
+    print(">>> 正在啟動 Playwright 爬蟲...")
     race_card_scraper = RaceCardScraper()
     
     try:
@@ -33,12 +39,16 @@ async def run_daily_scraper():
         print(">>> 瀏覽器啟動成功，開始抓取排位表...")
         races_info = await race_card_scraper.get_all_races_info()
         
+        if not races_info:
+            print(">>> [警告] 未抓取到任何賽事資訊，請檢查 HKJC 網站是否可連線或今日無賽事")
+            return
+
         for race_info in races_info:
-            # 建立賽事記錄 (修正場地邏輯)
             race_date = datetime.now()
             venue = "HV" if "跑馬地" in race_info.get("header", "") else "ST"
             race = repo.create_race(race_date, venue, race_info["race_no"])
             
+            print(f">>> 正在同步場次 {race.race_no} ({venue}) 的馬匹數據...")
             for entry_data in race_info["entries"]:
                 horse = repo.get_or_create_horse(entry_data["horse_code"], entry_data["horse_name"])
                 jockey = repo.get_or_create_jockey(entry_data["jockey"])
@@ -63,17 +73,13 @@ async def run_daily_scraper():
                     session.add(entry)
             
             session.commit()
-            print(f">>> 場次 {race.race_no} 數據抓取完成，正在執行計分排名...")
-            engine.score_race(race.id) # 立即執行計分
-            logger.info(f"場次 {race.race_no} 計分完成")
-
-        # 3. 抓取即時賠率 (分開處理以保持更新)
-        logger.info("開始更新即時賠率...")
-        # 賠率抓取邏輯 (這裡簡化，實務上需與 Entry ID 對接)
-        # ...
+            print(f">>> 場次 {race.race_no} 數據同步完成，執行計分中...")
+            engine.score_race(race.id)
+            
+        print(">>> 每日抓取與計分流程全部完成！")
         
     except Exception as e:
-        logger.error(f"抓取流程發生錯誤: {e}")
+        print(f">>> [錯誤] 抓取流程發生崩潰: {e}")
         session.rollback()
     finally:
         await race_card_scraper.stop()

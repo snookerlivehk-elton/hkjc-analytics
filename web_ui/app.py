@@ -26,26 +26,46 @@ init_db()
 def get_db():
     return get_session()
 
+import os
+
 def trigger_scraper():
-    """使用獨立進程執行抓取任務，避免 Streamlit 逾時"""
-    with st.spinner("🚀 正在啟動雲端爬蟲與計分引擎，大約需要 1-2 分鐘..."):
+    """使用獨立進程執行抓取任務，並傳遞環境變數"""
+    with st.spinner("🚀 正在啟動雲端爬蟲，請勿關閉網頁..."):
         try:
-            # 使用 subprocess 執行腳本，並捕獲輸出
+            # 獲取目前環境變數 (包含 DATABASE_URL)
+            env = os.environ.copy()
+            # 執行腳本
             result = subprocess.run(
                 ["python", "scripts/run_scraper.py"],
                 capture_output=True,
                 text=True,
-                timeout=300
+                timeout=300,
+                env=env
             )
+            
+            # 顯示抓取日誌供除錯
+            if result.stdout:
+                with st.expander("查看抓取日誌"):
+                    st.code(result.stdout)
+            
             if result.returncode == 0:
-                st.success("✅ 數據更新成功！正在刷新頁面...")
+                st.success("✅ 執行完成！請檢查下方數據狀態。")
                 return True
             else:
-                st.error(f"❌ 抓取失敗！詳細錯誤資訊：\n{result.stderr}")
+                st.error(f"❌ 抓取失敗！詳細錯誤：\n{result.stderr}")
                 return False
         except Exception as e:
             st.error(f"❌ 系統錯誤: {e}")
             return False
+
+def test_db_connection(session):
+    """測試資料庫寫入功能"""
+    try:
+        from database.models import ScoringWeight
+        count = session.query(ScoringWeight).count()
+        st.sidebar.success(f"✅ 資料庫連線正常 (權重表紀錄: {count})")
+    except Exception as e:
+        st.sidebar.error(f"❌ 資料庫連線失敗: {e}")
 
 def load_races(session: Session):
     """載入所有可選賽事"""
@@ -105,6 +125,9 @@ def main():
     if st.sidebar.button("🔄 更新當日賽事數據"):
         if trigger_scraper():
             st.rerun()
+    
+    if st.sidebar.button("🔌 測試資料庫連線"):
+        test_db_connection(session)
     
     st.sidebar.markdown("---")
     
