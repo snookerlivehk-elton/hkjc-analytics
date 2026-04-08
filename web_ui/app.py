@@ -268,11 +268,14 @@ def main():
     df = load_scoring_data(session, selected_race_id)
     if df.empty:
         st.info("本場賽事尚未進行計分運算，點擊下方按鈕開始。")
-        if st.button("立即執行計分"):
-            engine = ScoringEngine(session)
-            engine.score_race(selected_race_id)
-            st.rerun()
-    else:
+    
+    # 無論 df 是否為空，都顯示重新計分按鈕，以支援邏輯更新後的重算
+    if st.button("🚀 立即執行 / 重新計分"):
+        engine = ScoringEngine(session)
+        engine.score_race(selected_race_id)
+        st.rerun()
+        
+    if not df.empty:
         # 專業排名表格
         st.markdown("### 🏆 專業排名表")
         
