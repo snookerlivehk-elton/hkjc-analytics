@@ -145,18 +145,20 @@ def create_dummy_data(session):
         return False
 
 def clear_database(session):
-    """清空資料庫中所有賽事相關數據"""
+    """清空資料庫中所有賽事相關數據 (包含往績)"""
     try:
-        from database.models import Race, Horse, Jockey, Trainer, RaceEntry, ScoringFactor, RaceResult
+        from database.models import Race, Horse, Jockey, Trainer, RaceEntry, ScoringFactor, RaceResult, HorseHistory
+        # 由下而上刪除，確保不違反外鍵約束
         session.query(ScoringFactor).delete()
         session.query(RaceResult).delete()
         session.query(RaceEntry).delete()
+        session.query(HorseHistory).delete() # 必須先刪除往績
         session.query(Race).delete()
-        session.query(Horse).delete()
+        session.query(Horse).delete() # 才能刪除馬匹
         session.query(Jockey).delete()
         session.query(Trainer).delete()
         session.commit()
-        st.sidebar.success("✅ 資料庫已清空！")
+        st.sidebar.success("✅ 資料庫已完全清空！")
         return True
     except Exception as e:
         session.rollback()
