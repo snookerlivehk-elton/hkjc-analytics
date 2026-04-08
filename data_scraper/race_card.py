@@ -46,26 +46,26 @@ class RaceCardScraper(BaseScraper):
         return races
 
     async def scrape_single_race(self, url: str, race_no: int) -> Dict[str, Any]:
-        """抓取單場賽事的排位與基礎資訊 (全能文字流掃描版)"""
+        """抓取單場賽事的排位與基礎資訊 (終極強韌掃描版)"""
         if not await self.navigate_with_retry(url):
             return {}
 
-        # 增加等待
+        # 增加等待，給予充分時間載入
         await asyncio.sleep(5)
-        html = await self.get_content()
+        html = await self.page.content() # 改用直接從 page 拿內容
         soup = BeautifulSoup(html, 'lxml')
         
-        # 1. 識別場地
+        # 1. 識別場地與日期
         page_text = soup.get_text(separator=' ', strip=True)
         venue = "HV" if "跑馬地" in page_text or "Happy Valley" in page_text else "ST"
+        
         race_data = {"race_no": race_no, "venue": venue, "entries": []}
 
-        # 2. 終極解析：直接找所有包含馬匹編號特徵的區塊
-        # 匹配格式如 (G368), （H123）
+        # 2. 終極解析：直接找所有包含 (A123) 格式的文字塊
+        # 這種格式在 HKJC 是唯一的，不論頁面怎麼變都不會錯
         all_text = soup.get_text(separator='|', strip=True)
-        # 正規表達式找馬：馬號(可選) + 馬名 + (編號)
-        # 我們先找所有符合 (A123) 的編號，再往回推馬名
-        matches = re.finditer(r"([^\d\s\|]{2,6})\s*[\(\（]([A-Z]\d{3})[\)\）]", all_text)
+        # 匹配如 (G368), （H123）
+        matches = list(re.finditer(r"([^\d\s\|]{2,6})\s*[\(\（]([A-Z]\d{3})[\)\）]", all_text))
         
         processed_codes = set()
         for i, match in enumerate(matches):
@@ -75,43 +75,49 @@ class RaceCardScraper(BaseScraper):
             if horse_code in processed_codes: continue
             processed_codes.add(horse_code)
             
-            # 建立馬匹資料
             entry = {
-                "horse_no": i + 1, # 暫時用順序，後續再精確匹配
+                "horse_no": 0, # 稍後識別
                 "horse_code": horse_code,
                 "horse_name": horse_name,
-                "jockey": "未知",
-                "trainer": "未知",
+                "jockey": "載入中",
+                "trainer": "載入中",
                 "draw": 0,
                 "actual_weight": 0
             }
             
-            # 嘗試在附近找數字 (負磅與檔位)
-            # 我們抓取 match 位置前後 100 個字元的片段
-            context = all_text[max(0, match.start()-50) : min(len(all_text), match.end()+100)]
+            # 獲取上下文進行數字提取
+            context = all_text[max(0, match.start()-60) : min(len(all_text), match.end()+120)]
             nums = re.findall(r"\d+", context)
+            
+            # 識別馬號 (通常在上下文的最前面)
+            if nums: entry["horse_no"] = int(nums[0])
+            
+            # 識別負磅 (100-140) 與 檔位 (1-14)
             for n in nums:
                 v = int(n)
                 if 100 <= v <= 145: entry["actual_weight"] = v
-                elif 1 <= v <= 14 and entry["draw"] == 0: entry["draw"] = v
+                elif 1 <= v <= 14 and entry["draw"] == 0 and v != entry["horse_no"]: 
+                    entry["draw"] = v
             
             race_data["entries"].append(entry)
 
-        if race_data["entries"]:
-            logger.info(f"場次 {race_no}: 成功抓取 {len(race_data['entries'])} 匹馬 (文字流模式)")
-        else:
-            # 備用方案：如果文字流沒抓到，嘗試找連結
+        if not race_data["entries"]:
+            # 備用方案：尋找所有馬匹連結
             links = soup.find_all("a", href=re.compile(r"HorseId=[A-Z]\d{3}"))
             for link in links:
-                code = re.search(r"HorseId=([A-Z]\d{3})", link.get('href', '')).group(1)
-                if code not in processed_codes:
-                    name = re.sub(r"[\(\（].*?[\)\）]", "", link.get_text(strip=True)).strip()
-                    race_data["entries"].append({
-                        "horse_no": len(race_data["entries"]) + 1,
-                        "horse_code": code,
-                        "horse_name": name,
-                        "jockey": "未知", "trainer": "未知", "draw": 0, "actual_weight": 0
-                    })
-                    processed_codes.add(code)
+                c_match = re.search(r"HorseId=([A-Z]\d{3})", link.get('href', ''))
+                if c_match:
+                    c = c_match.group(1)
+                    if c not in processed_codes:
+                        name = re.sub(r"[\(\（].*?[\)\）]", "", link.get_text(strip=True)).strip()
+                        race_data["entries"].append({
+                            "horse_no": len(race_data["entries"]) + 1,
+                            "horse_code": c,
+                            "horse_name": name,
+                            "jockey": "未知", "trainer": "未知", "draw": 0, "actual_weight": 0
+                        })
+                        processed_codes.add(c)
 
+        if race_data["entries"]:
+            logger.info(f"場次 {race_no}: 成功抓取 {len(race_data['entries'])} 匹馬")
         return race_data

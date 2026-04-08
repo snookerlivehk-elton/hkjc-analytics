@@ -74,18 +74,19 @@ def create_dummy_data(session):
         from database.models import Race, RaceEntry, ScoringFactor, RaceResult
         
         # 找到測試賽事
-        test_race = session.query(Race).filter_by(race_id="TEST-RACE-1").first()
-        if test_race:
+        test_races = session.query(Race).filter(Race.race_id.like("TEST-%")).all()
+        for race in test_races:
             # 1. 找到所有關聯的 Entry IDs
-            entry_ids = [e.id for e in test_race.entries]
+            entry_ids = [e.id for e in race.entries]
             if entry_ids:
                 # 2. 由下而上刪除所有關聯數據
                 session.query(ScoringFactor).filter(ScoringFactor.entry_id.in_(entry_ids)).delete(synchronize_session=False)
                 session.query(RaceResult).filter(RaceResult.entry_id.in_(entry_ids)).delete(synchronize_session=False)
-                session.query(RaceEntry).filter(RaceEntry.race_id == test_race.id).delete(synchronize_session=False)
+                session.query(RaceEntry).filter(RaceEntry.race_id == race.id).delete(synchronize_session=False)
             # 3. 刪除賽事本身
-            session.delete(test_race)
-            session.commit()
+            session.delete(race)
+        
+        session.commit()
         
         race_id = setup_dummy_race()
         engine = ScoringEngine(session)
