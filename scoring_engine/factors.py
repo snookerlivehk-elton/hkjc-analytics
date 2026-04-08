@@ -127,30 +127,33 @@ class FactorCalculator:
                 .limit(6).all()
             
             if not history:
-                scores.append(5.0) # 無數據給中位分
+                scores.append(-7.0) # 無數據給中位分 (假設平均第7名)
                 displays.append("無往績紀錄")
                 continue
             
             # 過濾出有效名次 (>0)，忽略退出等異常紀錄
             ranks = [h.rank for h in history if h.rank > 0]
             if not ranks:
-                scores.append(5.0)
+                scores.append(-7.0)
                 displays.append("近期無有效名次")
                 continue
             
+            # 反轉排序：確保第一筆是最近的賽事 (history 是按時間降序 order_by desc)
+            # 所以 ranks[0] 就是最近一場
+            
             # 加權平均計算
             n = len(ranks)
-            weights = list(range(n, 0, -1)) # e.g. [6, 5, 4, 3, 2, 1]
+            # 權重：最近的比賽 (index 0) 給予最大權重 n，最遠的比賽 (index n-1) 給予最小權重 1
+            weights = list(range(n, 0, -1)) # e.g. 如果 n=6, weights = [6, 5, 4, 3, 2, 1]
             total_weight = sum(weights)
             
             weighted_sum = sum(r * w for r, w in zip(ranks, weights))
             weighted_avg_rank = weighted_sum / total_weight
             
-            # 轉換為 0-10 分：
-            # 假設最差名次是 14 名。加權平均 1 名 = 10分，加權平均 14 名 = 0分
-            # 公式: (14 - avg_rank) / 13 * 10
-            score = max(0, min(10, (14 - weighted_avg_rank) / 13 * 10))
-            scores.append(score)
+            # 為了給後端排序使用，我們把 raw_scores 設為負的加權平均名次
+            # 這樣引擎在做 percentile rank 時，數值越大（也就是加權平均名次越小、越接近 1）的馬匹
+            # 才能拿到最高的 10 分！
+            scores.append(-weighted_avg_rank)
             
             # 組合顯示字串
             recent_str = "-".join(str(r) for r in ranks)
