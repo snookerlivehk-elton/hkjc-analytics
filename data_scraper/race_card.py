@@ -121,15 +121,10 @@ class RaceCardScraper:
                     continue
             
             if race_data["entries"]:
-                print(f"    - 第 {race_no} 場: 精確抓取 {len(race_data['entries'])} 匹馬")
+                print(f"    - 第 {race_no} 場: 成功抓取 {len(race_data['entries'])} 匹馬 (精確對位)")
             return race_data
-        except:
-            return {}
-            
-            if race_data["entries"]:
-                print(f"    - 成功提取 {len(race_data['entries'])} 匹馬")
-            return race_data
-        except:
+        except Exception as e:
+            print(f"    - [錯誤] 第 {race_no} 場解析崩潰: {e}")
             return {}
 
     def start(self): pass
