@@ -1,56 +1,53 @@
-from typing import Dict, Any, List
+import re
+import requests
 from bs4 import BeautifulSoup
-from data_scraper.base import BaseScraper
+from typing import List, Dict, Any
+from datetime import datetime
 from utils.logger import logger
 
-class OddsScraper(BaseScraper):
-    """抓取即時與早盤賠率 (Win/Place)"""
+class OddsScraper:
+    """穩定版賠率抓取器：使用 bet.hkjc.com 投注版路徑"""
 
     def __init__(self):
-        super().__init__()
-        self.base_url = "https://racing.hkjc.com/racing/information/Chinese/Racing/OddsAll.aspx"
+        self.base_url = "https://bet.hkjc.com/ch/racing/wp"
+        self.headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept-Language": "zh-HK,zh;q=0.9,en-US;q=0.8,en;q=0.7"
+        }
 
-    async def get_win_place_odds(self, race_no: int, race_date: str = "") -> List[Dict[str, Any]]:
-        """獲取單場賽事的獨贏與位置賠率"""
-        url = f"{self.base_url}?RaceNo={race_no}"
-        if race_date:
-            url += f"&RaceDate={race_date}"
+    def get_win_place_odds(self, race_no: int, race_date: str = "", venue: str = "HV") -> List[Dict[str, Any]]:
+        """獲取獨贏及位置賠率"""
+        # 格式化日期：YYYY-MM-DD
+        date_str = race_date.replace("/", "-") if race_date else datetime.now().strftime("%Y-%m-%d")
+        url = f"{self.base_url}/{date_str}/{venue}/{race_no}"
+        
+        try:
+            print(f">>> 正在抓取即時賠率: {url}")
+            resp = requests.get(url, headers=self.headers, timeout=10)
+            soup = BeautifulSoup(resp.text, 'lxml')
             
-        if not await self.navigate_with_retry(url):
+            odds_list = []
+            # 解析賠率表格 (投注版通常包含 win-place-odds 相關 class)
+            # 這裡我們使用文字識別作為保險
+            rows = soup.find_all("tr")
+            for row in rows:
+                text = row.get_text(separator='|', strip=True)
+                # 尋找包含賠率數字的行
+                nums = re.findall(r"\d+\.\d+", text)
+                if len(nums) >= 2:
+                    # 假設第一個數字是 Win，第二個是 Place
+                    horse_no_match = re.search(r"^(\d+)", text)
+                    if horse_no_match:
+                        odds_list.append({
+                            "horse_no": int(horse_no_match.group(1)),
+                            "win_odds": float(nums[0]),
+                            "place_odds": float(nums[1])
+                        })
+            
+            return odds_list
+        except Exception as e:
+            print(f">>> [警告] 賠率抓取失敗: {e}")
             return []
 
-        html = await self.get_content()
-        soup = BeautifulSoup(html, 'lxml')
-        
-        odds_data = []
-        
-        # 1. 尋找賠率表格 (通常在 class="table_border_hide" 內)
-        # 賠率頁面通常是動態載入的，可能需要等候
-        await self.page.wait_for_selector("table.table_border_hide", timeout=10000)
-        
-        rows = soup.select("table.table_border_hide tr")[1:] # 跳過表頭
-        for row in rows:
-            cols = row.select("td")
-            if len(cols) < 5: continue
-            
-            try:
-                # 獨贏與位置賠率 (Win/Place)
-                horse_no = self.parse_int(cols[0].text)
-                win_odds = self.parse_float(cols[3].text)
-                place_odds = self.parse_float(cols[4].text)
-                
-                odds_data.append({
-                    "horse_no": horse_no,
-                    "win_odds": win_odds,
-                    "place_odds": place_odds
-                })
-            except Exception as e:
-                logger.error(f"解析賠率行錯誤 (場次 {race_no}): {e}")
-
-        return odds_data
-
-    async def get_early_odds(self, race_no: int, race_date: str = "") -> List[Dict[str, Any]]:
-        """獲取早盤賠率 (通常由特定的 API 或早盤頁面提供)"""
-        # 實作早盤抓取邏輯
-        # 這裡簡化回傳空清單
-        return []
+    def start(self): pass
+    def stop(self): pass
