@@ -41,14 +41,15 @@ class FactorCalculator:
     def _calculate_venue_dist_specialty(self) -> pd.Series:
         return pd.Series(np.random.rand(len(self.df)), index=self.df.index)
 
-    # 5. 檔位偏差 (Draw Stats)
+    # 5. 檔位偏差 (Draw Stats) - 真實邏輯：內檔在短途通常有優勢
     def _calculate_draw_stats(self) -> pd.Series:
-        # 官方 Draw Statistics 頁面數據
-        return pd.Series(np.random.rand(len(self.df)), index=self.df.index)
+        # 簡單邏輯：檔位越小，分數越高 (1檔 10分, 14檔 1分)
+        return 11 - self.df["draw"].clip(1, 10)
 
-    # 6. 負磅／評分表現 (Weight/Rating Perf)
+    # 6. 負磅／評分表現 (Weight/Rating Perf) - 真實邏輯：高評分馬通常實力較強
     def _calculate_weight_rating_perf(self) -> pd.Series:
-        return pd.Series(np.random.rand(len(self.df)), index=self.df.index)
+        # 評分越高，分數越高
+        return self.df["rating"] / 10
 
     # 7. 晨操／試閘表現 (Morning/Trial Perf)
     def _calculate_morning_trial_perf(self) -> pd.Series:
@@ -72,9 +73,10 @@ class FactorCalculator:
         # 前領/跟前/後上與本場步速匹配度
         return pd.Series(np.random.rand(len(self.df)), index=self.df.index)
 
-    # 12. 班次表現 (Class Performance)
+    # 12. 班次表現 (Class Performance) - 真實邏輯：負磅越輕壓力越小
     def _calculate_class_performance(self) -> pd.Series:
-        return pd.Series(np.random.rand(len(self.df)), index=self.df.index)
+        # 負磅越輕，分數越高 (135磅 0分, 115磅 10分)
+        return 145 - self.df["weight"]
 
     # 13. 場地狀況專長 (Going Specialty)
     def _calculate_going_specialty(self) -> pd.Series:
@@ -84,9 +86,34 @@ class FactorCalculator:
     def _calculate_speedpro_energy(self) -> pd.Series:
         return pd.Series(np.random.rand(len(self.df)), index=self.df.index)
 
-    # 15. 近期狀態 (Recent Form - Last 6 Runs)
+    # 15. 近期狀態 (Recent Form - Last 6 Runs) - 真實邏輯：計算過去 6 場的平均名次
     def _calculate_recent_form(self) -> pd.Series:
-        return pd.Series(np.random.rand(len(self.df)), index=self.df.index)
+        from database.models import HorseHistory, Horse
+        scores = []
+        for _, row in self.df.iterrows():
+            # 查詢該馬匹最近 6 場往績
+            history = self.session.query(HorseHistory)\
+                .join(Horse)\
+                .filter(Horse.code == row["horse_code"])\
+                .order_by(HorseHistory.race_date.desc())\
+                .limit(6).all()
+            
+            if not history:
+                scores.append(5.0) # 無數據給中位分
+                continue
+            
+            # 計算平均名次 (名次越小，分數越高)
+            ranks = [h.rank for h in history if h.rank > 0]
+            if not ranks:
+                scores.append(5.0)
+                continue
+            
+            avg_rank = sum(ranks) / len(ranks)
+            # 轉換為 0-10 分：1名 10分, 14名 0分
+            score = max(0, min(10, (14 - avg_rank) * 0.75))
+            scores.append(score)
+            
+        return pd.Series(scores, index=self.df.index)
 
     # 16. 獸醫報告／休息天數 (Vet/Rest Days)
     def _calculate_vet_rest_days(self) -> pd.Series:

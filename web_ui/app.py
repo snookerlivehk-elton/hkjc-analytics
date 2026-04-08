@@ -70,6 +70,40 @@ def trigger_scraper():
         st.error(f"❌ 系統錯誤: {e}")
         return False
 
+def trigger_history_backfill():
+    """執行歷史往績回填任務"""
+    st.markdown("### 📚 歷史數據回填進度")
+    log_placeholder = st.empty()
+    full_log = ""
+    
+    try:
+        env = os.environ.copy()
+        process = subprocess.Popen(
+            ["python3", "scripts/fetch_history.py"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=env,
+            bufsize=1
+        )
+
+        for line in iter(process.stdout.readline, ""):
+            full_log += line
+            log_placeholder.code(full_log)
+            
+        process.stdout.close()
+        return_code = process.wait()
+
+        if return_code == 0:
+            st.success("✅ 歷史數據回填完成！")
+            return True
+        else:
+            st.error(f"❌ 執行結束，Exit Code: {return_code}")
+            return False
+    except Exception as e:
+        st.error(f"❌ 系統錯誤: {e}")
+        return False
+
 def test_db_connection(session):
     """測試資料庫寫入功能"""
     try:
@@ -186,6 +220,10 @@ def main():
     # 新增：抓取/更新按鈕
     if st.sidebar.button("🔄 更新當日賽事數據"):
         if trigger_scraper():
+            st.rerun()
+    
+    if st.sidebar.button("📚 回填馬匹歷史往績"):
+        if trigger_history_backfill():
             st.rerun()
     
     if st.sidebar.button("🔌 測試資料庫連線"):

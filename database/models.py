@@ -163,3 +163,22 @@ class VetReport(Base):
     report_date = Column(DateTime)
     details = Column(Text)
     severity = Column(Integer) # 嚴重程度
+
+class HorseHistory(Base):
+    """馬匹歷史往績 (簡化版，用於快速計分)"""
+    __tablename__ = 'horse_histories'
+    id = Column(Integer, primary_key=True)
+    horse_id = Column(Integer, ForeignKey('horses.id'))
+    race_date = Column(DateTime, index=True)
+    venue = Column(String(20))
+    race_class = Column(String(20))
+    distance = Column(Integer)
+    rank = Column(Integer)
+    draw = Column(Integer)
+    jockey_name = Column(String(50))
+    weight = Column(Integer)
+    rating = Column(Integer)
+    finish_time = Column(String(20))
+    created_at = Column(DateTime, default=datetime.now)
+    
+    horse = relationship("Horse")
