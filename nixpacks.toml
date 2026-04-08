@@ -1,5 +1,24 @@
 [phases.setup]
-nixPkgs = ["python311", "playwright-driver"]
+nixPkgs = [
+    "python311", 
+    "playwright-driver",
+    "nss",
+    "atk",
+    "at-spi2-atk",
+    "libdrm",
+    "libX11",
+    "libXcomposite",
+    "libXdamage",
+    "libXext",
+    "libXfixes",
+    "libXrandr",
+    "gbm",
+    "pango",
+    "cairo",
+    "alsa-lib",
+    "dbus",
+    "expat"
+]
 
 [phases.build]
 cmds = [
