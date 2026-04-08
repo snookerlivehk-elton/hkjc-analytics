@@ -50,25 +50,47 @@ class BaseScraper:
         logger.info("Playwright 瀏覽器已關閉")
 
     async def navigate_with_retry(self, url: str, retries: int = 3) -> bool:
-        """導向 URL 並包含重試機制 (務實版)"""
+        """導向 URL 並包含重試機制 (加入 requests 降級備援)"""
         for i in range(retries):
             try:
                 actual_delay = self.delay * (0.8 + random.random() * 0.4)
                 await asyncio.sleep(actual_delay)
                 
                 logger.info(f"正在導向: {url} (嘗試 {i+1}/{retries})")
-                # 使用 domcontentloaded 以快速進入，後續再等待特定元素
-                await self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                return True
+                
+                if self.page:
+                    try:
+                        await self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                        return True
+                    except Exception as e:
+                        logger.warning(f"瀏覽器導向失敗，嘗試使用 Requests 備援: {e}")
+                
+                # 終極備援：如果瀏覽器沒啟動或失敗，直接用 requests 下載 HTML
+                import requests
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1",
+                    "Accept-Language": "zh-HK,zh;q=0.9,en-US;q=0.8,en;q=0.7"
+                }
+                response = requests.get(url, headers=headers, timeout=15)
+                if response.status_code == 200:
+                    # 模擬一個假的 page.content()
+                    self._last_html = response.text
+                    return True
+                
             except Exception as e:
-                logger.warning(f"導向失敗 {url}: {e}")
-                if i == retries - 1:
-                    return False
+                logger.error(f"導向完全失敗 {url}: {e}")
+                if i == retries - 1: return False
         return False
 
     async def get_content(self) -> str:
-        """獲取目前頁面的 HTML 內容"""
-        return await self.page.content()
+        """獲取目前頁面的 HTML 內容 (支援備援數據)"""
+        if hasattr(self, '_last_html') and self._last_html:
+            content = self._last_html
+            self._last_html = None # 用完清空
+            return content
+        if self.page:
+            return await self.page.content()
+        return ""
 
     def parse_float(self, val: str) -> float:
         """工具函數：解析浮點數，失敗回傳 0.0"""
