@@ -57,85 +57,75 @@ class RaceCardScraper:
         return races
 
     def scrape_single_race_brute_force(self, url: str, race_no: int, venue: str) -> Dict[str, Any]:
-        """暴力解析：包含 Header 班次、路程、場況"""
+        """精確表格解析：解決欄位對位錯誤"""
         try:
             resp = self.session.get(url, headers=self.headers, timeout=10)
             html = resp.text
             soup = BeautifulSoup(html, 'lxml')
             
-            # 1. 抓取 Header 資訊 (對應截圖紅框)
-            # 尋找包含「班」、「米」、「地」的文字區塊
+            # 1. 解析 Header (班次、路程、場況)
             header_text = soup.get_text(separator=' ', strip=True)
-            
-            race_class = "未知"
-            distance = 0
-            going = "好地"
-            
-            # 提取班次 (如: 第五班, 第一班)
+            race_class = "未知"; distance = 0; going = "好地"
             class_match = re.search(r"(第[一二三四五]班|公開賽|條件限制賽)", header_text)
             if class_match: race_class = class_match.group(1)
-            
-            # 提取路程 (如: 1200米)
             dist_match = re.search(r"(\d{4})米", header_text)
             if dist_match: distance = int(dist_match.group(1))
-            
-            # 提取場地狀況 (如: 好地, 黏地, 濕地)
-            going_match = re.search(r"(好地|黏地|好至黏地|好至快地|濕地)", header_text)
+            going_match = re.search(r"(好地|黏地|濕地|快地)", header_text)
             if going_match: going = going_match.group(1)
 
             race_data = {
-                "race_no": race_no, 
-                "venue": venue, 
-                "race_class": race_class,
-                "distance": distance,
-                "going": going,
+                "race_no": race_no, "venue": venue, 
+                "race_class": race_class, "distance": distance, "going": going,
                 "entries": []
             }
             
-            processed_codes = set()
+            # 2. 精確表格解析
+            # HKJC 的表格行通常包含馬匹編號連結
             rows = soup.find_all("tr")
-            
             processed_codes = set()
+
             for row in rows:
-                text = row.get_text(separator='|', strip=True)
-                # 搜尋編號特徵 (字母+3位數字)
-                code_match = re.search(r"([A-Z]\d{3})", text)
-                if not code_match: continue
+                tds = row.find_all("td")
+                if len(tds) < 10: continue # 正常的排位表行至少有 10 格
                 
+                # 尋找馬匹編號 (連結中)
+                link = row.select_one("a[href*='HorseId=']")
+                if not link: continue
+                
+                code_match = re.search(r"HorseId=([A-Z]\d{3})", link.get('href', ''))
+                if not code_match: continue
                 horse_code = code_match.group(1)
+                
                 if horse_code in processed_codes: continue
                 processed_codes.add(horse_code)
                 
-                # 分割文字流
-                parts = text.split('|')
-                if len(parts) < 5: continue
-                
                 try:
-                    # 智能定位：馬號通常是第一個數字
-                    h_no = int(re.search(r"\d+", parts[0]).group()) if re.search(r"\d+", parts[0]) else 0
-                    # 馬名通常在編號所在的那個 part
-                    h_name = re.sub(r"[\(\（].*?[\)\）]", "", parts[2]).strip() if len(parts) > 2 else "未知"
-                    
+                    # 根據 HKJC 標準排位表順序提取 (對應你的截圖)
+                    # [0]馬號 [1]6次近績 [2]綵衣 [3]馬名 [4]負磅 [5]騎師 [6]檔位 [7]練馬師 [8]評分
                     entry = {
-                        "horse_no": h_no,
+                        "horse_no": int(re.sub(r'\D', '', tds[0].text.strip())) if tds[0].text.strip() else 0,
                         "horse_code": horse_code,
-                        "horse_name": h_name,
-                        "jockey": parts[3] if len(parts) > 3 else "未知",
-                        "trainer": parts[4] if len(parts) > 4 else "未知",
-                        "actual_weight": 0,
-                        "draw": 0
+                        "horse_name": re.sub(r"[\(\（].*?[\)\）]", "", link.text).strip(),
+                        "jockey": tds[5].get_text(strip=True),
+                        "trainer": tds[7].get_text(strip=True),
+                        "draw": int(re.sub(r'\D', '', tds[6].text.strip())) if tds[6].text.strip().isdigit() else 0,
+                        "actual_weight": int(re.sub(r'\D', '', tds[4].text.strip())) if tds[4].text.strip().isdigit() else 0,
+                        "rating": int(re.sub(r'\D', '', tds[8].text.strip())) if tds[8].text.strip().isdigit() else 0
                     }
                     
-                    # 掃描整行找出負磅 (100-140) 和 檔位 (1-14)
-                    nums = re.findall(r"\d+", text)
-                    for n in nums:
-                        v = int(n)
-                        if 100 <= v <= 145: entry["actual_weight"] = v
-                        elif 1 <= v <= 14 and entry["draw"] == 0 and v != h_no: entry["draw"] = v
+                    # 清理騎師名 (拿掉減磅數字，如 "-2")
+                    entry["jockey"] = re.sub(r"\s*\(.*?\)", "", entry["jockey"]).strip()
                     
                     race_data["entries"].append(entry)
                 except:
                     continue
+            
+            if race_data["entries"]:
+                print(f"    - 成功抓取 {len(race_data['entries'])} 匹馬 (精確模式)")
+            return race_data
+        except Exception as e:
+            print(f"    - [錯誤] 第 {race_no} 場解析崩潰: {e}")
+            return {}
             
             if race_data["entries"]:
                 print(f"    - 成功抓取 {len(race_data['entries'])} 匹馬")
