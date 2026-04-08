@@ -27,23 +27,33 @@ def get_db():
     return get_session()
 
 import os
+import subprocess
+
+# 終極修復：指定 Playwright 瀏覽器安裝路徑 (Railway 必備)
+os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "/app/playwright_browsers"
 
 def trigger_scraper():
     """使用 Popen 實現實時日誌串流輸出"""
     st.markdown("### 🚀 爬蟲執行進度")
-    log_placeholder = st.empty() # 建立一個動態更新的區塊
+    log_placeholder = st.empty() 
     full_log = ""
     
     try:
         env = os.environ.copy()
-        # 使用 Popen 開啟進程，並讀取即時輸出
+        
+        # 啟動前檢查瀏覽器是否已安裝在指定目錄
+        if not os.path.exists(os.environ["PLAYWRIGHT_BROWSERS_PATH"]):
+            st.info("首次執行，正在初始化雲端瀏覽器環境...")
+            subprocess.run(["python3", "-m", "playwright", "install", "chromium"], env=env)
+
+        # 使用 Popen 開啟進程
         process = subprocess.Popen(
             ["python3", "scripts/run_scraper.py"],
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT, # 合併錯誤輸出到 stdout
+            stderr=subprocess.STDOUT,
             text=True,
             env=env,
-            bufsize=1 # 行緩衝
+            bufsize=1
         )
 
         # 持續讀取輸出直到進程結束
