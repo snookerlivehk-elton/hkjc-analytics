@@ -382,6 +382,29 @@ class FactorCalculator:
                             best_win_days = None
                     cached_best_same_dist[key] = (best_win_rating, best_win_weight, best_win_days)
 
+            ref_w = None
+            ref_w_days = None
+            ref_w_label = None
+            if horse_id and current_distance:
+                q_ref = (
+                    self.session.query(HorseHistory.weight, HorseHistory.race_date, HorseHistory.rank)
+                    .filter(
+                        HorseHistory.horse_id == horse_id,
+                        HorseHistory.distance == current_distance,
+                        HorseHistory.rank.in_((1, 2, 3)),
+                        HorseHistory.weight > 0
+                    )
+                    .order_by(HorseHistory.race_date.desc())
+                )
+                if cutoff_date:
+                    q_ref = q_ref.filter(HorseHistory.race_date >= cutoff_date)
+                rec_ref = q_ref.first()
+                if rec_ref:
+                    ref_w = self._to_int(rec_ref[0], default=0) or None
+                    if isinstance(rec_ref[1], datetime):
+                        ref_w_days = max((race_date - rec_ref[1]).days, 0)
+                    ref_w_label = "勝" if rec_ref[2] == 1 else "入"
+
             total_runs = 0
             weighted_place_rate = None
             if horse_id and current_distance:
@@ -426,20 +449,27 @@ class FactorCalculator:
                 decay = math.exp(-best_win_days / float(cfg["half_life_days"]))
 
             delta_rating = (best_win_rating - current_rating) if (best_win_rating is not None and current_rating) else 0
-            delta_weight = (best_win_weight - current_weight) if (best_win_weight is not None and current_weight) else 0
+            delta_weight = (ref_w - current_weight) if (ref_w is not None and current_weight) else 0
 
             win_component = 0.0
             if delta_rating > 0:
                 win_component += min(delta_rating, 15) / 5.0
-            if delta_weight > 0:
-                win_component += min(delta_weight, 10) / 10.0
             win_component *= decay
+
+            weight_component = 0.0
+            weight_decay = 1.0
+            if cfg["half_life_days"] > 0 and ref_w_days is not None:
+                weight_decay = math.exp(-ref_w_days / float(cfg["half_life_days"]))
+            if delta_weight > 0:
+                weight_component = (min(delta_weight, 10) / 40.0) * weight_decay
+            win_component += weight_component
 
             place_component = 0.0
             if weighted_place_rate is not None and total_runs >= cfg["min_samples"]:
                 place_component = float(weighted_place_rate) * 4.0
 
             score = (win_weight * win_component) + (cfg["place_weight"] * place_component)
+            score = round(score / 0.05) * 0.05
 
             raw_scores.append(score)
 
@@ -460,9 +490,12 @@ class FactorCalculator:
             else:
                 parts.append("同程無勝仗")
 
-            if best_win_weight is not None and current_weight:
-                dw = best_win_weight - current_weight
-                parts.append(f"同程勝磅{best_win_weight}({dw:+d})")
+            if ref_w is not None and current_weight and ref_w_label:
+                dw = ref_w - current_weight
+                if ref_w_days is not None:
+                    parts.append(f"同程{ref_w_label}磅{ref_w}({dw:+d})@{ref_w_days}d")
+                else:
+                    parts.append(f"同程{ref_w_label}磅{ref_w}({dw:+d})")
 
             if weighted_place_rate is not None:
                 if total_runs < cfg["min_samples"]:
