@@ -201,6 +201,7 @@ class FactorCalculator:
     # 4. 場地＋路程專長 (Venue/Dist Specialty)
     def _calculate_venue_dist_specialty(self):
         from datetime import datetime, timedelta
+        import math
         from database.models import HorseHistory, Race, SystemConfig
 
         race_id = self.df.iloc[0].get("race_id") if "race_id" in self.df.columns else None
@@ -227,6 +228,7 @@ class FactorCalculator:
 
         cfg = {
             "window_days": 720,
+            "half_life_days": 365,
             "min_samples": 3,
             "confidence_runs": 8,
             "win_w": 0.6,
@@ -238,6 +240,8 @@ class FactorCalculator:
                 v = config.value
                 if "window_days" in v:
                     cfg["window_days"] = int(v["window_days"])
+                if "half_life_days" in v:
+                    cfg["half_life_days"] = int(v["half_life_days"])
                 if "min_samples" in v:
                     cfg["min_samples"] = int(v["min_samples"])
                 if "confidence_runs" in v:
@@ -251,6 +255,8 @@ class FactorCalculator:
 
         if cfg["window_days"] < 0:
             cfg["window_days"] = 0
+        if cfg["half_life_days"] < 0:
+            cfg["half_life_days"] = 0
         if cfg["min_samples"] < 0:
             cfg["min_samples"] = 0
         if cfg["confidence_runs"] <= 0:
@@ -284,7 +290,7 @@ class FactorCalculator:
 
             key = (horse_id, track_key_norm, surface, distance, cfg["window_days"])
             if key in cached:
-                runs, wins, places, last_days = cached[key]
+                runs, win_rate_w, place_rate_w, last_days = cached[key]
             else:
                 q = (
                     self.session.query(HorseHistory.rank, HorseHistory.race_date, HorseHistory.venue, HorseHistory.surface)
@@ -312,12 +318,34 @@ class FactorCalculator:
                     filtered = [(rnk, dt) for rnk, dt, _v, _sf in hist]
 
                 runs = len(filtered)
-                wins = sum(1 for rnk, _ in filtered if rnk == 1)
-                places = sum(1 for rnk, _ in filtered if rnk in (1, 2, 3))
                 last_days = None
                 if filtered and isinstance(filtered[0][1], datetime):
                     last_days = max((race_date - filtered[0][1]).days, 0)
-                cached[key] = (runs, wins, places, last_days)
+
+                if runs > 0 and cfg["half_life_days"] > 0:
+                    sum_w = 0.0
+                    sum_win_w = 0.0
+                    sum_place_w = 0.0
+                    for rnk, dt in filtered:
+                        if isinstance(dt, datetime):
+                            days = max((race_date - dt).days, 0)
+                        else:
+                            days = 0
+                        w = math.exp(-days / float(cfg["half_life_days"]))
+                        sum_w += w
+                        if rnk == 1:
+                            sum_win_w += w
+                        if rnk in (1, 2, 3):
+                            sum_place_w += w
+                    win_rate_w = (sum_win_w / sum_w) if sum_w > 0 else 0.0
+                    place_rate_w = (sum_place_w / sum_w) if sum_w > 0 else 0.0
+                else:
+                    wins = sum(1 for rnk, _ in filtered if rnk == 1)
+                    places = sum(1 for rnk, _ in filtered if rnk in (1, 2, 3))
+                    win_rate_w = wins / runs if runs else 0.0
+                    place_rate_w = places / runs if runs else 0.0
+
+                cached[key] = (runs, win_rate_w, place_rate_w, last_days)
 
             if runs < cfg["min_samples"]:
                 scores.append(0.0)
@@ -325,20 +353,17 @@ class FactorCalculator:
                 displays.append(f"{head}{distance}m 樣本不足({runs}<{cfg['min_samples']})")
                 continue
 
-            win_rate = wins / runs if runs else 0.0
-            place_rate = places / runs if runs else 0.0
-
-            raw = (win_rate * cfg["win_w"]) + (place_rate * cfg["place_w"])
+            raw = (win_rate_w * cfg["win_w"]) + (place_rate_w * cfg["place_w"])
             confidence = min(runs / float(cfg["confidence_runs"]), 1.0)
             raw *= confidence
 
             scores.append(raw)
 
-            param_label = f"W{cfg['window_days']}d | N{cfg['min_samples']} | C{cfg['confidence_runs']} | WW{cfg['win_w']:.2f} | PW{cfg['place_w']:.2f}"
+            param_label = f"W{cfg['window_days']}d | HL{cfg['half_life_days']}d | N{cfg['min_samples']} | C{cfg['confidence_runs']} | WW{cfg['win_w']:.2f} | PW{cfg['place_w']:.2f}"
             last_label = f"@{last_days}d" if last_days is not None else ""
             head = track_key if track_key else surface
             displays.append(
-                f"{param_label} | {head}{distance}m | 勝{win_rate*100:.1f}% | 位{place_rate*100:.1f}% | n{runs} | conf{confidence:.2f}{last_label}"
+                f"{param_label} | {head}{distance}m | 勝{win_rate_w*100:.1f}% | 位{place_rate_w*100:.1f}% | n{runs} | conf{confidence:.2f}{last_label}"
             )
 
         return pd.Series(scores, index=self.df.index), pd.Series(displays, index=self.df.index)

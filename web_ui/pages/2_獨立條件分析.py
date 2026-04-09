@@ -266,12 +266,14 @@ else:
                 if selected_factor == "場地＋路程專長":
                     from database.models import SystemConfig, RaceEntry, ScoringFactor
 
-                    cfg = {"window_days": 720, "min_samples": 3, "confidence_runs": 8, "win_w": 0.6, "place_w": 0.4}
+                    cfg = {"window_days": 720, "half_life_days": 365, "min_samples": 3, "confidence_runs": 8, "win_w": 0.6, "place_w": 0.4}
                     config = session.query(SystemConfig).filter_by(key="venue_dist_specialty_config").first()
                     if config and isinstance(config.value, dict):
                         v = config.value
                         if "window_days" in v:
                             cfg["window_days"] = int(v["window_days"])
+                        if "half_life_days" in v:
+                            cfg["half_life_days"] = int(v["half_life_days"])
                         if "min_samples" in v:
                             cfg["min_samples"] = int(v["min_samples"])
                         if "confidence_runs" in v:
@@ -281,7 +283,7 @@ else:
                         if "place_w" in v:
                             cfg["place_w"] = float(v["place_w"])
 
-                    expected = f"W{cfg['window_days']}d | N{cfg['min_samples']} | C{cfg['confidence_runs']} | WW{cfg['win_w']:.2f} | PW{cfg['place_w']:.2f}"
+                    expected = f"W{cfg['window_days']}d | HL{cfg['half_life_days']}d | N{cfg['min_samples']} | C{cfg['confidence_runs']} | WW{cfg['win_w']:.2f} | PW{cfg['place_w']:.2f}"
                     sample = (
                         session.query(ScoringFactor.raw_data_display)
                         .join(RaceEntry, RaceEntry.id == ScoringFactor.entry_id)
@@ -481,12 +483,14 @@ else:
                     with st.expander("⚙️ 調整時間窗/樣本下限/可信度與勝率權重 (調整後將即時儲存並重算)", expanded=False):
                         from database.models import SystemConfig
 
-                        cfg = {"window_days": 720, "min_samples": 3, "confidence_runs": 8, "win_w": 0.6, "place_w": 0.4}
+                        cfg = {"window_days": 720, "half_life_days": 365, "min_samples": 3, "confidence_runs": 8, "win_w": 0.6, "place_w": 0.4}
                         config = session.query(SystemConfig).filter_by(key="venue_dist_specialty_config").first()
                         if config and isinstance(config.value, dict):
                             v = config.value
                             if "window_days" in v:
                                 cfg["window_days"] = int(v["window_days"])
+                            if "half_life_days" in v:
+                                cfg["half_life_days"] = int(v["half_life_days"])
                             if "min_samples" in v:
                                 cfg["min_samples"] = int(v["min_samples"])
                             if "confidence_runs" in v:
@@ -497,20 +501,24 @@ else:
                                 cfg["place_w"] = float(v["place_w"])
 
                         window_options = {"近 180 日": 180, "近 365 日": 365, "近 720 日": 720, "全部": 0}
+                        hl_options = {"半衰期 180 日": 180, "半衰期 365 日": 365, "半衰期 720 日": 720, "不衰減": 0}
                         cur_window_label = next((k for k, v in window_options.items() if v == cfg["window_days"]), "近 720 日")
+                        cur_hl_label = next((k for k, v in hl_options.items() if v == cfg["half_life_days"]), "半衰期 365 日")
 
                         with st.form("venue_dist_specialty_config_form"):
-                            c1, c2, c3, c4, c5 = st.columns(5)
+                            c1, c2, c3, c4, c5, c6 = st.columns(6)
                             window_label = c1.selectbox("時間窗", list(window_options.keys()), index=list(window_options.keys()).index(cur_window_label))
-                            min_samples = c2.number_input("樣本下限 N", value=int(cfg["min_samples"]), min_value=0, max_value=30, step=1)
-                            confidence_runs = c3.number_input("可信度滿分樣本", value=int(cfg["confidence_runs"]), min_value=1, max_value=50, step=1)
-                            win_w = c4.number_input("勝率權重", value=float(cfg["win_w"]), min_value=0.0, max_value=1.0, step=0.05)
-                            place_w = c5.number_input("上名率權重", value=float(cfg["place_w"]), min_value=0.0, max_value=1.0, step=0.05)
+                            hl_label = c2.selectbox("時間衰減", list(hl_options.keys()), index=list(hl_options.keys()).index(cur_hl_label))
+                            min_samples = c3.number_input("樣本下限 N", value=int(cfg["min_samples"]), min_value=0, max_value=30, step=1)
+                            confidence_runs = c4.number_input("可信度滿分樣本", value=int(cfg["confidence_runs"]), min_value=1, max_value=50, step=1)
+                            win_w = c5.number_input("勝率權重", value=float(cfg["win_w"]), min_value=0.0, max_value=1.0, step=0.05)
+                            place_w = c6.number_input("上名率權重", value=float(cfg["place_w"]), min_value=0.0, max_value=1.0, step=0.05)
 
                             submitted = st.form_submit_button("💾 儲存參數並為本場重新計分", type="primary")
                             if submitted:
                                 new_cfg = {
                                     "window_days": int(window_options[window_label]),
+                                    "half_life_days": int(hl_options[hl_label]),
                                     "min_samples": int(min_samples),
                                     "confidence_runs": int(confidence_runs),
                                     "win_w": float(win_w),
