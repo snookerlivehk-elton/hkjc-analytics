@@ -14,6 +14,9 @@ from scoring_engine.core import ScoringEngine
 
 st.set_page_config(page_title="數據管理 - HKJC Analytics", layout="wide")
 
+# 初始化資料庫 (確保在雲端環境表結構存在)
+init_db()
+
 def trigger_scraper(target_date: str = None):
     """實時日誌串流輸出"""
     st.markdown("### 🚀 爬蟲執行進度")
