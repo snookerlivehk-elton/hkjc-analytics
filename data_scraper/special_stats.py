@@ -12,24 +12,72 @@ class SpecialStatsScraper(BaseScraper):
         self.jt_combo_url = "https://racing.hkjc.com/racing/information/Chinese/Racing/JockeyTrainerCombo.aspx"
         self.speedpro_url = "https://racing.hkjc.com/racing/information/Chinese/Racing/SpeedPro.aspx"
 
-    async def get_draw_stats(self, venue: str, distance: int, going: str) -> List[Dict[str, Any]]:
-        """獲取官方檔位統計 (Draw Statistics)"""
-        # venue: ST, HV
-        # 這裡需要模擬選擇下拉選單，Playwright 非常適合
-        url = self.draw_stats_url
-        if not await self.navigate_with_retry(url):
-            return []
+    async def get_draw_stats(self, racedate: str = "") -> Dict[int, List[Dict[str, Any]]]:
+        """獲取當日賽事的官方檔位統計 (Draw Statistics)
+        回傳格式: { race_no: [ {draw, total_runs, win, win_rate, place_rate}, ... ] }
+        """
+        import requests
         
-        # 選擇場地、距離與場況
-        # await self.page.select_option("#venue_select", venue)
-        # ... 實作選單選擇邏輯
+        # 賽日專用的檔位統計頁面，會列出當天所有場次的檔位數據
+        url = f"https://racing.hkjc.com/zh-hk/local/information/draw"
+        if racedate:
+            url += f"?racedate={racedate}"
+            
+        print(f">>> 正在抓取當日檔位統計: {url}")
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+            "Accept-Language": "zh-HK,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Referer": "https://racing.hkjc.com/"
+        }
         
-        html = await self.get_content()
-        soup = BeautifulSoup(html, 'lxml')
+        stats_by_race = {}
         
-        stats = []
-        # 解析統計表格
-        return stats
+        try:
+            # 這裡我們可以直接用 requests 因為它不需要複雜的渲染
+            resp = requests.get(url, headers=headers, timeout=15)
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, 'lxml')
+            
+            tables = soup.find_all("table")
+            for table in tables:
+                text = table.get_text(strip=True)
+                if "檔位" in text and "勝出率" in text:
+                    # 找場次號碼，通常在表頭第一行
+                    rows = table.find_all("tr")
+                    if not rows: continue
+                    
+                    header_text = rows[0].get_text(strip=True)
+                    import re
+                    m = re.search(r'第\s*(\d+)\s*場', header_text)
+                    if not m: continue
+                    
+                    race_no = int(m.group(1))
+                    stats_list = []
+                    
+                    # 跳過前兩行標題 (賽事資訊, 欄位名稱)
+                    for row in rows[2:]:
+                        cols = [td.get_text(strip=True) for td in row.find_all(["td", "th"])]
+                        if len(cols) >= 10 and cols[0].isdigit():
+                            try:
+                                stats_list.append({
+                                    "draw": int(cols[0]),
+                                    "total_runs": int(cols[1]),
+                                    "win": int(cols[2]),
+                                    "win_rate": float(cols[6]),
+                                    "place_rate": float(cols[8])
+                                })
+                            except ValueError:
+                                continue
+                                
+                    if stats_list:
+                        stats_by_race[race_no] = stats_list
+                        
+            print(f">>> 成功抓取 {len(stats_by_race)} 場賽事的檔位統計")
+            return stats_by_race
+            
+        except Exception as e:
+            print(f">>> [錯誤] 抓取檔位統計失敗: {e}")
+            return {}
 
     async def get_jt_combo(self) -> List[Dict[str, Any]]:
         """獲取騎師/練馬師合作統計 (J/T Combo)"""

@@ -48,6 +48,22 @@ async def run_daily_scraper():
             print(f">>> [失敗] 無法抓取 {target_date_str or '今日'} 的賽事資訊。這通常是因為該日無賽事或尚未出排位。")
             return
 
+        from data_scraper.special_stats import SpecialStatsScraper
+        special_scraper = SpecialStatsScraper()
+        draw_stats_by_race = await special_scraper.get_draw_stats(racedate=target_date_str)
+        
+        # 將檔位統計儲存到 SystemConfig 以供計分使用
+        if draw_stats_by_race:
+            from database.models import SystemConfig
+            config_key = f"draw_stats_{target_date_str}" if target_date_str else f"draw_stats_{datetime.now().strftime('%Y/%m/%d')}"
+            config = session.query(SystemConfig).filter_by(key=config_key).first()
+            if not config:
+                config = SystemConfig(key=config_key, description=f"當日檔位統計 ({target_date_str or '最新'})")
+                session.add(config)
+            config.value = draw_stats_by_race
+            session.commit()
+            print(f">>> 已將當日檔位統計存入資料庫 ({config_key})")
+
         print(f">>> 成功發現 {len(races_info)} 場賽事，開始同步數據...")
         for race_info in races_info:
             # 如果有指定日期，使用該日期建立賽事，否則使用當天

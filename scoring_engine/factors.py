@@ -167,12 +167,83 @@ class FactorCalculator:
         display = pd.Series(["無數據"] * len(self.df), index=self.df.index)
         return raw_scores, display
 
-    # 5. 檔位偏差 (Draw Stats) - 真實邏輯：內檔在短途通常有優勢
+    # 5. 檔位偏差 (Draw Stats) - 基於當日檔位統計
     def _calculate_draw_stats(self):
-        # 簡單邏輯：檔位越小，分數越高 (1檔 10分, 14檔 1分)
-        raw_scores = 11 - self.df["draw"].clip(1, 10)
-        display = self.df["draw"].apply(lambda x: f"第 {x} 檔")
-        return raw_scores, display
+        from database.models import SystemConfig, Race
+        scores = []
+        displays = []
+        
+        # 取得當前賽事資訊
+        race_id = self.df.iloc[0].get("race_id") if "race_id" in self.df.columns else None
+        race_no = None
+        race_date_str = None
+        if race_id:
+            race = self.session.query(Race).filter_by(id=race_id).first()
+            if race:
+                race_no = race.race_no
+                if hasattr(race.race_date, 'strftime'):
+                    race_date_str = race.race_date.strftime("%Y/%m/%d")
+                else:
+                    race_date_str = str(race.race_date)[:10].replace("-", "/")
+                    
+        # 讀取當日檔位統計 (從 SystemConfig)
+        draw_stats_dict = {}
+        if race_date_str:
+            config_key = f"draw_stats_{race_date_str}"
+            config = self.session.query(SystemConfig).filter_by(key=config_key).first()
+            if config and isinstance(config.value, dict):
+                # value 格式應為 { "1": [{"draw": 1, "win_rate": 8.0, ...}, ...], ... }
+                # 注意 JSON 儲存後 key 可能變成字串
+                str_race_no = str(race_no)
+                if str_race_no in config.value:
+                    stats_list = config.value[str_race_no]
+                    for item in stats_list:
+                        draw_stats_dict[item["draw"]] = item
+        
+        # 如果有讀取到檔位統計，則使用統計數據；否則回退到預設邏輯
+        if draw_stats_dict:
+            # 找出最大勝出率作為基準
+            max_win_rate = max([float(item.get("win_rate", 0.0)) for item in draw_stats_dict.values()]) if draw_stats_dict else 0.0
+            # 找出最大上名率作為基準 (用於防呆或輔助)
+            max_place_rate = max([float(item.get("place_rate", 0.0)) for item in draw_stats_dict.values()]) if draw_stats_dict else 0.0
+            
+            for _, row in self.df.iterrows():
+                try:
+                    draw = int(row.get("draw", 0))
+                except (ValueError, TypeError):
+                    draw = 0
+                    
+                if draw in draw_stats_dict:
+                    stat = draw_stats_dict[draw]
+                    win_rate = float(stat.get("win_rate", 0.0))
+                    place_rate = float(stat.get("place_rate", 0.0))
+                    runs = stat.get("total_runs", 0)
+                    
+                    # 混合得分: 70% 勝率 + 30% 上名率 (如果都有最大值基準)
+                    score = 0.0
+                    if max_win_rate > 0:
+                        score += (win_rate / max_win_rate) * 7.0
+                    if max_place_rate > 0:
+                        score += (place_rate / max_place_rate) * 3.0
+                        
+                    scores.append(score)
+                    displays.append(f"第 {draw} 檔 (勝率 {win_rate}%, 上名率 {place_rate}%, 樣本 {runs})")
+                else:
+                    # 該檔位無統計數據
+                    scores.append(0.0)
+                    displays.append(f"第 {draw} 檔 (無統計數據)")
+        else:
+            # 預設簡單邏輯：檔位越小，分數越高 (1檔 10分, 14檔 1分)
+            for _, row in self.df.iterrows():
+                try:
+                    draw = int(row.get("draw", 0))
+                except (ValueError, TypeError):
+                    draw = 0
+                score = float(max(11 - draw, 1)) if draw > 0 else 0.0
+                scores.append(score)
+                displays.append(f"第 {draw} 檔 (未載入官方統計)")
+                
+        return pd.Series(scores, index=self.df.index), pd.Series(displays, index=self.df.index)
 
     # 6. 負磅／評分表現 (Weight/Rating Perf) - 真實邏輯：高評分馬通常實力較強
     def _calculate_weight_rating_perf(self):
