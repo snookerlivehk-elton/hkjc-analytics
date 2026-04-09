@@ -200,6 +200,61 @@ else:
                         engine.score_race(selected_race_id)
                         st.rerun()
 
+                if selected_factor in ("騎師＋練馬師合作 (同路程/場地)", "騎師＋練馬師合作 (不論馬匹)"):
+                    from database.models import SystemConfig, RaceEntry, ScoringFactor
+
+                    cfg = session.query(SystemConfig).filter_by(key="jt_bond_config").first()
+                    win_w, place_w, window = 0.7, 0.3, 0
+                    if cfg and isinstance(cfg.value, dict):
+                        win_w = float(cfg.value.get("win", win_w))
+                        place_w = float(cfg.value.get("place", place_w))
+                        window = int(cfg.value.get("window", window))
+                    else:
+                        cfg2 = session.query(SystemConfig).filter_by(key="jt_bond_weights").first()
+                        if cfg2 and isinstance(cfg2.value, dict):
+                            win_w = float(cfg2.value.get("win", win_w))
+                            place_w = float(cfg2.value.get("place", place_w))
+
+                    if win_w < 0:
+                        win_w = 0.0
+                    if place_w < 0:
+                        place_w = 0.0
+                    total_w = win_w + place_w
+                    if total_w <= 0:
+                        win_w, place_w, total_w = 0.7, 0.3, 1.0
+                    win_w /= total_w
+                    place_w /= total_w
+                    if window < 0:
+                        window = 0
+
+                    window_label = f"近{window}" if window > 0 else "最大"
+                    expected_key_1 = f"全庫{window_label}"
+                    expected_key_2 = f"權重 {win_w:.2f}/{place_w:.2f}"
+
+                    sample = (
+                        session.query(ScoringFactor.raw_data_display)
+                        .join(RaceEntry, RaceEntry.id == ScoringFactor.entry_id)
+                        .filter(
+                            RaceEntry.race_id == selected_race_id,
+                            ScoringFactor.factor_name == "jockey_trainer_bond",
+                        )
+                        .first()
+                    )
+
+                    needs_rescore = (
+                        (not sample)
+                        or (not sample[0])
+                        or (expected_key_1 not in sample[0])
+                        or (expected_key_2 not in sample[0])
+                    )
+                    auto_key = f"auto_rescore_jockey_trainer_bond_{selected_race_id}_{expected_key_1}_{expected_key_2}"
+                    if needs_rescore and not st.session_state.get(auto_key, False):
+                        st.session_state[auto_key] = True
+                        from scoring_engine.core import ScoringEngine
+                        engine = ScoringEngine(session)
+                        engine.score_race(selected_race_id)
+                        st.rerun()
+
                 # 提取基本資訊與該因子的分數
                 race = session.get(Race, selected_race_id)
                 track_display = race.track_type if race.track_type else race.venue
@@ -296,39 +351,52 @@ else:
                     - 最後會在同一場內做相對百分位標準化成 0–10 分
                     """)
                     
-                    with st.expander("⚙️ 調整勝率/入圍率權重 (調整後將即時儲存並重算)"):
+                    with st.expander("⚙️ 調整全庫近X次樣本 + 勝率/入圍率權重 (調整後將即時儲存並重算)"):
                         from database.models import SystemConfig
                         
-                        config = session.query(SystemConfig).filter_by(key="jt_bond_weights").first()
+                        config = session.query(SystemConfig).filter_by(key="jt_bond_config").first()
                         if config and isinstance(config.value, dict):
                             current_win_w = float(config.value.get("win", 0.7))
                             current_place_w = float(config.value.get("place", 0.3))
-                        elif config and isinstance(config.value, list) and len(config.value) == 2:
-                            current_win_w = float(config.value[0])
-                            current_place_w = float(config.value[1])
+                            current_window = int(config.value.get("window", 0))
                         else:
-                            current_win_w, current_place_w = 0.7, 0.3
+                            config2 = session.query(SystemConfig).filter_by(key="jt_bond_weights").first()
+                            if config2 and isinstance(config2.value, dict):
+                                current_win_w = float(config2.value.get("win", 0.7))
+                                current_place_w = float(config2.value.get("place", 0.3))
+                            else:
+                                current_win_w, current_place_w = 0.7, 0.3
+                            current_window = 0
                         
                         st.markdown("可把其中一項設為 0 以停用該項（例如只用勝率或只用入圍率）。系統會自動把兩者正規化成總和 = 1。")
                         
-                        with st.form("jt_bond_weights_form"):
-                            col_a, col_b = st.columns(2)
-                            win_w = col_a.number_input("勝率權重", value=current_win_w, min_value=0.0, max_value=1.0, step=0.05)
-                            place_w = col_b.number_input("入圍率(前3)權重", value=current_place_w, min_value=0.0, max_value=1.0, step=0.05)
+                        window_options = {
+                            "近 5 次": 5,
+                            "近 10 次": 10,
+                            "最大 (全部)": 0
+                        }
+                        current_label = next((k for k, v in window_options.items() if v == current_window), "最大 (全部)")
+                        
+                        with st.form("jt_bond_config_form"):
+                            col_a, col_b, col_c = st.columns(3)
+                            window_label = col_a.selectbox("合作樣本範圍", list(window_options.keys()), index=list(window_options.keys()).index(current_label))
+                            win_w = col_b.number_input("勝率權重", value=current_win_w, min_value=0.0, max_value=1.0, step=0.05)
+                            place_w = col_c.number_input("入圍率(前3)權重", value=current_place_w, min_value=0.0, max_value=1.0, step=0.05)
                             
                             submitted = st.form_submit_button("💾 儲存參數並為本場重新計分", type="primary")
                             if submitted:
+                                new_cfg = {"window": int(window_options[window_label]), "win": float(win_w), "place": float(place_w)}
                                 if not config:
-                                    config = SystemConfig(key="jt_bond_weights", description="騎師＋練馬師合作 (J/T Bond) 勝率與入圍率權重")
+                                    config = SystemConfig(key="jt_bond_config", description="騎師＋練馬師合作：全庫近X次樣本 + 勝率/入圍率權重")
                                     session.add(config)
-                                config.value = {"win": float(win_w), "place": float(place_w)}
+                                config.value = new_cfg
                                 session.commit()
                                 
                                 from scoring_engine.core import ScoringEngine
                                 engine = ScoringEngine(session)
                                 engine.score_race(selected_race_id)
                                 
-                                st.success(f"權重已儲存為 勝率={win_w}、入圍率={place_w}，並已重新計算分數！")
+                                st.success(f"參數已儲存為 {new_cfg}，並已重新計算分數！")
                                 st.rerun()
 
                 if selected_factor in ("騎練與本駒合作 (近X次)", "騎師＋馬匹組合"):

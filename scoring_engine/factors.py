@@ -28,16 +28,25 @@ class FactorCalculator:
 
         win_w = 0.7
         place_w = 0.3
+        window = 0
+
         try:
-            config = self.session.query(SystemConfig).filter_by(key="jt_bond_weights").first()
-            if config:
+            config = self.session.query(SystemConfig).filter_by(key="jt_bond_config").first()
+            if config and isinstance(config.value, dict):
                 v = config.value
-                if isinstance(v, dict):
-                    win_w = float(v.get("win", win_w))
-                    place_w = float(v.get("place", place_w))
-                elif isinstance(v, list) and len(v) == 2:
-                    win_w = float(v[0])
-                    place_w = float(v[1])
+                win_w = float(v.get("win", win_w))
+                place_w = float(v.get("place", place_w))
+                window = int(v.get("window", window))
+            else:
+                config2 = self.session.query(SystemConfig).filter_by(key="jt_bond_weights").first()
+                if config2:
+                    v2 = config2.value
+                    if isinstance(v2, dict):
+                        win_w = float(v2.get("win", win_w))
+                        place_w = float(v2.get("place", place_w))
+                    elif isinstance(v2, list) and len(v2) == 2:
+                        win_w = float(v2[0])
+                        place_w = float(v2[1])
         except Exception:
             pass
 
@@ -51,6 +60,9 @@ class FactorCalculator:
             total_w = 1.0
         win_w /= total_w
         place_w /= total_w
+
+        if window < 0:
+            window = 0
         
         for _, row in self.df.iterrows():
             jockey = row["jockey_name"]
@@ -61,31 +73,40 @@ class FactorCalculator:
                 displays.append("無騎練資料")
                 continue
                 
-            # 查詢歷史往績中，該騎練組合的合作紀錄
-            # 由於目前 HorseHistory 只包含參賽馬的往績，這是一個「抽樣」的騎練合作數據
-            history = self.session.query(HorseHistory).filter(
-                HorseHistory.jockey_name == jockey,
-                HorseHistory.trainer_name == trainer
-            ).all()
-            
+            q = (
+                self.session.query(HorseHistory)
+                .filter(
+                    HorseHistory.jockey_name == jockey,
+                    HorseHistory.trainer_name == trainer
+                )
+                .order_by(HorseHistory.race_date.desc())
+            )
+            if window > 0:
+                q = q.limit(window)
+
+            try:
+                history = q.all()
+            except Exception:
+                history = []
             total_runs = len(history)
             if total_runs < 3:
-                scores.append(0.0) # 樣本數太少，給予中位基礎分
-                displays.append(f"合作樣本不足 ({total_runs}次)")
+                scores.append(0.0)
+                window_label = f"近{window}" if window > 0 else "最大"
+                displays.append(f"全庫{window_label}樣本不足 ({total_runs}次)")
                 continue
-                
-            # 計算勝出 (第1名) 與 上名 (前3名) 次數
+
             wins = sum(1 for h in history if h.rank == 1)
             places = sum(1 for h in history if h.rank in (1, 2, 3))
-            
             win_rate = wins / total_runs
             place_rate = places / total_runs
-            
+
             bond_score = (win_rate * win_w) + (place_rate * place_w)
-            
+
             scores.append(bond_score)
+
+            window_label = f"近{window}" if window > 0 else "最大"
             displays.append(
-                f"合作{total_runs}次 冠{wins} 前3{places} (勝率 {win_rate*100:.1f}% | 前3 {place_rate*100:.1f}% | 權重 {win_w:.2f}/{place_w:.2f})"
+                f"全庫{window_label}合作{total_runs}次 冠{wins} 前3{places} (勝率 {win_rate*100:.1f}% | 前3 {place_rate*100:.1f}% | 權重 {win_w:.2f}/{place_w:.2f})"
             )
             
         return pd.Series(scores, index=self.df.index), pd.Series(displays, index=self.df.index)
@@ -184,7 +205,10 @@ class FactorCalculator:
             if window > 0:
                 q = q.limit(window)
 
-            history = q.all()
+            try:
+                history = q.all()
+            except Exception:
+                history = []
             total_runs = len(history)
             if total_runs < 3:
                 scores.append(0.0)
