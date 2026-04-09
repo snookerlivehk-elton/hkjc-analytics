@@ -331,9 +331,9 @@ def main():
     race = session.query(Race).get(selected_race_id)
     st.subheader(f"📊 賽事詳情: {selected_date_str} | 第 {race.race_no} 場")
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("場地", race.venue)
+    col1.metric("跑道資訊", race.track_type if race.track_type else race.venue)
     col2.metric("班次", race.race_class or "N/A")
-    col3.metric("路程", f"{race.distance}m")
+    col3.metric("路程", f"{race.distance}m" if race.distance else "N/A")
     col4.metric("場地狀況", race.going or "未知")
 
     # 數據加載與顯示

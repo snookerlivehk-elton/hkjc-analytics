@@ -72,10 +72,24 @@ class RaceCardScraper:
                 distance = int(dist_match.group(1))
                 
             # 嘗試擷取班次 (例如 第一班, 第二班, 寶靈平磅賽, 新馬賽等)
-            class_match = re.search(r'第\s*\d+\s*班|新馬賽|平磅賽', full_text)
+            class_match = re.search(r'第\s*[一二三四五六七八九十]+\s*班|新馬賽|平磅賽', full_text)
             if class_match:
                 race_class = class_match.group(0)
                 
+            # 擷取跑道資訊，並組合成類似 "沙田草地"C"" 的格式，以便與歷史往績匹配
+            track_type_info = ""
+            venue_str = "沙田" if venue == "ST" else "跑馬地"
+            track_match = re.search(r'(草地|全天候跑道|泥地)', full_text)
+            course_match = re.search(r'(\"[A-Z0-9\+]+\")\s*賽道', full_text)
+            
+            if track_match:
+                t = track_match.group(1)
+                if t in ["全天候跑道", "泥地"]:
+                    track_type_info = f"{venue_str}全天候"
+                elif t == "草地":
+                    course_code = course_match.group(1) if course_match else '""'
+                    track_type_info = f"{venue_str}草地{course_code}"
+                    
             # 嘗試擷取場地狀況 (通常在排位表階段不會有場地狀況，只會有草地/泥地)
             if "草地" in full_text:
                 going = "草地"
@@ -88,6 +102,7 @@ class RaceCardScraper:
                 "distance": distance,
                 "race_class": race_class,
                 "going": going,
+                "track_type": track_type_info,
                 "entries": []
             }
             

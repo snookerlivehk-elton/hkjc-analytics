@@ -151,7 +151,8 @@ else:
                 
                 # 提取基本資訊與該因子的分數
                 race = session.query(Race).get(selected_race_id)
-                st.markdown(f"#### 📊 {selected_date_str} | 第 {race.race_no} 場 | {race.venue}")
+                track_display = race.track_type if race.track_type else race.venue
+                st.markdown(f"#### 📊 {selected_date_str} | 第 {race.race_no} 場 | {track_display}")
                 view_cols = ["馬號", "馬名", "檔位", "負磅", "評分", f"{selected_factor}_raw", selected_factor]
                 factor_df = df[view_cols].copy()
                 
