@@ -6,6 +6,7 @@ from database.models import RaceEntry, ScoringFactor, ScoringWeight
 from utils.logger import logger
 
 from scoring_engine.utils import calculate_relative_percentile, estimate_win_probability
+from scoring_engine.constants import DISABLED_FACTORS
 
 class ScoringEngine:
     """每場賽事獨立計分排名系統"""
@@ -16,7 +17,12 @@ class ScoringEngine:
 
     def _load_weights(self) -> Dict[str, float]:
         """從資料庫載入權重配置"""
-        weights = self.session.query(ScoringWeight).filter_by(is_active=True).all()
+        weights = (
+            self.session.query(ScoringWeight)
+            .filter(ScoringWeight.is_active == True)
+            .filter(~ScoringWeight.factor_name.in_(DISABLED_FACTORS))
+            .all()
+        )
         # 確保資料庫中已有預設權重，否則初始化失敗
         return {w.factor_name: w.weight for w in weights}
 

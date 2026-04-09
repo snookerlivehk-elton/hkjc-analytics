@@ -13,6 +13,7 @@ if root_path not in sys.path:
 from database.connection import get_session, init_db
 from database.models import Race, RaceEntry, ScoringFactor, ScoringWeight, Horse
 from scoring_engine.core import ScoringEngine
+from scoring_engine.constants import DISABLED_FACTORS
 from utils.logger import logger
 import asyncio
 import subprocess
@@ -290,7 +291,12 @@ def main():
 
     # Sidebar: 權重動態調整 (可折疊)
     with st.sidebar.expander("⚙️ 權重配置 (動態調整)"):
-        weights = session.query(ScoringWeight).filter_by(is_active=True).all()
+        weights = (
+            session.query(ScoringWeight)
+            .filter(ScoringWeight.is_active == True)
+            .filter(~ScoringWeight.factor_name.in_(DISABLED_FACTORS))
+            .all()
+        )
         updated_weights = {}
         for w in weights:
             updated_weights[w.factor_name] = st.slider(f"{w.description}", 0.0, 5.0, float(w.weight), 0.1)

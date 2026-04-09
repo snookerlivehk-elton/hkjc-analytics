@@ -80,6 +80,13 @@ def init_db():
         if need_seed:
             from scripts.init_db import populate_default_weights
             populate_default_weights()
+        else:
+            disabled = ("gear_change", "going_specialty", "speedpro_energy", "vet_rest_days")
+            session.query(ScoringWeight).filter(ScoringWeight.factor_name.in_(disabled)).update(
+                {ScoringWeight.is_active: False},
+                synchronize_session=False,
+            )
+            session.commit()
     except Exception as e:
         print(f"預填權重失敗: {e}")
     finally:

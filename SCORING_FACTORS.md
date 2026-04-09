@@ -21,11 +21,22 @@
 
 ---
 
+## ⛔ 暫停使用（未完成開發，已禁制參與評分/權重配置）
+
+| 條件（UI 名稱） | 內部代號 | 原因 |
+| :--- | :--- | :--- |
+| **配備變化** | `gear_change` | 目前未完整入庫（缺 `RaceEntry.gear`），先禁用避免誤導總分。 |
+| **場地狀況專長 (Going)** | `going_specialty` | 目前為 placeholder，且賽前 Going 可能未公布，先禁用避免重複/誤判。 |
+| **HKJC SpeedPRO 能量分** | `speedpro_energy` | 需要 SpeedPRO 官方頁面數據爬取與入庫（目前缺），先禁用。 |
+| **獸醫報告／休息天數** | `vet_rest_days` | 需要獸醫報告資料爬取與入庫（目前 `VetReport` 尚未穩定填入），先禁用。 |
+
+---
+
 ## 🟡 資料已具備/部分具備（待實作真實邏輯）
 
 | 條件（UI 名稱） | 內部代號 | 現況 | 建議方向 |
 | :--- | :--- | :--- | :--- |
-| **場地狀況專長 (Going)** | `going_specialty` | 目前為 placeholder；且賽前 Going 可能未公布 | Going 已可能存入 `Race.going`，若缺失可先用草/泥作 fallback；可用歷史在相同 Going（或相同跑道）表現聚合。 |
+| （暫無） |  |  |  |
 
 ---
 
@@ -47,6 +58,3 @@
 | :--- | :--- | :--- |
 | **馬匹分段時間（同路程歷史）** | `horse_time_perf` | v1 已以往績完成時間落地；如要加入「分段時間」則仍需賽果頁分段時間入庫（目前 `RaceResult.sectional_times` 尚未穩定填入）。 |
 | **晨操／試閘表現** | `morning_trial_perf` | 需要晨操/試閘頁面爬取與入庫（目前 `Workout` 尚未穩定填入）。 |
-| **配備變化** | `gear_change` | 需要在排位爬蟲中抓取並寫入 `RaceEntry.gear`（目前未完整入庫）。 |
-| **HKJC SpeedPRO 能量分** | `speedpro_energy` | 需要 SpeedPRO 官方頁面數據爬取與入庫（目前缺）。 |
-| **獸醫報告／休息天數** | `vet_rest_days` | 需要獸醫報告資料爬取與入庫（目前 `VetReport` 尚未穩定填入）。 |

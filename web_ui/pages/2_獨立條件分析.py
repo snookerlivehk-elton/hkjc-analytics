@@ -11,6 +11,7 @@ if root_path not in sys.path:
 
 from database.connection import get_session
 from database.models import Race, RaceEntry, ScoringFactor, ScoringWeight
+from scoring_engine.constants import DISABLED_FACTORS
 
 st.set_page_config(page_title="獨立條件分析 - HKJC Analytics", layout="wide")
 
@@ -22,7 +23,12 @@ def load_factor_data(session: Session, race_id: int):
     if not entries:
         return None
         
-    weights = session.query(ScoringWeight).filter_by(is_active=True).all()
+    weights = (
+        session.query(ScoringWeight)
+        .filter(ScoringWeight.is_active == True)
+        .filter(~ScoringWeight.factor_name.in_(DISABLED_FACTORS))
+        .all()
+    )
     factor_desc_map = {w.factor_name: w.description for w in weights}
     
     data = []
@@ -36,7 +42,12 @@ def load_factor_data(session: Session, race_id: int):
             "總分": round(entry.total_score, 2) if entry.total_score else 0,
         }
         
-        factors = session.query(ScoringFactor).filter_by(entry_id=entry.id).all()
+        factors = (
+            session.query(ScoringFactor)
+            .filter_by(entry_id=entry.id)
+            .filter(ScoringFactor.factor_name.in_(list(factor_desc_map.keys())))
+            .all()
+        )
         for f in factors:
             # 儲存分數，使用中文描述作為欄位名
             desc = factor_desc_map.get(f.factor_name, f.factor_name)
