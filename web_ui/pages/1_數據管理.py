@@ -12,6 +12,7 @@ if root_path not in sys.path:
 
 from database.connection import get_session, init_db
 from scoring_engine.core import ScoringEngine
+from web_ui.ui_table import render_table
 
 st.set_page_config(page_title="數據管理 - HKJC Analytics", layout="wide")
 
@@ -381,7 +382,7 @@ with tab_members:
                 rr = dict(r)
                 rr.pop("_weights", None)
                 df_overview.append(rr)
-            st.dataframe(pd.DataFrame(df_overview), use_container_width=True, hide_index=True)
+            render_table(pd.DataFrame(df_overview), key="members_overview", wrap=True)
 
             st.markdown("---")
             st.markdown("### 🔎 組合權重參數")
@@ -398,7 +399,7 @@ with tab_members:
                             items.append({"條件": factor_desc[k], "代號": k, "權重": round(float(v), 2), "佔比%": round(share, 1)})
                     items = sorted(items, key=lambda x: x["佔比%"], reverse=True)
                     if items:
-                        st.dataframe(pd.DataFrame(items), use_container_width=True, hide_index=True)
+                        render_table(pd.DataFrame(items), key=f"preset_weights_{email}_{name}", wrap=True)
                     else:
                         st.info("此組合沒有可用的權重資料。")
     finally:
