@@ -294,17 +294,58 @@ class FactorCalculator:
 
     # 6. 負磅／評分表現 (Weight/Rating Perf) - 真實邏輯：高評分馬通常實力較強
     def _calculate_weight_rating_perf(self):
-        from database.models import HorseHistory, Race
+        from datetime import datetime, timedelta
+        import math
+        from database.models import HorseHistory, Race, SystemConfig
 
         race_id = self.df.iloc[0].get("race_id") if "race_id" in self.df.columns else None
         race_id = self._to_int(race_id, default=0)
         race = self.session.get(Race, race_id) if race_id else None
         current_distance = self._to_int(getattr(race, "distance", 0), default=0) if race else 0
+        race_date = getattr(race, "race_date", None) if race else None
+        if not isinstance(race_date, datetime):
+            race_date = datetime.now()
+
+        cfg = {
+            "window_days": 365,
+            "half_life_days": 180,
+            "min_samples": 5,
+            "place_weight": 0.2,
+        }
+        try:
+            config = self.session.query(SystemConfig).filter_by(key="weight_rating_perf_config").first()
+            if config and isinstance(config.value, dict):
+                v = config.value
+                if "window_days" in v:
+                    cfg["window_days"] = int(v["window_days"])
+                if "half_life_days" in v:
+                    cfg["half_life_days"] = int(v["half_life_days"])
+                if "min_samples" in v:
+                    cfg["min_samples"] = int(v["min_samples"])
+                if "place_weight" in v:
+                    cfg["place_weight"] = float(v["place_weight"])
+        except Exception:
+            pass
+
+        if cfg["window_days"] < 0:
+            cfg["window_days"] = 0
+        if cfg["half_life_days"] < 0:
+            cfg["half_life_days"] = 0
+        if cfg["min_samples"] < 0:
+            cfg["min_samples"] = 0
+        if cfg["place_weight"] < 0:
+            cfg["place_weight"] = 0.0
+        if cfg["place_weight"] > 1:
+            cfg["place_weight"] = 1.0
+
+        win_weight = 1.0 - cfg["place_weight"]
+        cutoff_date = (race_date - timedelta(days=cfg["window_days"])) if cfg["window_days"] > 0 else None
 
         raw_scores = []
         displays = []
 
         cached_best_same_dist = {}
+        cached_stats_same_dist = {}
 
         for _, row in self.df.iterrows():
             horse_id = self._to_int(row.get("horse_id", 0), default=0)
@@ -313,13 +354,14 @@ class FactorCalculator:
 
             best_win_rating = None
             best_win_weight = None
+            best_win_days = None
             if horse_id and current_distance:
                 key = (horse_id, current_distance)
                 if key in cached_best_same_dist:
-                    best_win_rating, best_win_weight = cached_best_same_dist[key]
+                    best_win_rating, best_win_weight, best_win_days = cached_best_same_dist[key]
                 else:
                     rec = (
-                        self.session.query(HorseHistory.rating, HorseHistory.weight)
+                        self.session.query(HorseHistory.rating, HorseHistory.weight, HorseHistory.race_date)
                         .filter(
                             HorseHistory.horse_id == horse_id,
                             HorseHistory.distance == current_distance,
@@ -327,37 +369,109 @@ class FactorCalculator:
                             HorseHistory.rating > 0
                         )
                         .order_by(HorseHistory.rating.desc())
-                        .first()
                     )
+                    if cutoff_date:
+                        rec = rec.filter(HorseHistory.race_date >= cutoff_date)
+                    rec = rec.first()
                     if rec:
                         best_win_rating = self._to_int(rec[0], default=0) or None
                         best_win_weight = self._to_int(rec[1], default=0) or None
-                    cached_best_same_dist[key] = (best_win_rating, best_win_weight)
+                        if isinstance(rec[2], datetime):
+                            best_win_days = max((race_date - rec[2]).days, 0)
+                        else:
+                            best_win_days = None
+                    cached_best_same_dist[key] = (best_win_rating, best_win_weight, best_win_days)
+
+            total_runs = 0
+            weighted_place_rate = None
+            if horse_id and current_distance:
+                key = (horse_id, current_distance, cfg["window_days"], cfg["half_life_days"])
+                if key in cached_stats_same_dist:
+                    total_runs, weighted_place_rate = cached_stats_same_dist[key]
+                else:
+                    q = (
+                        self.session.query(HorseHistory.rank, HorseHistory.race_date)
+                        .filter(
+                            HorseHistory.horse_id == horse_id,
+                            HorseHistory.distance == current_distance,
+                            HorseHistory.rank > 0
+                        )
+                        .order_by(HorseHistory.race_date.desc())
+                    )
+                    if cutoff_date:
+                        q = q.filter(HorseHistory.race_date >= cutoff_date)
+                    hist = q.all()
+                    total_runs = len(hist)
+                    if total_runs > 0:
+                        if cfg["half_life_days"] > 0:
+                            sum_w = 0.0
+                            sum_place_w = 0.0
+                            for rnk, dt in hist:
+                                if isinstance(dt, datetime):
+                                    days = max((race_date - dt).days, 0)
+                                else:
+                                    days = 0
+                                w = math.exp(-days / float(cfg["half_life_days"]))
+                                sum_w += w
+                                if rnk in (1, 2, 3):
+                                    sum_place_w += w
+                            weighted_place_rate = (sum_place_w / sum_w) if sum_w > 0 else 0.0
+                        else:
+                            places = sum(1 for rnk, _ in hist if rnk in (1, 2, 3))
+                            weighted_place_rate = places / total_runs
+                    cached_stats_same_dist[key] = (total_runs, weighted_place_rate)
+
+            decay = 1.0
+            if cfg["half_life_days"] > 0 and best_win_days is not None:
+                decay = math.exp(-best_win_days / float(cfg["half_life_days"]))
 
             delta_rating = (best_win_rating - current_rating) if (best_win_rating is not None and current_rating) else 0
             delta_weight = (best_win_weight - current_weight) if (best_win_weight is not None and current_weight) else 0
 
-            score = 0.0
+            win_component = 0.0
             if delta_rating > 0:
-                score += min(delta_rating, 15) / 5.0
+                win_component += min(delta_rating, 15) / 5.0
             if delta_weight > 0:
-                score += min(delta_weight, 10) / 10.0
+                win_component += min(delta_weight, 10) / 10.0
+            win_component *= decay
+
+            place_component = 0.0
+            if weighted_place_rate is not None and total_runs >= cfg["min_samples"]:
+                place_component = float(weighted_place_rate) * 4.0
+
+            score = (win_weight * win_component) + (cfg["place_weight"] * place_component)
 
             raw_scores.append(score)
 
             parts = []
+            parts.append(f"W{cfg['window_days']}d")
+            parts.append(f"HL{cfg['half_life_days']}d")
+            parts.append(f"N{cfg['min_samples']}")
+            parts.append(f"PW{cfg['place_weight']:.2f}")
             if current_distance:
                 parts.append(f"同程{current_distance}m")
 
             if best_win_rating is not None:
                 dr = best_win_rating - current_rating
-                parts.append(f"同程可贏評{best_win_rating}({dr:+d})")
+                if best_win_days is not None:
+                    parts.append(f"同程可贏評{best_win_rating}({dr:+d})@{best_win_days}d")
+                else:
+                    parts.append(f"同程可贏評{best_win_rating}({dr:+d})")
             else:
                 parts.append("同程無勝仗")
 
             if best_win_weight is not None and current_weight:
                 dw = best_win_weight - current_weight
                 parts.append(f"同程勝磅{best_win_weight}({dw:+d})")
+
+            if weighted_place_rate is not None:
+                if total_runs < cfg["min_samples"]:
+                    parts.append(f"同程上名率{weighted_place_rate*100:.1f}%({total_runs}<{cfg['min_samples']})")
+                else:
+                    parts.append(f"同程上名率{weighted_place_rate*100:.1f}%({total_runs})")
+
+            if cfg["half_life_days"] > 0 and best_win_days is not None:
+                parts.append(f"decay{decay:.2f}")
 
             parts.append(f"現評{current_rating}")
             parts.append(f"負磅{current_weight}")
