@@ -23,6 +23,8 @@ if not st.session_state.get("is_superadmin", False):
     st.error("❌ 此頁面目前僅限 Superadmin 使用。請先到「數據管理後台」登入。")
     st.stop()
 
+st.markdown("[➡️ 前往數據管理後台](/%E6%95%B8%E6%93%9A%E7%AE%A1%E7%90%86)")
+
 def load_races(session: Session):
     return session.query(Race).order_by(Race.race_date.desc(), Race.race_no.asc()).all()
 
