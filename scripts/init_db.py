@@ -11,7 +11,7 @@ from database.connection import init_db, get_session
 from database.models import ScoringWeight
 
 def populate_default_weights():
-    """初始化 17 個計分條件的預設權重"""
+    """初始化計分條件的預設權重"""
     session = get_session()
     
     factors = [
@@ -22,7 +22,6 @@ def populate_default_weights():
         ("draw_stats", "檔位偏差 (官方 Draw Statistics)", 0.8),
         ("weight_rating_perf", "負磅／評分表現", 0.7),
         ("morning_trial_perf", "晨操／試閘表現", 1.0),
-        ("jockey_horse_bond", "騎師＋馬匹組合", 0.9),
         ("trainer_horse_bond", "練馬師＋馬匹組合", 0.9),
         ("gear_change", "配備變化", 0.6),
         ("pace_analysis", "配速分析 (步速匹配度)", 1.3),
@@ -35,6 +34,7 @@ def populate_default_weights():
     ]
     
     print("正在寫入預設權重配置...")
+    desired_factor_names = {name for name, _, _ in factors}
     for name, desc, weight in factors:
         # 檢查是否已存在
         existing = session.query(ScoringWeight).filter_by(factor_name=name).first()
@@ -44,6 +44,11 @@ def populate_default_weights():
         else:
             if existing.description != desc:
                 existing.description = desc
+
+    existing_weights = session.query(ScoringWeight).all()
+    for w in existing_weights:
+        if w.factor_name not in desired_factor_names:
+            session.delete(w)
     
     try:
         session.commit()

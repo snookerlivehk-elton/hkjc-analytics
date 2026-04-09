@@ -45,7 +45,7 @@ class ScoringEngine:
         
         df = pd.DataFrame(horse_data)
         
-        # 3. 計算 17 個獨立計分條件的「原始分 (Raw Value)」
+        # 3. 計算所有啟用的獨立計分條件的「原始分 (Raw Value)」
         from scoring_engine.factors import FactorCalculator
         calculator = FactorCalculator(self.session, df)
         

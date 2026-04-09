@@ -113,7 +113,7 @@ class RaceResult(Base):
     entry = relationship("RaceEntry", back_populates="result")
 
 class ScoringFactor(Base):
-    """獨立計分條件得分 (17個條件)"""
+    """獨立計分條件得分"""
     __tablename__ = 'scoring_factors'
     id = Column(Integer, primary_key=True)
     entry_id = Column(Integer, ForeignKey('race_entries.id'))

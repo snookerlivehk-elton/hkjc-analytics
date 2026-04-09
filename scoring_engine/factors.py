@@ -5,7 +5,7 @@ from database.models import RaceResult, RaceEntry, OddsHistory, Workout, VetRepo
 from typing import Dict, Any
 
 class FactorCalculator:
-    """17 個獨立計分條件的具體計算邏輯"""
+    """獨立計分條件的具體計算邏輯"""
 
     def __init__(self, session: Session, df: pd.DataFrame):
         self.session = session
@@ -187,17 +187,85 @@ class FactorCalculator:
         display = pd.Series(["無數據"] * len(self.df), index=self.df.index)
         return raw_scores, display
 
-    # 8. 騎師＋馬匹組合 (Jockey/Horse Bond)
-    def _calculate_jockey_horse_bond(self):
-        raw_scores = pd.Series(np.random.rand(len(self.df)), index=self.df.index)
-        display = pd.Series(["無數據"] * len(self.df), index=self.df.index)
-        return raw_scores, display
-
-    # 9. 練馬師＋馬匹組合 (Trainer/Horse Bond)
+    # 8. 練馬師＋馬匹組合 (Trainer/Horse Bond)
     def _calculate_trainer_horse_bond(self):
-        raw_scores = pd.Series(np.random.rand(len(self.df)), index=self.df.index)
-        display = pd.Series(["無數據"] * len(self.df), index=self.df.index)
-        return raw_scores, display
+        from database.models import HorseHistory, SystemConfig
+
+        scores = []
+        displays = []
+
+        win_w = 0.7
+        place_w = 0.3
+        window = 0
+
+        try:
+            config = self.session.query(SystemConfig).filter_by(key="trainer_horse_bond_config").first()
+            if config and isinstance(config.value, dict):
+                v = config.value
+                win_w = float(v.get("win", win_w))
+                place_w = float(v.get("place", place_w))
+                window = int(v.get("window", window))
+        except Exception:
+            pass
+
+        if win_w < 0:
+            win_w = 0.0
+        if place_w < 0:
+            place_w = 0.0
+        total_w = win_w + place_w
+        if total_w <= 0:
+            win_w, place_w = 0.7, 0.3
+            total_w = 1.0
+        win_w /= total_w
+        place_w /= total_w
+
+        if window < 0:
+            window = 0
+
+        for _, row in self.df.iterrows():
+            horse_id = row.get("horse_id", None)
+            trainer = row.get("trainer_name", "")
+
+            if not horse_id or not trainer:
+                scores.append(0.0)
+                displays.append("無數據")
+                continue
+
+            q = (
+                self.session.query(HorseHistory)
+                .filter(
+                    HorseHistory.horse_id == int(horse_id),
+                    HorseHistory.trainer_name == trainer
+                )
+                .order_by(HorseHistory.race_date.desc())
+            )
+            if window > 0:
+                q = q.limit(window)
+
+            try:
+                history = q.all()
+            except Exception:
+                history = []
+
+            total_runs = len(history)
+            window_label = f"近{window}" if window > 0 else "最大"
+            if total_runs < 3:
+                scores.append(0.0)
+                displays.append(f"{window_label}樣本不足 ({total_runs}次)")
+                continue
+
+            wins = sum(1 for h in history if h.rank == 1)
+            places = sum(1 for h in history if h.rank in (1, 2, 3))
+            win_rate = wins / total_runs
+            place_rate = places / total_runs
+
+            bond_score = (win_rate * win_w) + (place_rate * place_w)
+            scores.append(bond_score)
+            displays.append(
+                f"{window_label}訓練{total_runs}次 冠{wins} 前3{places} (勝率 {win_rate*100:.1f}% | 前3 {place_rate*100:.1f}% | 權重 {win_w:.2f}/{place_w:.2f})"
+            )
+
+        return pd.Series(scores, index=self.df.index), pd.Series(displays, index=self.df.index)
 
     # 10. 配備變化 (Gear Change)
     def _calculate_gear_change(self):
