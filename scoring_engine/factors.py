@@ -392,12 +392,6 @@ class FactorCalculator:
 
         return pd.Series(raw_vals, index=self.df.index), pd.Series(displays, index=self.df.index)
 
-    # 3. 投注額變動 (Odds Movement)
-    def _calculate_odds_movement(self):
-        raw_scores = pd.Series(np.random.rand(len(self.df)), index=self.df.index)
-        display = pd.Series(["無數據"] * len(self.df), index=self.df.index)
-        return raw_scores, display
-
     # 4. 場地＋路程專長 (Venue/Dist Specialty)
     def _calculate_venue_dist_specialty(self):
         from datetime import datetime, timedelta
@@ -885,12 +879,6 @@ class FactorCalculator:
 
     # 10. 配備變化 (Gear Change)
     def _calculate_gear_change(self):
-        raw_scores = pd.Series(np.random.rand(len(self.df)), index=self.df.index)
-        display = pd.Series(["無數據"] * len(self.df), index=self.df.index)
-        return raw_scores, display
-
-    # 11. 配速分析 (Pace Analysis)
-    def _calculate_pace_analysis(self):
         raw_scores = pd.Series(np.random.rand(len(self.df)), index=self.df.index)
         display = pd.Series(["無數據"] * len(self.df), index=self.df.index)
         return raw_scores, display

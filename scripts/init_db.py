@@ -17,13 +17,11 @@ def populate_default_weights():
     factors = [
         ("jockey_trainer_bond", "騎師＋練馬師合作 (綜合)", 1.0),
         ("horse_time_perf", "馬匹分段時間＋完成時間 (同路程歷史)", 1.5),
-        ("odds_movement", "投注額變動 (早盤 vs 即時)", 1.2),
         ("venue_dist_specialty", "場地＋路程專長", 1.0),
         ("draw_stats", "檔位偏差 (官方 Draw Statistics)", 0.8),
         ("weight_rating_perf", "負磅／評分表現", 0.7),
         ("morning_trial_perf", "晨操／試閘表現", 1.0),
         ("gear_change", "配備變化", 0.6),
-        ("pace_analysis", "配速分析 (步速匹配度)", 1.3),
         ("class_performance", "班次表現", 1.0),
         ("going_specialty", "場地狀況專長 (Going)", 0.8),
         ("speedpro_energy", "HKJC SpeedPRO 能量分", 1.2),
