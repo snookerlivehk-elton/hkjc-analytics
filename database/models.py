@@ -165,6 +165,15 @@ class VetReport(Base):
     details = Column(Text)
     severity = Column(Integer) # 嚴重程度
 
+class SystemConfig(Base):
+    """系統設定與算法參數 (儲存可變參數如權重衰減)"""
+    __tablename__ = 'system_configs'
+    id = Column(Integer, primary_key=True)
+    key = Column(String(50), unique=True, nullable=False, index=True)
+    value = Column(JSON, nullable=False)
+    description = Column(String(200))
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
 class HorseHistory(Base):
     """馬匹歷史往績 (簡化版，用於快速計分)"""
     __tablename__ = 'horse_histories'

@@ -176,6 +176,62 @@ else:
                     factor_df.style.apply(highlight_first, axis=1),
                     use_container_width=True
                 )
+                
+                # 針對特定因子顯示詳細說明與參數調整
+                if selected_factor == "近期狀態 (Last 6 Runs)":
+                    st.markdown("---")
+                    st.markdown("### 💡 演算法說明：近期狀態 (Last 6 Runs)")
+                    st.markdown("""
+                    這個條件用於評估馬匹最近 6 場比賽的**「時間衰減加權平均名次」**。
+                    
+                    **為什麼要用加權平均？**
+                    因為賽馬最重要的就是「當下狀態」。一匹最近一場跑第 1 名的馬，其狀態絕對比半年前跑第 1 名的馬更好。
+                    因此，我們賦予**越近期的比賽越高的權重**。
+                    
+                    **計分公式：**
+                    1. 系統會抓取馬匹最近 6 場有效名次 (忽略退出等異常紀錄)。
+                    2. 將每場名次乘上對應的權重 (預設最近一場為 6，最遠一場為 1)。
+                    3. 算出加權平均名次。加權平均名次越小（越接近 1），代表狀態越好。
+                    4. 引擎會將這場比賽所有馬匹的加權平均名次進行百分位標準化，最優秀者得 10 分。
+                    """)
+                    
+                    with st.expander("⚙️ 調整加權參數 (調整後將即時儲存並重算)"):
+                        from database.models import SystemConfig
+                        
+                        config = session.query(SystemConfig).filter_by(key="recent_form_weights").first()
+                        if config and isinstance(config.value, list) and len(config.value) == 6:
+                            current_weights = config.value
+                        else:
+                            current_weights = [6, 5, 4, 3, 2, 1]
+                            
+                        st.markdown("設定過去 6 場比賽的權重 (第 1 場代表最近一場)：")
+                        
+                        with st.form("recent_form_weights_form"):
+                            col_w1, col_w2, col_w3, col_w4, col_w5, col_w6 = st.columns(6)
+                            w1 = col_w1.number_input("第 1 場 (最近)", value=current_weights[0], min_value=0, max_value=20)
+                            w2 = col_w2.number_input("第 2 場", value=current_weights[1], min_value=0, max_value=20)
+                            w3 = col_w3.number_input("第 3 場", value=current_weights[2], min_value=0, max_value=20)
+                            w4 = col_w4.number_input("第 4 場", value=current_weights[3], min_value=0, max_value=20)
+                            w5 = col_w5.number_input("第 5 場", value=current_weights[4], min_value=0, max_value=20)
+                            w6 = col_w6.number_input("第 6 場 (最遠)", value=current_weights[5], min_value=0, max_value=20)
+                            
+                            submitted = st.form_submit_button("💾 儲存參數並為本場重新計分", type="primary")
+                            if submitted:
+                                new_weights = [w1, w2, w3, w4, w5, w6]
+                                if not config:
+                                    config = SystemConfig(key="recent_form_weights", description="近期狀態 (Last 6) 權重陣列")
+                                    session.add(config)
+                                config.value = new_weights
+                                session.commit()
+                                
+                                # 觸發重新計分
+                                from scoring_engine.core import ScoringEngine
+                                engine = ScoringEngine(session)
+                                engine.score_race(selected_race_id)
+                                
+                                st.success(f"參數已儲存為 {new_weights}，並已重新計算分數！")
+                                st.rerun()
+
             else:
                 st.warning("未找到計分條件數據。")
                 

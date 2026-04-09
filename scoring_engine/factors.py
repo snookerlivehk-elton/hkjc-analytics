@@ -111,12 +111,16 @@ class FactorCalculator:
 
     # 15. 近期狀態 (Recent Form - Last 6 Runs) - 真實邏輯：加權計算過去 6 場的平均名次
     def _calculate_recent_form(self):
-        from database.models import HorseHistory, Horse
+        from database.models import HorseHistory, Horse, SystemConfig
         scores = []
         displays = []
         
-        # 定義權重：越近的比賽權重越高 (最近 1 場權重 6，最遠權重 1)
-        # 如果只有 3 場，權重則是 3, 2, 1
+        # 讀取自訂權重參數 (如果沒有則使用預設值 [6, 5, 4, 3, 2, 1])
+        config = self.session.query(SystemConfig).filter_by(key="recent_form_weights").first()
+        if config and isinstance(config.value, list) and len(config.value) == 6:
+            default_weights = config.value
+        else:
+            default_weights = [6, 5, 4, 3, 2, 1]
         
         for _, row in self.df.iterrows():
             # 查詢該馬匹最近 6 場往績
@@ -141,18 +145,20 @@ class FactorCalculator:
             # 反轉排序：確保第一筆是最近的賽事 (history 是按時間降序 order_by desc)
             # 所以 ranks[0] 就是最近一場
             
-            # 加權平均計算
+            # 根據有效名次的數量截取對應的權重
             n = len(ranks)
-            # 權重：最近的比賽 (index 0) 給予最大權重 n，最遠的比賽 (index n-1) 給予最小權重 1
-            weights = list(range(n, 0, -1)) # e.g. 如果 n=6, weights = [6, 5, 4, 3, 2, 1]
+            weights = default_weights[:n]
             total_weight = sum(weights)
             
+            if total_weight == 0:
+                scores.append(-7.0)
+                displays.append("權重總和為0")
+                continue
+                
             weighted_sum = sum(r * w for r, w in zip(ranks, weights))
             weighted_avg_rank = weighted_sum / total_weight
             
             # 為了給後端排序使用，我們把 raw_scores 設為負的加權平均名次
-            # 這樣引擎在做 percentile rank 時，數值越大（也就是加權平均名次越小、越接近 1）的馬匹
-            # 才能拿到最高的 10 分！
             scores.append(-weighted_avg_rank)
             
             # 組合顯示字串
