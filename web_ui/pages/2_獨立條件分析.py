@@ -81,13 +81,27 @@ else:
             available_factors = [col for col in factor_columns if col in df.columns]
             
             if available_factors:
-                # 使用 selectbox 替代 tabs，讓使用者體驗更佳
-                selected_factor = st.selectbox(
-                    "🔍 請選擇要檢視的計分條件：",
-                    available_factors,
-                    index=0
-                )
+                st.markdown("#### 🔍 請選擇要檢視的計分條件：")
                 
+                # 初始化 session_state 以記憶當前選中的因子
+                if 'selected_factor' not in st.session_state:
+                    st.session_state.selected_factor = available_factors[0]
+                
+                # 使用 columns 建立按鈕網格 (每行 4 個按鈕)
+                cols_per_row = 4
+                for i in range(0, len(available_factors), cols_per_row):
+                    cols = st.columns(cols_per_row)
+                    for j in range(cols_per_row):
+                        if i + j < len(available_factors):
+                            factor = available_factors[i + j]
+                            # 如果是當前選中的因子，使用 primary 顏色標示
+                            button_type = "primary" if st.session_state.selected_factor == factor else "secondary"
+                            if cols[j].button(factor, key=f"btn_{factor}", type=button_type, use_container_width=True):
+                                st.session_state.selected_factor = factor
+                                st.rerun()
+
+                selected_factor = st.session_state.selected_factor
+                st.markdown("---")
                 st.markdown(f"#### 📌 目前檢視：{selected_factor}")
                 
                 # 提取基本資訊與該因子的分數
