@@ -11,7 +11,7 @@ if root_path not in sys.path:
     sys.path.append(root_path)
 
 from database.connection import get_session, init_db
-from database.models import Race, RaceEntry, ScoringFactor, ScoringWeight, Horse, SystemConfig
+from database.models import Race, RaceEntry, ScoringFactor, ScoringWeight, Horse, SystemConfig, RaceResult, RaceDividend
 from scoring_engine.core import ScoringEngine
 from scoring_engine.constants import DISABLED_FACTORS
 from scoring_engine.utils import estimate_win_probability
@@ -408,7 +408,47 @@ def main():
                 if submitted:
                     n = str(name or "").strip()
                     now = datetime.now().isoformat()
-                    if action == "另存新組合":
+                    pending = {
+                        "action": action,
+                        "name": n,
+                        "selected": st.session_state.get("selected_preset_name"),
+                        "weights": dict(updated_weights),
+                        "ts": now,
+                    }
+                    st.session_state["pending_preset_op"] = pending
+                    st.rerun()
+
+            pending = st.session_state.get("pending_preset_op")
+            if isinstance(pending, dict) and pending.get("action"):
+                act = pending.get("action")
+                n = str(pending.get("name") or "").strip()
+                selected = str(pending.get("selected") or "")
+                wmap = pending.get("weights") if isinstance(pending.get("weights"), dict) else {}
+
+                st.markdown("---")
+                st.markdown("**二次確認**")
+
+                if act in ("另存新組合", "更新目前組合"):
+                    total_w = sum(float(v) for v in wmap.values()) if wmap else 0.0
+                    weights_lookup = {w.factor_name: w.description for w in weights}
+                    rows = []
+                    for k, v in wmap.items():
+                        if k in weights_lookup:
+                            share = (float(v) / total_w * 100.0) if total_w > 0 else 0.0
+                            rows.append({"條件": weights_lookup[k], "權重": round(float(v), 2), "佔比%": round(share, 1)})
+                    rows = sorted(rows, key=lambda x: x["佔比%"], reverse=True)
+                    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+                c1, c2 = st.columns(2)
+                confirm = c1.button("確認儲存", type="primary", use_container_width=True)
+                cancel = c2.button("取消", use_container_width=True)
+
+                if cancel:
+                    st.session_state.pop("pending_preset_op", None)
+                    st.rerun()
+
+                if confirm:
+                    if act == "另存新組合":
                         if not n:
                             st.error("❌ 請輸入組合名稱")
                         elif any(p["name"] == n for p in presets):
@@ -416,31 +456,32 @@ def main():
                         elif len(presets) >= 3:
                             st.error("❌ 已達上限（最多 3 個組合）")
                         else:
-                            presets.append({"name": n, "weights": dict(updated_weights), "updated_at": now})
+                            presets.append({"name": n, "weights": dict(wmap), "updated_at": pending.get("ts")})
                             _save_member_presets(session, member_email, presets)
                             st.session_state["selected_preset_name"] = n
+                            st.session_state.pop("pending_preset_op", None)
                             st.rerun()
-                    elif action == "更新目前組合":
-                        if st.session_state["selected_preset_name"] == "（手動調整）":
+                    elif act == "更新目前組合":
+                        if selected == "（手動調整）":
                             st.error("❌ 請先選擇要更新的已儲存組合")
                         else:
-                            target = st.session_state["selected_preset_name"]
                             for p in presets:
-                                if p["name"] == target:
-                                    p["weights"] = dict(updated_weights)
-                                    p["updated_at"] = now
+                                if p["name"] == selected:
+                                    p["weights"] = dict(wmap)
+                                    p["updated_at"] = pending.get("ts")
                             _save_member_presets(session, member_email, presets)
+                            st.session_state.pop("pending_preset_op", None)
                             st.success("✅ 已更新")
                             st.rerun()
                     else:
-                        if st.session_state["selected_preset_name"] == "（手動調整）":
+                        if selected == "（手動調整）":
                             st.error("❌ 請先選擇要刪除的已儲存組合")
                         else:
-                            target = st.session_state["selected_preset_name"]
-                            presets = [p for p in presets if p["name"] != target]
-                            _save_member_presets(session, member_email, presets)
-                            delete_member_preset_stats(session, member_email, target)
+                            presets2 = [p for p in presets if p["name"] != selected]
+                            _save_member_presets(session, member_email, presets2)
+                            delete_member_preset_stats(session, member_email, selected)
                             st.session_state["selected_preset_name"] = "（手動調整）"
+                            st.session_state.pop("pending_preset_op", None)
                             st.rerun()
 
     # 主面板：賽事資訊
@@ -514,8 +555,20 @@ def main():
                 .filter(~ScoringWeight.factor_name.in_(DISABLED_FACTORS))
                 .all()
             )
-            items = [{"條件": w.description, "代號": w.factor_name} for w in weights_list]
-            st.dataframe(pd.DataFrame(items), use_container_width=True, hide_index=True)
+            logic = {
+                "jockey_trainer_bond": "計算騎師×練馬師的歷史合作勝/上名率（全庫＋本駒），按可調權重合併，得到原始分後同場標準化。",
+                "horse_time_perf": "以同路程歷史最佳完成時間作速度指標（track_type→草/泥→同程 fallback）；時間越短越好，加入樣本/可信度降權後同場標準化。",
+                "venue_dist_specialty": "以同跑道資訊＋同路程的勝/上名率計分，可選半衰期時間衰減，並加入樣本可信度降權後同場標準化。",
+                "draw_stats": "用當日官方檔位統計（勝率/上名率）計算相對強度後同場標準化。",
+                "weight_rating_perf": "以同程勝仗可贏評分差＋同程上名率（可衰減）合成 raw，再同場標準化。",
+                "class_performance": "現階段以降班訊號為主（例如 3→4/4→5），再同場標準化。",
+                "recent_form": "取最近 6 仗有效名次，按時間權重加權平均後轉為 raw，再同場標準化。",
+                "debut_long_rest": "本場若屬長休復出（可調門檻），回看歷史長休復出賽的勝/入位並疊加加分，再同場標準化。",
+                "morning_trial_perf": "暫以 placeholder 顯示（待晨操/試閘數據入庫後實作）。",
+            }
+            for w in weights_list:
+                st.markdown(f"**{w.description}**")
+                st.markdown(f"- {logic.get(w.factor_name, '（待補充）')}")
 
         with st.expander("📌 命中率統計口徑", expanded=False):
             st.markdown(f"""
@@ -549,37 +602,28 @@ def main():
             if row["排名"] == 1: return ['background-color: #ffeb3b'] * len(row)
             return [''] * len(row)
 
-        st.dataframe(
-            df[display_cols + ["騎師", "練馬師", "檔位", "負磅", "評分"]],
-            use_container_width=True,
-            hide_index=True
+        res_rows = (
+            session.query(RaceEntry.horse_no, RaceResult.rank)
+            .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
+            .filter(RaceEntry.race_id == selected_race_id)
+            .filter(RaceResult.rank != None)
+            .all()
         )
+        rank_map = {int(h): int(r) for h, r in res_rows if h is not None and r is not None}
+        df_display = df[display_cols + ["騎師", "練馬師", "檔位", "負磅", "評分"]].copy()
+        df_display["賽果"] = df_display["馬號"].apply(lambda x: rank_map.get(int(x), ""))
 
-        # 詳細得分雷達圖或條形圖
-        st.markdown("---")
-        st.markdown("### 🔍 深度因子分析 (Top 3 馬匹)")
-        
-        # 獲取所有因子列
-        factor_cols = [c for c in df.columns if c in updated_weights.keys()]
-        top_3_df = df.head(3)
-        
-        import plotly.graph_objects as go
-        fig = go.Figure()
-        
-        for _, row in top_3_df.iterrows():
-            fig.add_trace(go.Scatterpolar(
-                r=[row[c] for c in factor_cols],
-                theta=[session.query(ScoringWeight).filter_by(factor_name=c).first().description for c in factor_cols],
-                fill='toself',
-                name=f"({row['馬號']}) {row['馬名']}"
-            ))
+        st.dataframe(df_display, use_container_width=True, hide_index=True)
 
-        fig.update_layout(
-            polar=dict(radialaxis=dict(visible=True, range=[0, 10])),
-            showlegend=True,
-            title="前三名馬匹戰力雷達圖 (各維度 0-10 分)"
-        )
-        st.plotly_chart(fig, use_container_width=True)
+        div = session.query(RaceDividend).filter_by(race_id=selected_race_id).first()
+        has_div = bool(div and isinstance(div.dividends, list) and div.dividends)
+        if rank_map or has_div:
+            st.markdown("---")
+            st.markdown("### 🏁 賽果與派彩")
+            if has_div:
+                st.dataframe(pd.DataFrame(div.dividends), use_container_width=True, hide_index=True)
+            else:
+                st.info("本場尚未有派彩資料。")
 
     session.close()
 
