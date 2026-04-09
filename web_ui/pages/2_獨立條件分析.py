@@ -9,11 +9,19 @@ root_path = str(Path(__file__).resolve().parent.parent.parent)
 if root_path not in sys.path:
     sys.path.append(root_path)
 
-from database.connection import get_session
+from database.connection import get_session, init_db
 from database.models import Race, RaceEntry, ScoringFactor, ScoringWeight
 from scoring_engine.constants import DISABLED_FACTORS
 
 st.set_page_config(page_title="獨立條件分析 - HKJC Analytics", layout="wide")
+
+# 初始化資料庫 (確保在雲端環境表結構存在)
+init_db()
+
+if not st.session_state.get("is_superadmin", False):
+    st.title("📊 獨立條件分析")
+    st.error("❌ 此頁面目前僅限 Superadmin 使用。請先到「數據管理後台」登入。")
+    st.stop()
 
 def load_races(session: Session):
     return session.query(Race).order_by(Race.race_date.desc(), Race.race_no.asc()).all()
