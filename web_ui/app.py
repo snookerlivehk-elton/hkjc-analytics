@@ -611,7 +611,7 @@ def main():
         )
         rank_map = {int(h): int(r) for h, r in res_rows if h is not None and r is not None}
         df_display = df[display_cols + ["騎師", "練馬師", "檔位", "負磅", "評分"]].copy()
-        df_display["賽果"] = df_display["馬號"].apply(lambda x: rank_map.get(int(x), ""))
+        df_display.insert(0, "賽果", df_display["馬號"].apply(lambda x: rank_map.get(int(x), "")))
 
         st.dataframe(df_display, use_container_width=True, hide_index=True)
 
@@ -620,8 +620,60 @@ def main():
         if rank_map or has_div:
             st.markdown("---")
             st.markdown("### 🏁 賽果與派彩")
+            if rank_map:
+                top4 = sorted(rank_map.items(), key=lambda kv: kv[1])[:4]
+                top4_str = " / ".join([f"{rk}名: {hn}" for hn, rk in top4])
+                st.markdown(f"**賽果 Top4**：{top4_str}")
+
             if has_div:
-                st.dataframe(pd.DataFrame(div.dividends), use_container_width=True, hide_index=True)
+                meta = div.meta if isinstance(div.meta, dict) else {}
+                going = str(meta.get("going") or "").strip()
+                track = str(meta.get("track") or "").strip()
+                race_time = str(meta.get("race_time") or "").strip()
+                sectional = meta.get("sectional_times") if isinstance(meta.get("sectional_times"), list) else []
+                sectional_str = " / ".join([f"{x:.2f}" for x in sectional if isinstance(x, (int, float))]) if sectional else ""
+
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("場地狀況", going or "未知")
+                m2.metric("賽道", track or "未知")
+                m3.metric("全場時間", race_time or "未知")
+                m4.metric("分段時間", sectional_str or "未知")
+
+                df_div = pd.DataFrame(div.dividends)
+                if not df_div.empty:
+                    df_div = df_div.rename(columns={"pool": "彩池", "combination": "勝出組合", "dividend": "派彩(HK$)", "unit": "單位"})
+                    for col in ("彩池", "勝出組合", "單位"):
+                        if col in df_div.columns:
+                            df_div[col] = df_div[col].fillna("").astype(str)
+                    if "派彩(HK$)" in df_div.columns:
+                        df_div["派彩(HK$)"] = df_div["派彩(HK$)"].apply(lambda x: f"{x:.1f}" if isinstance(x, (int, float)) else "")
+
+                    order_cols = [c for c in ["彩池", "勝出組合", "派彩(HK$)", "單位"] if c in df_div.columns]
+                    df_div = df_div[order_cols].copy()
+
+                    if "彩池" in df_div.columns:
+                        pools = [p for p in df_div["彩池"].tolist() if p]
+                        pool_order = list(dict.fromkeys(pools))
+                        if pool_order:
+                            df_div["彩池"] = pd.Categorical(df_div["彩池"], categories=pool_order, ordered=True)
+                            df_div = df_div.sort_values(["彩池", "勝出組合"] if "勝出組合" in df_div.columns else ["彩池"])
+
+                            display_pool = []
+                            prev = None
+                            for p in df_div["彩池"].tolist():
+                                p = "" if p is None else str(p)
+                                if prev == p:
+                                    display_pool.append("")
+                                else:
+                                    display_pool.append(p)
+                                    prev = p
+                            df_div["彩池"] = display_pool
+
+                    if "單位" in df_div.columns:
+                        df_div = df_div.drop(columns=["單位"])
+                    st.dataframe(df_div, use_container_width=True, hide_index=True)
+                else:
+                    st.info("本場尚未有派彩資料。")
             else:
                 st.info("本場尚未有派彩資料。")
 
