@@ -11,6 +11,7 @@ from database.models import SystemConfig, Race, RaceEntry, RaceResult, ScoringFa
 
 STATS_START_DATE = datetime(2026, 4, 8)
 STATS_WINDOW_DAYS = 720
+CURRENT_POLICY = {"start_date": STATS_START_DATE.date().isoformat(), "window_days": int(STATS_WINDOW_DAYS)}
 
 
 def _cutoff_date(now: Optional[datetime] = None) -> datetime:
@@ -26,7 +27,11 @@ def load_member_preset_stats(session: Session, email: str) -> Dict[str, Any]:
     key = f"member_weight_preset_stats:{e}"
     cfg = session.query(SystemConfig).filter_by(key=key).first()
     if cfg and isinstance(cfg.value, dict):
-        return cfg.value
+        out = {}
+        for k, v in cfg.value.items():
+            if isinstance(v, dict) and v.get("policy") == CURRENT_POLICY:
+                out[k] = v
+        return out
     return {}
 
 
@@ -136,7 +141,7 @@ def update_member_preset_stats_incremental(
     stats = load_member_preset_stats(session, email)
     now = datetime.now().isoformat()
     changed_any = False
-    policy = {"start_date": STATS_START_DATE.date().isoformat(), "window_days": int(STATS_WINDOW_DAYS)}
+    policy = CURRENT_POLICY
 
     for p in (presets or [])[:3]:
         name = str(p.get("name") or "").strip()
