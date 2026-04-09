@@ -528,6 +528,18 @@ def main():
 
                 with st.expander("🔖 本場各組合 Top4 預測", expanded=False):
                     pr = []
+                    active_name = st.session_state.get("selected_preset_name", "（手動調整）")
+                    active_weights = st.session_state.get("active_weight_map", {})
+                    active_top4 = _predict_top4_for_race(session, selected_race_id, active_weights)
+                    pr.append(
+                        {
+                            "組合": f"目前頁面：{active_name}",
+                            "Top1": active_top4[0] if len(active_top4) > 0 else "",
+                            "Top2": active_top4[1] if len(active_top4) > 1 else "",
+                            "Top3": active_top4[2] if len(active_top4) > 2 else "",
+                            "Top4": active_top4[3] if len(active_top4) > 3 else "",
+                        }
+                    )
                     for p in presets:
                         top4 = _predict_top4_for_race(session, selected_race_id, p.get("weights", {}))
                         pr.append(
@@ -582,7 +594,8 @@ def main():
             """)
 
         # 專業排名表格
-        st.markdown("### 🏆 專業排名表")
+        active_name = st.session_state.get("selected_preset_name", "（手動調整）")
+        st.markdown(f"### 🏆 專業排名表（目前權重：{active_name}）")
         
         # 定義顯示列與格式化
         display_cols = ["排名", "馬號", "馬名", "總分", "預估勝率", "建議"]
