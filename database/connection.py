@@ -38,16 +38,17 @@ def init_db():
         need_seed = session.query(ScoringWeight).count() == 0
         if not need_seed:
             jt = session.query(ScoringWeight).filter_by(factor_name="jockey_trainer_bond").first()
-            th = session.query(ScoringWeight).filter_by(factor_name="trainer_horse_bond").first()
+            ds = session.query(ScoringWeight).filter_by(factor_name="draw_stats").first()
             obsolete = session.query(ScoringWeight).filter_by(factor_name="jockey_horse_bond").first()
-            if obsolete:
+            legacy = session.query(ScoringWeight).filter_by(factor_name="trainer_horse_bond").first()
+            if obsolete or legacy:
                 need_seed = True
-            elif not jt or not th:
+            elif not jt or not ds:
                 need_seed = True
             else:
                 if (jt.description or "") != "騎師＋練馬師合作 (綜合)":
                     need_seed = True
-                if (th.description or "") != "練馬師＋馬匹組合":
+                if (ds.description or "") != "檔位偏差 (官方 Draw Statistics)":
                     need_seed = True
 
         if need_seed:

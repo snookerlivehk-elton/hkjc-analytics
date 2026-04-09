@@ -178,56 +178,6 @@ else:
                         engine.score_race(selected_race_id)
                         st.rerun()
 
-                if selected_factor == "練馬師＋馬匹組合":
-                    from database.models import SystemConfig, RaceEntry, ScoringFactor
-
-                    cfg = session.query(SystemConfig).filter_by(key="trainer_horse_bond_config").first()
-                    win_w, place_w, window = 0.7, 0.3, 0
-                    if cfg and isinstance(cfg.value, dict):
-                        win_w = float(cfg.value.get("win", win_w))
-                        place_w = float(cfg.value.get("place", place_w))
-                        window = int(cfg.value.get("window", window))
-
-                    if win_w < 0:
-                        win_w = 0.0
-                    if place_w < 0:
-                        place_w = 0.0
-                    total_w = win_w + place_w
-                    if total_w <= 0:
-                        win_w, place_w, total_w = 0.7, 0.3, 1.0
-                    win_w /= total_w
-                    place_w /= total_w
-                    if window < 0:
-                        window = 0
-
-                    window_label = f"近{window}" if window > 0 else "最大"
-                    expected_key_1 = window_label
-                    expected_key_2 = f"權重 {win_w:.2f}/{place_w:.2f}"
-
-                    sample = (
-                        session.query(ScoringFactor.raw_data_display)
-                        .join(RaceEntry, RaceEntry.id == ScoringFactor.entry_id)
-                        .filter(
-                            RaceEntry.race_id == selected_race_id,
-                            ScoringFactor.factor_name == "trainer_horse_bond",
-                        )
-                        .first()
-                    )
-
-                    needs_rescore = (
-                        (not sample)
-                        or (not sample[0])
-                        or ((expected_key_1 not in sample[0]) and ("樣本不足" not in sample[0]))
-                        or ((expected_key_2 not in sample[0]) and ("樣本不足" not in sample[0]))
-                    )
-                    auto_key = f"auto_rescore_trainer_horse_bond_{selected_race_id}_{expected_key_1}_{expected_key_2}"
-                    if needs_rescore and not st.session_state.get(auto_key, False):
-                        st.session_state[auto_key] = True
-                        from scoring_engine.core import ScoringEngine
-                        engine = ScoringEngine(session)
-                        engine.score_race(selected_race_id)
-                        st.rerun()
-
                 if selected_factor == "檔位偏差 (官方 Draw Statistics)":
                     from database.models import SystemConfig
 
@@ -488,57 +438,6 @@ else:
                     else:
                         st.warning("尚未載入當日官方檔位統計，請先執行賽日資料抓取後再檢查。")
                     
-                elif selected_factor == "練馬師＋馬匹組合":
-                    st.markdown("---")
-                    st.markdown("### 💡 演算法說明：練馬師＋馬匹組合")
-                    st.markdown("""
-                    這個條件用於衡量「練馬師」與「本匹馬」在歷史往績中的配搭表現。
-                    
-                    - 勝出率 = 冠軍次數 / 出賽總次數
-                    - 入圍率(前3) = 前3名次數 / 出賽總次數
-                    - 原始分 = 勝出率 × 勝率權重 + 入圍率 × 入圍權重
-                    - 最後會在同一場內做相對百分位標準化成 0–10 分
-                    """)
-                    
-                    with st.expander("⚙️ 調整近X次樣本 + 勝率/入圍率權重 (調整後將即時儲存並重算)"):
-                        from database.models import SystemConfig
-                        
-                        config = session.query(SystemConfig).filter_by(key="trainer_horse_bond_config").first()
-                        if config and isinstance(config.value, dict):
-                            current_win_w = float(config.value.get("win", 0.7))
-                            current_place_w = float(config.value.get("place", 0.3))
-                            current_window = int(config.value.get("window", 0))
-                        else:
-                            current_win_w, current_place_w, current_window = 0.7, 0.3, 0
-                        
-                        window_options = {
-                            "近 5 次": 5, "近 10 次": 10, "近 15 次": 15,
-                            "近 20 次": 20, "近 25 次": 25, "最大 (全部)": 0
-                        }
-                        current_label = next((k for k, v in window_options.items() if v == current_window), "最大 (全部)")
-                        
-                        with st.form("trainer_horse_bond_config_form"):
-                            col_a, col_b, col_c = st.columns(3)
-                            window_label = col_a.selectbox("樣本範圍", list(window_options.keys()), index=list(window_options.keys()).index(current_label))
-                            win_w = col_b.number_input("勝率權重", value=current_win_w, min_value=0.0, max_value=1.0, step=0.05)
-                            place_w = col_c.number_input("入圍率(前3)權重", value=current_place_w, min_value=0.0, max_value=1.0, step=0.05)
-                            
-                            submitted = st.form_submit_button("💾 儲存參數並為本場重新計分", type="primary")
-                            if submitted:
-                                new_cfg = {"window": int(window_options[window_label]), "win": float(win_w), "place": float(place_w)}
-                                if not config:
-                                    config = SystemConfig(key="trainer_horse_bond_config", description="練馬師＋馬匹組合：近X次樣本 + 勝率/入圍率權重")
-                                    session.add(config)
-                                config.value = new_cfg
-                                session.commit()
-                                
-                                from scoring_engine.core import ScoringEngine
-                                engine = ScoringEngine(session)
-                                engine.score_race(selected_race_id)
-                                
-                                st.success(f"參數已儲存為 {new_cfg}，並已重新計算分數！")
-                                st.rerun()
-
             else:
                 st.warning("未找到計分條件數據。")
                 

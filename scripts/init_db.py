@@ -22,7 +22,6 @@ def populate_default_weights():
         ("draw_stats", "檔位偏差 (官方 Draw Statistics)", 0.8),
         ("weight_rating_perf", "負磅／評分表現", 0.7),
         ("morning_trial_perf", "晨操／試閘表現", 1.0),
-        ("trainer_horse_bond", "練馬師＋馬匹組合", 0.9),
         ("gear_change", "配備變化", 0.6),
         ("pace_analysis", "配速分析 (步速匹配度)", 1.3),
         ("class_performance", "班次表現", 1.0),
