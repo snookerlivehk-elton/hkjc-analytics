@@ -41,11 +41,19 @@ def init_db():
             inspector = inspect(engine)
             cols2 = {c["name"] for c in inspector.get_columns("horse_histories")}
             if "surface" in cols2:
+                cols = cols2
                 try:
                     with engine.begin() as conn:
                         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_horse_histories_surface ON horse_histories (surface)"))
                 except Exception:
                     pass
+        if "surface" in cols:
+            try:
+                with engine.begin() as conn:
+                    conn.execute(text("UPDATE horse_histories SET surface='泥地' WHERE (surface IS NULL OR surface='') AND (venue LIKE '%全天候%' OR venue LIKE '%泥地%' OR venue LIKE '%AW%')"))
+                    conn.execute(text("UPDATE horse_histories SET surface='草地' WHERE (surface IS NULL OR surface='') AND (venue LIKE '%草地%' OR venue LIKE '%TURF%')"))
+            except Exception:
+                pass
     except Exception:
         pass
     

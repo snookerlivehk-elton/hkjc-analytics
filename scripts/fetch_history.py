@@ -24,8 +24,10 @@ def parse_hkjc_date(date_str: str):
             continue
     return None
 
-def parse_surface(condition: str):
-    s = str(condition or "")
+def parse_surface(venue: str, condition: str = ""):
+    v = str(venue or "")
+    c = str(condition or "")
+    s = v + " " + c
     if ("全天候" in s) or ("泥地" in s) or ("AW" in s.upper()):
         return "泥地"
     if ("草地" in s) or ("TURF" in s.upper()):
@@ -121,7 +123,7 @@ async def backfill_horse_history():
                         horse_id=horse.id,
                         race_date=race_date,
                         venue=rec.get("venue", ""),
-                        surface=parse_surface(rec.get("condition", "")),
+                        surface=parse_surface(rec.get("venue", ""), rec.get("condition", "")),
                         race_class=rec.get("race_class", ""),
                         distance=int(rec.get("distance", 0)) if str(rec.get("distance", "")).isdigit() else 0,
                         rank=int(str(rec.get("rank", "0"))) if str(rec.get("rank", "")).isdigit() else 0,
@@ -136,7 +138,7 @@ async def backfill_horse_history():
                     new_count += 1
                 else:
                     if not getattr(existing, "surface", ""):
-                        existing.surface = parse_surface(rec.get("condition", ""))
+                        existing.surface = parse_surface(rec.get("venue", ""), rec.get("condition", ""))
             except Exception as e:
                 print(f"    - [錯誤] 儲存紀錄失敗: {e}")
                 continue
