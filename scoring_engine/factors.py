@@ -210,6 +210,8 @@ class FactorCalculator:
         distance = self._to_int(getattr(race, "distance", 0), default=0) if race else 0
         surface = ""
         tt = str(getattr(race, "track_type", "") if race else "")
+        track_key = tt.strip()
+        track_key_norm = track_key.replace(" ", "")
         if ("全天候" in tt) or ("泥地" in tt):
             surface = "泥地"
         elif "草地" in tt:
@@ -270,23 +272,25 @@ class FactorCalculator:
 
         cached = {}
 
+        def norm_track(s: str):
+            return str(s or "").strip().replace(" ", "")
+
         for _, row in self.df.iterrows():
             horse_id = self._to_int(row.get("horse_id", 0), default=0)
-            if not horse_id or not distance or surface not in ("草地", "泥地"):
+            if not horse_id or not distance:
                 scores.append(0.0)
                 displays.append("無數據")
                 continue
 
-            key = (horse_id, surface, distance, cfg["window_days"])
+            key = (horse_id, track_key_norm, surface, distance, cfg["window_days"])
             if key in cached:
                 runs, wins, places, last_days = cached[key]
             else:
                 q = (
-                    self.session.query(HorseHistory.rank, HorseHistory.race_date)
+                    self.session.query(HorseHistory.rank, HorseHistory.race_date, HorseHistory.venue, HorseHistory.surface)
                     .filter(
                         HorseHistory.horse_id == horse_id,
                         HorseHistory.distance == distance,
-                        HorseHistory.surface == surface,
                         HorseHistory.rank > 0
                     )
                     .order_by(HorseHistory.race_date.desc())
@@ -294,17 +298,31 @@ class FactorCalculator:
                 if cutoff_date:
                     q = q.filter(HorseHistory.race_date >= cutoff_date)
                 hist = q.all()
-                runs = len(hist)
-                wins = sum(1 for rnk, _ in hist if rnk == 1)
-                places = sum(1 for rnk, _ in hist if rnk in (1, 2, 3))
+
+                filtered = []
+                if track_key_norm:
+                    for rnk, dt, v, _sf in hist:
+                        if norm_track(v) == track_key_norm:
+                            filtered.append((rnk, dt))
+                elif surface in ("草地", "泥地"):
+                    for rnk, dt, _v, sf in hist:
+                        if sf == surface:
+                            filtered.append((rnk, dt))
+                else:
+                    filtered = [(rnk, dt) for rnk, dt, _v, _sf in hist]
+
+                runs = len(filtered)
+                wins = sum(1 for rnk, _ in filtered if rnk == 1)
+                places = sum(1 for rnk, _ in filtered if rnk in (1, 2, 3))
                 last_days = None
-                if hist and isinstance(hist[0][1], datetime):
-                    last_days = max((race_date - hist[0][1]).days, 0)
+                if filtered and isinstance(filtered[0][1], datetime):
+                    last_days = max((race_date - filtered[0][1]).days, 0)
                 cached[key] = (runs, wins, places, last_days)
 
             if runs < cfg["min_samples"]:
                 scores.append(0.0)
-                displays.append(f"{surface}{distance}m 樣本不足({runs}<{cfg['min_samples']})")
+                head = track_key if track_key else surface
+                displays.append(f"{head}{distance}m 樣本不足({runs}<{cfg['min_samples']})")
                 continue
 
             win_rate = wins / runs if runs else 0.0
@@ -318,8 +336,9 @@ class FactorCalculator:
 
             param_label = f"W{cfg['window_days']}d | N{cfg['min_samples']} | C{cfg['confidence_runs']} | WW{cfg['win_w']:.2f} | PW{cfg['place_w']:.2f}"
             last_label = f"@{last_days}d" if last_days is not None else ""
+            head = track_key if track_key else surface
             displays.append(
-                f"{param_label} | {surface}{distance}m | 勝{win_rate*100:.1f}% | 位{place_rate*100:.1f}% | n{runs} | conf{confidence:.2f}{last_label}"
+                f"{param_label} | {head}{distance}m | 勝{win_rate*100:.1f}% | 位{place_rate*100:.1f}% | n{runs} | conf{confidence:.2f}{last_label}"
             )
 
         return pd.Series(scores, index=self.df.index), pd.Series(displays, index=self.df.index)
