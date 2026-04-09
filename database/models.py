@@ -136,6 +136,15 @@ class OddsHistory(Base):
     place_odds = Column(Float)
     captured_at = Column(DateTime, default=datetime.now)
 
+class RaceDividend(Base):
+    __tablename__ = 'race_dividends'
+    id = Column(Integer, primary_key=True)
+    race_id = Column(Integer, ForeignKey('races.id'), unique=True, nullable=False)
+    source = Column(String(50), default="HKJC")
+    dividends = Column(JSON)
+    meta = Column(JSON)
+    scraped_at = Column(DateTime, default=datetime.now)
+
 class ScoringWeight(Base):
     """計分權重配置"""
     __tablename__ = 'scoring_weights'

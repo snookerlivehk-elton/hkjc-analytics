@@ -63,6 +63,28 @@ def trigger_history_backfill(target_date: str = None, mode: str = None):
         st.error(f"❌ 系統錯誤: {e}")
         return False
 
+def trigger_race_results_fetch(target_date: str = None):
+    st.markdown("### 🏁 賽果與派彩抓取進度")
+    log_placeholder = st.empty()
+    full_log = ""
+    try:
+        env = os.environ.copy()
+        if target_date:
+            env["TARGET_DATE"] = target_date
+        process = subprocess.Popen(
+            ["python3", "scripts/fetch_race_results.py"],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, env=env, bufsize=1
+        )
+        for line in iter(process.stdout.readline, ""):
+            full_log += line
+            log_placeholder.code(full_log)
+        process.stdout.close()
+        return process.wait() == 0
+    except Exception as e:
+        st.error(f"❌ 系統錯誤: {e}")
+        return False
+
 def cleanup_removed_factor_data(session):
     try:
         from database.models import ScoringFactor, ScoringWeight, SystemConfig
@@ -94,6 +116,12 @@ with col1:
         target_date_str = selected_date.strftime("%Y/%m/%d")
         if trigger_scraper(target_date=target_date_str):
             st.success(f"✅ {target_date_str} 數據更新成功！")
+
+    st.subheader("🏁 抓取賽果與派彩")
+    if st.button("🏁 抓取該日賽果與派彩", use_container_width=True):
+        target_date_str = selected_date.strftime("%Y/%m/%d")
+        if trigger_race_results_fetch(target_date=target_date_str):
+            st.success(f"✅ 已完成 {target_date_str} 賽果與派彩同步！")
 
     st.subheader("📚 歷史回填")
     col_h1, col_h2 = st.columns(2)
