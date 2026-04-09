@@ -11,7 +11,7 @@ from database.models import SystemConfig, Race, RaceEntry, RaceResult, ScoringFa
 
 STATS_START_DATE = datetime(2026, 4, 8)
 STATS_WINDOW_DAYS = 720
-CURRENT_POLICY = {"start_date": STATS_START_DATE.date().isoformat(), "window_days": int(STATS_WINDOW_DAYS)}
+CURRENT_POLICY = {"start_date": STATS_START_DATE.date().isoformat(), "window_days": int(STATS_WINDOW_DAYS), "cmp": "date"}
 
 
 def _cutoff_date(now: Optional[datetime] = None) -> datetime:
@@ -66,23 +66,25 @@ def _list_completed_races(
     last_race_id: Optional[int],
     limit: int,
 ) -> List[Race]:
+    cutoff_s = cutoff.date().isoformat()
     q = (
         session.query(Race)
         .join(RaceEntry, RaceEntry.race_id == Race.id)
         .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
         .filter(RaceResult.rank != None)
-        .filter(Race.race_date >= cutoff)
+        .filter(func.date(Race.race_date) >= cutoff_s)
         .group_by(Race.id)
         .having(func.count(RaceResult.id) >= 4)
-        .order_by(Race.race_date.asc(), Race.race_no.asc(), Race.id.asc())
+        .order_by(func.date(Race.race_date).asc(), Race.race_no.asc(), Race.id.asc())
     )
 
     if last_date is not None and last_race_no is not None and last_race_id is not None:
+        last_date_s = last_date.date().isoformat() if hasattr(last_date, "date") else str(last_date)
         q = q.filter(
             or_(
-                Race.race_date > last_date,
-                and_(Race.race_date == last_date, Race.race_no > last_race_no),
-                and_(Race.race_date == last_date, Race.race_no == last_race_no, Race.id > last_race_id),
+                func.date(Race.race_date) > last_date_s,
+                and_(func.date(Race.race_date) == last_date_s, Race.race_no > last_race_no),
+                and_(func.date(Race.race_date) == last_date_s, Race.race_no == last_race_no, Race.id > last_race_id),
             )
         )
 
