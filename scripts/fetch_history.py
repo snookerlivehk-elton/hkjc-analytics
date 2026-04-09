@@ -10,7 +10,7 @@ if root_path not in sys.path:
     sys.path.append(root_path)
 
 from database.connection import get_session, init_db
-from database.models import Horse, HorseHistory
+from database.models import Horse, HorseHistory, Race, RaceEntry
 from data_scraper.horse import HorseScraper
 from utils.logger import logger
 import re
@@ -24,6 +24,42 @@ def parse_hkjc_date(date_str: str):
             continue
     return None
 
+def parse_target_date(date_str: str):
+    if not date_str:
+        return None
+    for fmt in ("%Y/%m/%d", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(date_str, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+def get_target_horses(session, mode: str, target_date_str: str):
+    from sqlalchemy import func
+
+    mode = (mode or "all").strip().lower()
+    target_date = parse_target_date(target_date_str)
+
+    if mode in ("date", "latest"):
+        if mode == "latest" or not target_date:
+            latest_race_dt = session.query(Race.race_date).order_by(Race.race_date.desc()).first()
+            if latest_race_dt and latest_race_dt[0]:
+                target_date = latest_race_dt[0].date() if hasattr(latest_race_dt[0], "date") else latest_race_dt[0]
+
+        if target_date:
+            q = (
+                session.query(Horse)
+                .join(RaceEntry, RaceEntry.horse_id == Horse.id)
+                .join(Race, Race.id == RaceEntry.race_id)
+                .filter(func.date(Race.race_date) == target_date)
+                .distinct()
+                .order_by(Horse.id.asc())
+            )
+            return q.all(), target_date
+
+    horses = session.query(Horse).order_by(Horse.id.asc()).all()
+    return horses, None
+
 async def backfill_horse_history():
     """為資料庫中的馬匹回填歷史往績"""
     print(">>> 正在初始化資料庫結構...")
@@ -32,9 +68,21 @@ async def backfill_horse_history():
     session = get_session()
     scraper = HorseScraper()
     
-    # 1. 獲取所有需要回填的馬匹
-    horses = session.query(Horse).all()
-    print(f">>> 發現 {len(horses)} 匹馬需要處理...")
+    mode = os.getenv("BACKFILL_MODE", "all")
+    target_date_str = os.getenv("TARGET_DATE", "")
+    horses, resolved_date = get_target_horses(session, mode=mode, target_date_str=target_date_str)
+    if resolved_date:
+        print(f">>> 回填模式: {mode} | 賽事日期: {resolved_date} | 馬匹數量: {len(horses)}")
+    else:
+        print(f">>> 回填模式: {mode} | 馬匹數量: {len(horses)}")
+
+    if not horses:
+        if resolved_date:
+            print(f">>> [提示] {resolved_date} 沒有找到需回填的馬匹（可能尚未抓取排位表或該日無賽事）。")
+        else:
+            print(">>> [提示] 沒有找到需回填的馬匹。")
+        session.close()
+        return
 
     for horse in horses:
         print(f">>> 正在抓取馬匹 {horse.name_ch} ({horse.code}) 的歷史往績...")

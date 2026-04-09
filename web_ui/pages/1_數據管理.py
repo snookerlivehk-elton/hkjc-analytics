@@ -38,13 +38,17 @@ def trigger_scraper(target_date: str = None):
         st.error(f"❌ 系統錯誤: {e}")
         return False
 
-def trigger_history_backfill():
+def trigger_history_backfill(target_date: str = None, mode: str = None):
     """歷史數據回填進度"""
     st.markdown("### 📚 歷史數據回填進度")
     log_placeholder = st.empty()
     full_log = ""
     try:
         env = os.environ.copy()
+        if target_date:
+            env["TARGET_DATE"] = target_date
+        if mode:
+            env["BACKFILL_MODE"] = mode
         process = subprocess.Popen(
             ["python3", "scripts/fetch_history.py"],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -98,9 +102,17 @@ with col1:
             st.success(f"✅ {target_date_str} 數據更新成功！")
 
     st.subheader("📚 歷史回填")
-    if st.button("📚 回填馬匹歷史往績", use_container_width=True):
-        if trigger_history_backfill():
-            st.success("✅ 歷史往績回填完成！")
+    col_h1, col_h2 = st.columns(2)
+    with col_h1:
+        if st.button("📚 回填所選日期馬匹往績", use_container_width=True):
+            target_date_str = selected_date.strftime("%Y/%m/%d")
+            if trigger_history_backfill(target_date=target_date_str, mode="date"):
+                st.success(f"✅ 已完成 {target_date_str} 所需馬匹之歷史往績回填！")
+    with col_h2:
+        with st.expander("完整回填 (較慢)"):
+            if st.button("📚 回填所有馬匹往績", use_container_width=True):
+                if trigger_history_backfill(mode="all"):
+                    st.success("✅ 已完成所有馬匹之歷史往績回填！")
 
 with col2:
     st.subheader("🚀 批量計分操作")
