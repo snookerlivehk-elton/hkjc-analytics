@@ -75,42 +75,46 @@ else:
         
         with tab1:
             st.markdown("### 各條件獨立排名")
-            st.markdown("選擇不同的條件標籤，查看該條件下各匹馬的得分與排名（分數由高至低排列，最高 10 分）。")
+            st.markdown("選擇不同的計分條件，查看該條件下各匹馬的得分與排名（分數由高至低排列，最高 10 分）。")
             
             # 過濾出 DataFrame 中實際存在的因子欄位
             available_factors = [col for col in factor_columns if col in df.columns]
             
             if available_factors:
-                # 使用 Streamlit 的 tabs 功能為每個因子創建一個分頁
-                factor_tabs = st.tabs(available_factors)
+                # 使用 selectbox 替代 tabs，讓使用者體驗更佳
+                selected_factor = st.selectbox(
+                    "🔍 請選擇要檢視的計分條件：",
+                    available_factors,
+                    index=0
+                )
                 
-                for i, factor in enumerate(available_factors):
-                    with factor_tabs[i]:
-                        # 提取基本資訊與該因子的分數
-                        view_cols = ["馬號", "馬名", "檔位", "負磅", "評分", f"{factor}_raw", factor]
-                        factor_df = df[view_cols].copy()
-                        
-                        # 重新命名欄位讓 UI 更清晰
-                        factor_df = factor_df.rename(columns={
-                            f"{factor}_raw": "原始數據 (分析基礎)",
-                            factor: "系統標準化得分 (0-10分)"
-                        })
-                        
-                        # 根據該因子分數進行降序排序
-                        factor_df = factor_df.sort_values(by="系統標準化得分 (0-10分)", ascending=False).reset_index(drop=True)
-                        
-                        # 加上名次標籤
-                        factor_df.index = factor_df.index + 1
-                        factor_df.index.name = "該項排名"
-                        
-                        # 設定樣式：高亮第一名
-                        def highlight_first(s):
-                            return ['background-color: rgba(40, 167, 69, 0.2)'] * len(s) if s.name == 1 else [''] * len(s)
-                        
-                        st.dataframe(
-                            factor_df.style.apply(highlight_first, axis=1),
-                            use_container_width=True
-                        )
+                st.markdown(f"#### 📌 目前檢視：{selected_factor}")
+                
+                # 提取基本資訊與該因子的分數
+                view_cols = ["馬號", "馬名", "檔位", "負磅", "評分", f"{selected_factor}_raw", selected_factor]
+                factor_df = df[view_cols].copy()
+                
+                # 重新命名欄位讓 UI 更清晰
+                factor_df = factor_df.rename(columns={
+                    f"{selected_factor}_raw": "原始數據 (分析基礎)",
+                    selected_factor: "系統標準化得分 (0-10分)"
+                })
+                
+                # 根據該因子分數進行降序排序
+                factor_df = factor_df.sort_values(by="系統標準化得分 (0-10分)", ascending=False).reset_index(drop=True)
+                
+                # 加上名次標籤
+                factor_df.index = factor_df.index + 1
+                factor_df.index.name = "該項排名"
+                
+                # 設定樣式：高亮第一名
+                def highlight_first(s):
+                    return ['background-color: rgba(40, 167, 69, 0.2)'] * len(s) if s.name == 1 else [''] * len(s)
+                
+                st.dataframe(
+                    factor_df.style.apply(highlight_first, axis=1),
+                    use_container_width=True
+                )
             else:
                 st.warning("未找到計分條件數據。")
                 
