@@ -70,9 +70,17 @@ class LocalResultsScraper:
         return {"going": going, "track": track, "race_time": race_time, "sectional_times": sectional}
 
     def _find_results_table(self, soup: BeautifulSoup):
+        cand = soup.select_one(".performance table")
+        if cand is not None:
+            return cand
+
         for table in soup.find_all("table"):
-            header_text = " ".join(th.get_text(strip=True) for th in table.find_all("th"))
-            if ("名次" in header_text) and ("馬號" in header_text) and ("完成時間" in header_text):
+            first_tr = table.find("tr")
+            if not first_tr:
+                continue
+            header_cells = [c.get_text(" ", strip=True) for c in first_tr.find_all(["th", "td"])]
+            header_norm = "".join(header_cells).replace(" ", "")
+            if ("名次" in header_norm) and ("馬號" in header_norm) and (("完成時間" in header_norm) or ("完成" in header_norm and "時間" in header_norm)):
                 return table
         return None
 
@@ -81,29 +89,55 @@ class LocalResultsScraper:
         if table is None:
             return []
 
-        headers = [th.get_text(strip=True) for th in table.find_all("th")]
-        header_idx = {h: i for i, h in enumerate(headers)}
+        header_row = None
+        for tr in table.find_all("tr"):
+            cells = [c.get_text(" ", strip=True) for c in tr.find_all(["th", "td"])]
+            if not cells:
+                continue
+            norm = "".join(cells).replace(" ", "")
+            if ("名次" in norm) and ("馬號" in norm):
+                header_row = cells
+                break
+
+        headers = header_row or []
+        header_norms = [h.replace(" ", "") for h in headers]
+        idx = {}
+        for i, h in enumerate(header_norms):
+            if h == "名次":
+                idx["rank"] = i
+            elif h == "馬號":
+                idx["horse_no"] = i
+            elif h.startswith("馬名"):
+                idx["horse_name"] = i
+            elif ("頭馬" in h) and ("距離" in h):
+                idx["margin"] = i
+            elif ("沿途" in h) and ("走位" in h):
+                idx["running_position"] = i
+            elif ("完成" in h) and ("時間" in h):
+                idx["finish_time"] = i
+            elif ("獨贏" in h) and ("賠率" in h):
+                idx["win_odds"] = i
 
         rows = []
         for tr in table.find_all("tr"):
             tds = tr.find_all("td")
-            if not tds or len(tds) < 5:
+            if not tds:
                 continue
             cols = [td.get_text(" ", strip=True) for td in tds]
 
-            def get_col(name: str) -> str:
-                i = header_idx.get(name)
+            def get_i(key: str) -> str:
+                i = idx.get(key)
                 if i is None or i >= len(cols):
                     return ""
                 return cols[i]
 
-            rank_s = get_col("名次") or cols[0]
-            horse_no_s = get_col("馬號") or ""
-            horse_name_s = get_col("馬名") or ""
-            margin_s = get_col("頭馬距離") or ""
-            pos_s = get_col("沿途走位") or ""
-            finish_time_s = get_col("完成時間") or ""
-            win_odds_s = get_col("獨贏賠率") or ""
+            rank_s = get_i("rank") or (cols[0] if cols else "")
+            horse_no_s = get_i("horse_no")
+            horse_name_s = get_i("horse_name")
+            margin_s = get_i("margin")
+            pos_s = get_i("running_position")
+            finish_time_s = get_i("finish_time")
+            win_odds_s = get_i("win_odds")
 
             horse_code = ""
             m = re.search(r"\(([A-Z]\d{3})\)", horse_name_s)
@@ -128,47 +162,49 @@ class LocalResultsScraper:
         return rows
 
     def _parse_dividends(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:
-        tables = soup.find_all("table")
-        dividend_tables = []
-        for table in tables:
-            header_text = " ".join(th.get_text(strip=True) for th in table.find_all("th"))
-            if ("彩池" in header_text and "派彩" in header_text) or ("派彩" in header_text and "組合" in header_text):
-                dividend_tables.append(table)
-
-        if not dividend_tables:
+        table = soup.select_one(".dividend_tab table")
+        if table is None:
             return []
 
         items: List[Dict[str, Any]] = []
-        for table in dividend_tables:
-            headers = [th.get_text(strip=True) for th in table.find_all("th")]
-            for tr in table.find_all("tr"):
-                tds = tr.find_all("td")
-                if not tds:
+        current_pool = ""
+        for tr in table.find_all("tr"):
+            cells = [c.get_text(" ", strip=True) for c in tr.find_all(["th", "td"])]
+            if not cells:
+                continue
+
+            if len(cells) == 1:
+                if "派彩備註" in cells[0]:
+                    break
+                continue
+
+            norm0 = cells[0].replace(" ", "")
+            if norm0 in ("彩池", "勝出組合", "派彩(HK$)", "派彩"):
+                continue
+
+            if len(cells) == 3:
+                current_pool = cells[0].strip()
+                combo = cells[1].strip()
+                dividend = cells[2].strip()
+            elif len(cells) == 2:
+                if not current_pool:
                     continue
-                cols = [td.get_text(" ", strip=True) for td in tds]
-                if len(cols) < 2:
-                    continue
+                combo = cells[0].strip()
+                dividend = cells[1].strip()
+            else:
+                continue
 
-                row = {headers[i]: cols[i] for i in range(min(len(headers), len(cols)))}
+            if not current_pool or not combo:
+                continue
 
-                pool = row.get("彩池") or row.get("池") or cols[0]
-                combo = row.get("組合") or row.get("馬號") or cols[1]
-                dividend = row.get("派彩") or row.get("派彩($)") or (cols[2] if len(cols) > 2 else "")
-                unit = row.get("每注") or row.get("每注($)") or ""
-
-                pool = pool.strip()
-                combo = combo.strip()
-                if not pool or not combo:
-                    continue
-
-                items.append(
-                    {
-                        "pool": pool,
-                        "combination": combo,
-                        "dividend": self._to_float(dividend),
-                        "unit": unit.strip(),
-                    }
-                )
+            items.append(
+                {
+                    "pool": current_pool,
+                    "combination": combo,
+                    "dividend": self._to_float(dividend),
+                    "unit": "HK$",
+                }
+            )
 
         return items
 
