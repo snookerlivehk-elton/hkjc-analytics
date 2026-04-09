@@ -232,6 +232,53 @@ else:
                                 
                                 st.success(f"參數已儲存為 {new_weights}，並已重新計算分數！")
                                 st.rerun()
+                
+                if selected_factor == "騎師＋練馬師合作 (同路程/場地)":
+                    st.markdown("---")
+                    st.markdown("### 💡 演算法說明：騎師＋練馬師合作 (同路程/場地)")
+                    st.markdown("""
+                    這個條件用於衡量「本場騎師＋練馬師」在歷史往績資料中的合作表現（目前以合作樣本中的勝出率與前 3 名入圍率計算）。
+                    
+                    - 勝出率 = 冠軍次數 / 合作總次數
+                    - 入圍率(前3) = 前3名次數 / 合作總次數
+                    - 原始分 = 勝出率 × 勝率權重 + 入圍率 × 入圍權重
+                    - 最後會在同一場內做相對百分位標準化成 0–10 分
+                    """)
+                    
+                    with st.expander("⚙️ 調整勝率/入圍率權重 (調整後將即時儲存並重算)"):
+                        from database.models import SystemConfig
+                        
+                        config = session.query(SystemConfig).filter_by(key="jt_bond_weights").first()
+                        if config and isinstance(config.value, dict):
+                            current_win_w = float(config.value.get("win", 0.7))
+                            current_place_w = float(config.value.get("place", 0.3))
+                        elif config and isinstance(config.value, list) and len(config.value) == 2:
+                            current_win_w = float(config.value[0])
+                            current_place_w = float(config.value[1])
+                        else:
+                            current_win_w, current_place_w = 0.7, 0.3
+                        
+                        st.markdown("可把其中一項設為 0 以停用該項（例如只用勝率或只用入圍率）。系統會自動把兩者正規化成總和 = 1。")
+                        
+                        with st.form("jt_bond_weights_form"):
+                            col_a, col_b = st.columns(2)
+                            win_w = col_a.number_input("勝率權重", value=current_win_w, min_value=0.0, max_value=1.0, step=0.05)
+                            place_w = col_b.number_input("入圍率(前3)權重", value=current_place_w, min_value=0.0, max_value=1.0, step=0.05)
+                            
+                            submitted = st.form_submit_button("💾 儲存參數並為本場重新計分", type="primary")
+                            if submitted:
+                                if not config:
+                                    config = SystemConfig(key="jt_bond_weights", description="騎師＋練馬師合作 (J/T Bond) 勝率與入圍率權重")
+                                    session.add(config)
+                                config.value = {"win": float(win_w), "place": float(place_w)}
+                                session.commit()
+                                
+                                from scoring_engine.core import ScoringEngine
+                                engine = ScoringEngine(session)
+                                engine.score_race(selected_race_id)
+                                
+                                st.success(f"權重已儲存為 勝率={win_w}、入圍率={place_w}，並已重新計算分數！")
+                                st.rerun()
 
             else:
                 st.warning("未找到計分條件數據。")

@@ -22,9 +22,35 @@ class FactorCalculator:
 
     # 1. 騎師＋練馬師合作 (J/T Bond)
     def _calculate_jockey_trainer_bond(self):
-        from database.models import HorseHistory
+        from database.models import HorseHistory, SystemConfig
         scores = []
         displays = []
+
+        win_w = 0.7
+        place_w = 0.3
+        try:
+            config = self.session.query(SystemConfig).filter_by(key="jt_bond_weights").first()
+            if config:
+                v = config.value
+                if isinstance(v, dict):
+                    win_w = float(v.get("win", win_w))
+                    place_w = float(v.get("place", place_w))
+                elif isinstance(v, list) and len(v) == 2:
+                    win_w = float(v[0])
+                    place_w = float(v[1])
+        except Exception:
+            pass
+
+        if win_w < 0:
+            win_w = 0.0
+        if place_w < 0:
+            place_w = 0.0
+        total_w = win_w + place_w
+        if total_w <= 0:
+            win_w, place_w = 0.7, 0.3
+            total_w = 1.0
+        win_w /= total_w
+        place_w /= total_w
         
         for _, row in self.df.iterrows():
             jockey = row["jockey_name"]
@@ -55,11 +81,12 @@ class FactorCalculator:
             win_rate = wins / total_runs
             place_rate = places / total_runs
             
-            # 評分邏輯：勝率佔 70%，上名率佔 30%
-            bond_score = (win_rate * 0.7) + (place_rate * 0.3)
+            bond_score = (win_rate * win_w) + (place_rate * place_w)
             
             scores.append(bond_score)
-            displays.append(f"合作{total_runs}次 冠{wins} 亞季{places-wins} (勝率 {win_rate*100:.1f}%)")
+            displays.append(
+                f"合作{total_runs}次 冠{wins} 前3{places} (勝率 {win_rate*100:.1f}% | 前3 {place_rate*100:.1f}% | 權重 {win_w:.2f}/{place_w:.2f})"
+            )
             
         return pd.Series(scores, index=self.df.index), pd.Series(displays, index=self.df.index)
 
