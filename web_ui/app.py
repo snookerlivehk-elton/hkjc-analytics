@@ -15,6 +15,7 @@ from database.models import Race, RaceEntry, ScoringFactor, ScoringWeight, Horse
 from scoring_engine.core import ScoringEngine
 from scoring_engine.constants import DISABLED_FACTORS
 from scoring_engine.utils import estimate_win_probability
+from scoring_engine.member_stats import update_member_preset_stats_incremental, load_member_preset_stats, delete_member_preset_stats, STATS_START_DATE, STATS_WINDOW_DAYS
 from utils.logger import logger
 import asyncio
 import subprocess
@@ -193,75 +194,29 @@ def _save_member_presets(session: Session, email: str, presets: list):
     session.commit()
 
 def _predict_top4_for_race(session: Session, race_id: int, weight_map: dict):
-    entries = session.query(RaceEntry).filter_by(race_id=race_id).all()
+    weights = {k: float(v) for k, v in (weight_map or {}).items()}
+    if not weights:
+        return []
+
+    entries = session.query(RaceEntry.id, RaceEntry.horse_no).filter_by(race_id=race_id).all()
     if not entries:
         return []
-    factor_names = list(weight_map.keys())
-    scores = []
-    for entry in entries:
-        factor_scores = (
-            session.query(ScoringFactor)
-            .filter_by(entry_id=entry.id)
-            .filter(ScoringFactor.factor_name.in_(factor_names))
-            .all()
-        )
-        total = 0.0
-        for f in factor_scores:
-            total += float(f.score or 0.0) * float(weight_map.get(f.factor_name, 0.0))
-        scores.append((entry.horse_no, total))
-    scores.sort(key=lambda x: x[1], reverse=True)
-    return [h for h, _ in scores[:4]]
+    entry_ids = [e[0] for e in entries]
+    entry_id_to_no = {e[0]: int(e[1]) for e in entries}
 
-def _hit_rate_stats(session: Session, weight_map: dict, max_races: int = 200):
-    from database.models import RaceResult
-
-    race_ids = (
-        session.query(RaceEntry.race_id)
-        .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
-        .filter(RaceResult.rank != None)
-        .distinct()
-        .all()
-    )
-    race_ids = [r[0] for r in race_ids]
-    if not race_ids:
-        return {"races": 0, "win": 0, "qin": 0, "tri": 0, "q4": 0}
-
-    races = (
-        session.query(Race)
-        .filter(Race.id.in_(race_ids))
-        .order_by(Race.race_date.desc(), Race.race_no.desc())
-        .limit(max_races)
+    factors = (
+        session.query(ScoringFactor.entry_id, ScoringFactor.factor_name, ScoringFactor.score)
+        .filter(ScoringFactor.entry_id.in_(entry_ids))
+        .filter(ScoringFactor.factor_name.in_(list(weights.keys())))
         .all()
     )
 
-    win = qin = tri = q4 = 0
-    used = 0
-    for race in races:
-        rows = (
-            session.query(RaceEntry.horse_no, RaceResult.rank)
-            .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
-            .filter(RaceEntry.race_id == race.id)
-            .filter(RaceResult.rank != None)
-            .all()
-        )
-        rows = sorted(rows, key=lambda x: x[1])
-        if len(rows) < 4:
-            continue
-        act = [rows[i][0] for i in range(4)]
-        pred = _predict_top4_for_race(session, race.id, weight_map)
-        if len(pred) < 4:
-            continue
-        used += 1
-        if pred[0] == act[0]:
-            win += 1
-        if pred[:2] == act[:2]:
-            qin += 1
-        if pred[:3] == act[:3]:
-            tri += 1
-        if pred[:4] == act[:4]:
-            q4 += 1
+    totals = {eid: 0.0 for eid in entry_ids}
+    for entry_id, factor_name, score in factors:
+        totals[int(entry_id)] += float(score or 0.0) * float(weights.get(factor_name, 0.0))
 
-    return {"races": used, "win": win, "qin": qin, "tri": tri, "q4": q4}
+    ranked = sorted(totals.items(), key=lambda x: x[1], reverse=True)
+    return [entry_id_to_no[eid] for eid, _ in ranked[:4] if eid in entry_id_to_no]
 
 def load_scoring_data(session: Session, race_id: int, weight_map: dict):
     entries = session.query(RaceEntry).filter_by(race_id=race_id).all()
@@ -484,6 +439,7 @@ def main():
                             target = st.session_state["selected_preset_name"]
                             presets = [p for p in presets if p["name"] != target]
                             _save_member_presets(session, member_email, presets)
+                            delete_member_preset_stats(session, member_email, target)
                             st.session_state["selected_preset_name"] = "（手動調整）"
                             st.rerun()
 
@@ -507,19 +463,24 @@ def main():
         if member_email:
             presets = _get_member_presets(session, member_email)
             if presets:
+                stats_map = update_member_preset_stats_incremental(session, member_email, presets, per_preset_max_new_races=30)
                 st.markdown("### 📌 已儲存權重配置組合")
                 rows = []
                 for p in presets:
-                    stats = _hit_rate_stats(session, p.get("weights", {}), max_races=200)
-                    races_n = stats["races"]
+                    stt = stats_map.get(p["name"], {}) if isinstance(stats_map, dict) else {}
+                    races_n = int(stt.get("races") or 0)
+                    win_n = int(stt.get("win") or 0)
+                    qin_n = int(stt.get("qin") or 0)
+                    tri_n = int(stt.get("tri") or 0)
+                    q4_n = int(stt.get("q4") or 0)
                     rows.append(
                         {
                             "組合": p["name"],
                             "樣本(場)": races_n,
-                            "獨贏命中%": round((stats["win"] / races_n * 100.0), 1) if races_n else 0.0,
-                            "正Q命中%": round((stats["qin"] / races_n * 100.0), 1) if races_n else 0.0,
-                            "三重彩命中%": round((stats["tri"] / races_n * 100.0), 1) if races_n else 0.0,
-                            "四重彩命中%": round((stats["q4"] / races_n * 100.0), 1) if races_n else 0.0,
+                            "獨贏命中%": round((win_n / races_n * 100.0), 1) if races_n else 0.0,
+                            "正Q命中%": round((qin_n / races_n * 100.0), 1) if races_n else 0.0,
+                            "三重彩命中%": round((tri_n / races_n * 100.0), 1) if races_n else 0.0,
+                            "四重彩命中%": round((q4_n / races_n * 100.0), 1) if races_n else 0.0,
                         }
                     )
                 st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
@@ -555,6 +516,17 @@ def main():
             )
             items = [{"條件": w.description, "代號": w.factor_name} for w in weights_list]
             st.dataframe(pd.DataFrame(items), use_container_width=True, hide_index=True)
+
+        with st.expander("📌 命中率統計口徑", expanded=False):
+            st.markdown(f"""
+            - 統計起始：{STATS_START_DATE.date().isoformat()}（之前忽略）
+            - 統計窗口：最近 {STATS_WINDOW_DAYS} 天（若起始日更近，則以起始日為準）
+            - 命中定義：以模型 Top4 預測與賽果名次比較：
+              - 獨贏：Top1 命中冠軍
+              - 正Q：Top2 順序完全命中
+              - 三重彩：Top3 順序完全命中
+              - 四重彩：Top4 順序完全命中
+            """)
 
         # 專業排名表格
         st.markdown("### 🏆 專業排名表")
