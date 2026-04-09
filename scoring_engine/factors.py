@@ -208,13 +208,16 @@ class FactorCalculator:
         race = self.session.get(Race, race_id) if race_id else None
 
         distance = self._to_int(getattr(race, "distance", 0), default=0) if race else 0
-        surface = getattr(race, "going", "") if race else ""
-        if surface not in ("草地", "泥地"):
-            tt = str(getattr(race, "track_type", "") if race else "")
-            if ("全天候" in tt) or ("泥地" in tt):
-                surface = "泥地"
-            elif "草地" in tt:
-                surface = "草地"
+        surface = ""
+        tt = str(getattr(race, "track_type", "") if race else "")
+        if ("全天候" in tt) or ("泥地" in tt):
+            surface = "泥地"
+        elif "草地" in tt:
+            surface = "草地"
+        else:
+            g = getattr(race, "going", "") if race else ""
+            if g in ("草地", "泥地"):
+                surface = g
 
         race_date = getattr(race, "race_date", None) if race else None
         if not isinstance(race_date, datetime):
