@@ -97,21 +97,30 @@ with col2:
         session = get_session()
         try:
             from database.models import Race
-            # 取得最新日期的所有賽事
-            latest_date = session.query(Race.race_date).order_by(Race.race_date.desc()).first()
-            if latest_date:
-                races = session.query(Race).filter_by(race_date=latest_date[0]).all()
+            # 取得最新日期的所有賽事 (忽略時間部分)
+            # 使用 date 屬性 (如果有) 或直接比較
+            from datetime import datetime
+            races = session.query(Race).order_by(Race.race_date.desc()).all()
+            
+            if races:
+                # 找到最新的一天
+                latest_date_val = races[0].race_date
+                latest_date_only = latest_date_val.date() if hasattr(latest_date_val, 'date') else latest_date_val
+                
+                # 過濾出該天的所有賽事
+                races_to_score = [r for r in races if (r.race_date.date() if hasattr(r.race_date, 'date') else r.race_date) == latest_date_only]
+                
                 engine = ScoringEngine(session)
                 
                 progress_bar = st.progress(0)
                 status_text = st.empty()
                 
-                for i, race in enumerate(races):
+                for i, race in enumerate(races_to_score):
                     status_text.text(f"正在計算第 {race.race_no} 場賽事分數...")
                     engine.score_race(race.id)
-                    progress_bar.progress((i + 1) / len(races))
+                    progress_bar.progress((i + 1) / len(races_to_score))
                     
-                st.success(f"✅ 已成功為 {latest_date[0]} 的 {len(races)} 場賽事完成重新計分！")
+                st.success(f"✅ 已成功為 {latest_date_only} 的 {len(races_to_score)} 場賽事完成重新計分！")
             else:
                 st.warning("⚠️ 找不到任何賽事資料。")
         except Exception as e:
