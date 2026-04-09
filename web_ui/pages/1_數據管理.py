@@ -17,6 +17,25 @@ st.set_page_config(page_title="數據管理 - HKJC Analytics", layout="wide")
 # 初始化資料庫 (確保在雲端環境表結構存在)
 init_db()
 
+if not st.session_state.get("is_superadmin", False):
+    st.title("🛠️ 數據管理後台")
+    st.markdown("🔐 需要 Superadmin 登入後才能操作。")
+    super_pw = os.environ.get("SUPERADMIN_PASSWORD", "")
+    if not super_pw:
+        st.error("❌ 未設定 SUPERADMIN_PASSWORD 環境變數，無法登入後台。")
+        st.stop()
+
+    with st.form("superadmin_login_form"):
+        pw = st.text_input("Superadmin 密碼", value="", type="password")
+        submitted = st.form_submit_button("登入", type="primary")
+        if submitted:
+            if str(pw) == super_pw:
+                st.session_state["is_superadmin"] = True
+                st.rerun()
+            else:
+                st.error("❌ 密碼錯誤")
+    st.stop()
+
 def trigger_scraper(target_date: str = None):
     """實時日誌串流輸出"""
     st.markdown("### 🚀 爬蟲執行進度")
@@ -103,6 +122,41 @@ def cleanup_removed_factor_data(session):
 
 st.title("🛠️ 數據管理後台")
 st.markdown("在此頁面執行數據更新、回填與清理操作。")
+
+st.subheader("👥 會員白名單")
+session_cfg = get_session()
+try:
+    from database.models import SystemConfig
+
+    cfg = session_cfg.query(SystemConfig).filter_by(key="member_whitelist_emails").first()
+    emails = []
+    if cfg and isinstance(cfg.value, list):
+        emails = [str(x).strip().lower() for x in cfg.value if str(x).strip()]
+    emails = list(dict.fromkeys(emails))
+    default_text = "\n".join(emails)
+
+    with st.form("member_whitelist_form"):
+        text = st.text_area("允許登入的 Email（每行一個）", value=default_text, height=160, placeholder="name@example.com")
+        submitted = st.form_submit_button("💾 儲存白名單", type="primary")
+        if submitted:
+            new_list = []
+            for line in str(text or "").splitlines():
+                e = line.strip().lower()
+                if e:
+                    new_list.append(e)
+            new_list = list(dict.fromkeys(new_list))
+            if not cfg:
+                cfg = SystemConfig(key="member_whitelist_emails", description="會員登入白名單 (email)")
+                session_cfg.add(cfg)
+            cfg.value = new_list
+            session_cfg.commit()
+            st.success(f"已儲存 {len(new_list)} 個 Email。")
+            st.rerun()
+except Exception as e:
+    session_cfg.rollback()
+    st.error(f"❌ 白名單讀寫失敗: {e}")
+finally:
+    session_cfg.close()
 
 st.subheader("📊 數據取得狀態")
 session_status = get_session()

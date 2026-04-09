@@ -11,7 +11,7 @@ if root_path not in sys.path:
     sys.path.append(root_path)
 
 from database.connection import get_session, init_db
-from database.models import Race, RaceEntry, ScoringFactor, ScoringWeight, Horse
+from database.models import Race, RaceEntry, ScoringFactor, ScoringWeight, Horse, SystemConfig
 from scoring_engine.core import ScoringEngine
 from scoring_engine.constants import DISABLED_FACTORS
 from utils.logger import logger
@@ -198,6 +198,26 @@ def main():
     st.markdown("---")
 
     session = get_db()
+
+    if not st.session_state.get("is_superadmin", False) and not st.session_state.get("member_email"):
+        wl = []
+        cfg = session.query(SystemConfig).filter_by(key="member_whitelist_emails").first()
+        if cfg and isinstance(cfg.value, list):
+            wl = [str(x).strip().lower() for x in cfg.value if str(x).strip()]
+        wl = list(dict.fromkeys(wl))
+
+        st.subheader("🔐 會員登入")
+        with st.form("member_login_form"):
+            email = st.text_input("Email", value="", placeholder="name@example.com")
+            submitted = st.form_submit_button("登入", type="primary")
+            if submitted:
+                e = str(email or "").strip().lower()
+                if e and e in wl:
+                    st.session_state["member_email"] = e
+                    st.rerun()
+                else:
+                    st.error("❌ 未授權：請先在後台白名單加入此 Email。")
+        st.stop()
 
     # Sidebar: 賽事選擇
     st.sidebar.header("🔍 賽事選擇")
