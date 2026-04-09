@@ -198,26 +198,7 @@ def main():
     st.markdown("---")
 
     session = get_db()
-    
-    # 右側：歡迎畫面與快速操作
-    st.subheader("💡 快速操作")
-    
-    col_a, col_b = st.columns(2)
-    with col_a:
-        st.markdown("#### 1. 更新賽事數據")
-        st.markdown("獲取最新的排位表與即時賠率")
-        
-        # 加入日期選擇器
-        from datetime import datetime
-        selected_date = st.date_input("選擇賽事日期", value=datetime.now(), key="quick_sync_date")
-        
-        if st.button("🔄 開始抓取該日賽事", use_container_width=True):
-            target_date_str = selected_date.strftime("%Y/%m/%d")
-            if trigger_scraper(target_date=target_date_str):
-                st.success(f"✅ {target_date_str} 數據同步完成！")
 
-    st.markdown("---")
-    
     # Sidebar: 賽事選擇
     st.sidebar.header("🔍 賽事選擇")
 
@@ -256,29 +237,26 @@ def main():
     # 比較時只比對 date 部分
     races_on_date = [r for r in races if (r.race_date.date() if hasattr(r.race_date, 'date') else r.race_date) == selected_date_input]
     
-    # 2. 選擇場次 (按鈕陣列)
     st.sidebar.markdown("🏁 **選擇場次**")
-    
-    # 初始化 session_state 以記憶當前選中的場次 ID
-    if 'selected_race_id' not in st.session_state or st.session_state.selected_race_id not in [r.id for r in races_on_date]:
-        st.session_state.selected_race_id = races_on_date[0].id
-        
-    # 使用 columns 建立場次按鈕網格 (每行 5 個按鈕)
-    cols_per_row = 5
-    for i in range(0, len(races_on_date), cols_per_row):
-        cols = st.sidebar.columns(cols_per_row)
-        for j in range(cols_per_row):
-            if i + j < len(races_on_date):
-                r = races_on_date[i + j]
-                btn_label = str(r.race_no)
-                # 當前選中的場次使用 primary 顏色
-                btn_type = "primary" if st.session_state.selected_race_id == r.id else "secondary"
-                
-                if cols[j].button(btn_label, key=f"race_btn_{r.id}", type=btn_type, use_container_width=True):
-                    st.session_state.selected_race_id = r.id
-                    st.rerun()
 
-    selected_race_id = st.session_state.selected_race_id
+    if not races_on_date:
+        st.sidebar.warning("該日期沒有場次資料。")
+        return
+
+    race_no_options = [r.race_no for r in races_on_date]
+    race_no_to_id = {r.race_no: r.id for r in races_on_date}
+
+    if "selected_race_no" not in st.session_state or st.session_state.selected_race_no not in race_no_options:
+        st.session_state.selected_race_no = race_no_options[0]
+
+    selected_race_no = st.sidebar.selectbox(
+        "場次",
+        race_no_options,
+        index=race_no_options.index(st.session_state.selected_race_no),
+        label_visibility="collapsed",
+    )
+    st.session_state.selected_race_no = selected_race_no
+    selected_race_id = race_no_to_id[selected_race_no]
 
     # Sidebar: 權重動態調整 (可折疊)
     with st.sidebar.expander("⚙️ 權重配置 (動態調整)"):
@@ -290,17 +268,25 @@ def main():
         )
         updated_weights = {}
         for w in weights:
-            updated_weights[w.factor_name] = st.slider(f"{w.description}", 0.0, 5.0, float(w.weight), 0.1)
-        
-        if st.button("重新計算排名"):
-            # 更新權重並重新計算
+            key = f"weight_{w.factor_name}"
+            default_val = st.session_state.get(key, float(w.weight))
+            updated_weights[w.factor_name] = st.slider(
+                f"{w.description}",
+                0.0,
+                5.0,
+                float(default_val),
+                0.1,
+                key=key,
+            )
+
+        changed = any(abs(updated_weights[w.factor_name] - float(w.weight)) > 1e-9 for w in weights)
+        if changed:
             for w in weights:
-                w.weight = updated_weights[w.factor_name]
+                w.weight = float(updated_weights[w.factor_name])
             session.commit()
-            
+
             engine = ScoringEngine(session)
             engine.score_race(selected_race_id)
-            st.success("排名已根據新權重重新計算！")
             st.rerun()
 
     # 主面板：賽事資訊
@@ -315,13 +301,7 @@ def main():
     # 數據加載與顯示
     df = load_scoring_data(session, selected_race_id)
     if df.empty:
-        st.info("本場賽事尚未進行計分運算，點擊下方按鈕開始。")
-    
-    # 無論 df 是否為空，都顯示重新計分按鈕，以支援邏輯更新後的重算
-    if st.button("🚀 立即執行 / 重新計分"):
-        engine = ScoringEngine(session)
-        engine.score_race(selected_race_id)
-        st.rerun()
+        st.info("本場賽事尚未進行計分運算，請先於「數據管理後台」執行抓取與計分。")
         
     if not df.empty:
         # 專業排名表格
