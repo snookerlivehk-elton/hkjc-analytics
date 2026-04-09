@@ -81,9 +81,9 @@ def init_db():
             from scripts.init_db import populate_default_weights
             populate_default_weights()
         else:
-            disabled = ("gear_change", "going_specialty", "speedpro_energy", "vet_rest_days")
+            disabled = ("gear_change", "going_specialty", "morning_trial_perf", "odds_movement", "pace_analysis", "speedpro_energy", "vet_rest_days")
             session.query(ScoringWeight).filter(ScoringWeight.factor_name.in_(disabled)).update(
-                {ScoringWeight.is_active: False},
+                {ScoringWeight.is_active: False, ScoringWeight.weight: 0.0},
                 synchronize_session=False,
             )
             session.commit()

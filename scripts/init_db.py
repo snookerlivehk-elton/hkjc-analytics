@@ -20,7 +20,7 @@ def populate_default_weights():
         ("venue_dist_specialty", "場地＋路程專長", 1.0, True),
         ("draw_stats", "檔位偏差 (官方 Draw Statistics)", 0.8, True),
         ("weight_rating_perf", "負磅／評分表現", 0.7, True),
-        ("morning_trial_perf", "晨操／試閘表現", 1.0, True),
+        ("morning_trial_perf", "晨操／試閘表現", 0.0, False),
         ("gear_change", "配備變化", 0.6, False),
         ("class_performance", "班次表現", 1.0, True),
         ("going_specialty", "場地狀況專長 (Going)", 0.8, False),
