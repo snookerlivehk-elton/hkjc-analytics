@@ -101,6 +101,36 @@ def cleanup_removed_factor_data(session):
 st.title("🛠️ 數據管理後台")
 st.markdown("在此頁面執行數據更新、回填與清理操作。")
 
+st.subheader("📊 數據取得狀態")
+session_status = get_session()
+try:
+    from database.models import Race, Horse, Jockey, Trainer, RaceEntry, HorseHistory, ScoringFactor, RaceResult, RaceDividend, OddsHistory, ScoringWeight, SystemConfig
+
+    status = {
+        "賽事": session_status.query(Race).count(),
+        "排位": session_status.query(RaceEntry).count(),
+        "賽果": session_status.query(RaceResult).count(),
+        "派彩": session_status.query(RaceDividend).count(),
+        "計分": session_status.query(ScoringFactor).count(),
+        "馬匹": session_status.query(Horse).count(),
+        "往績": session_status.query(HorseHistory).count(),
+        "騎師": session_status.query(Jockey).count(),
+        "練馬師": session_status.query(Trainer).count(),
+        "賠率": session_status.query(OddsHistory).count(),
+        "權重": session_status.query(ScoringWeight).count(),
+        "系統設定": session_status.query(SystemConfig).count(),
+    }
+
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    items = list(status.items())
+    cols = [c1, c2, c3, c4, c5, c6]
+    for i, (k, v) in enumerate(items):
+        cols[i % 6].metric(k, v)
+except Exception as e:
+    st.error(f"❌ 讀取資料庫狀態失敗: {e}")
+finally:
+    session_status.close()
+
 col1, col2 = st.columns(2)
 
 with col1:

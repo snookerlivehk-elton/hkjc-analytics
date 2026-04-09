@@ -220,16 +220,7 @@ def main():
     
     # Sidebar: 賽事選擇
     st.sidebar.header("🔍 賽事選擇")
-    
-    # 顯示資料庫狀態
-    st.sidebar.subheader("📊 數據取得狀態")
-    status = get_db_status(session)
-    for label, count in status.items():
-        color = "green" if count > 0 else "red"
-        st.sidebar.markdown(f"{label}: :{color}[{count}]")
-    
-    st.sidebar.markdown("---")
-    
+
     races = load_races(session)
     if not races:
         st.sidebar.warning("資料庫中尚無賽事數據，請先執行抓取與計分。")
