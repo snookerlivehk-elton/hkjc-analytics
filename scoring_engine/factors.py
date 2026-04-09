@@ -20,6 +20,43 @@ class FactorCalculator:
             # 預設回傳 0.0 (中性分數) 與空字串
             return pd.Series(0.0, index=self.df.index), pd.Series("無數據", index=self.df.index)
 
+    def _to_int(self, v, default=0):
+        try:
+            if v is None:
+                return default
+            return int(v)
+        except (ValueError, TypeError):
+            return default
+
+    def _parse_class_num(self, s: str):
+        import re
+
+        if not s:
+            return None
+
+        m = re.search(r'Class\s*([0-9]+)', s, re.IGNORECASE)
+        if m:
+            try:
+                return int(m.group(1))
+            except ValueError:
+                return None
+
+        m = re.search(r'第\s*([0-9]+)\s*班', s)
+        if m:
+            try:
+                return int(m.group(1))
+            except ValueError:
+                return None
+
+        m = re.search(r'第\s*([三四五])\s*班', s)
+        if m:
+            return {"三": 3, "四": 4, "五": 5}.get(m.group(1))
+
+        if str(s).strip() in {"3", "4", "5"}:
+            return int(str(s).strip())
+
+        return None
+
     # 1. 騎師＋練馬師合作 (J/T Bond)
     def _calculate_jockey_trainer_bond(self):
         from database.models import HorseHistory, SystemConfig
@@ -257,77 +294,22 @@ class FactorCalculator:
 
     # 6. 負磅／評分表現 (Weight/Rating Perf) - 真實邏輯：高評分馬通常實力較強
     def _calculate_weight_rating_perf(self):
-        import re
         from database.models import HorseHistory, Race
 
-        def parse_class_num(s: str):
-            if not s:
-                return None
-            m = re.search(r'Class\s*([0-9]+)', s, re.IGNORECASE)
-            if m:
-                try:
-                    return int(m.group(1))
-                except ValueError:
-                    return None
-            m = re.search(r'第\s*([0-9]+)\s*班', s)
-            if m:
-                try:
-                    return int(m.group(1))
-                except ValueError:
-                    return None
-            m = re.search(r'第\s*([三四五])\s*班', s)
-            if m:
-                return {"三": 3, "四": 4, "五": 5}.get(m.group(1))
-            if str(s).strip() in {"3", "4", "5"}:
-                return int(str(s).strip())
-            return None
-
-        def to_int(v, default=0):
-            try:
-                if v is None:
-                    return default
-                return int(v)
-            except (ValueError, TypeError):
-                return default
-
         race_id = self.df.iloc[0].get("race_id") if "race_id" in self.df.columns else None
-        race_id = to_int(race_id, default=0)
+        race_id = self._to_int(race_id, default=0)
         race = self.session.get(Race, race_id) if race_id else None
-        current_distance = to_int(getattr(race, "distance", 0), default=0) if race else 0
-        current_class_str = getattr(race, "race_class", "") if race else ""
-        current_class_num = parse_class_num(current_class_str)
+        current_distance = self._to_int(getattr(race, "distance", 0), default=0) if race else 0
 
         raw_scores = []
         displays = []
 
-        cached_prev_class = {}
         cached_best_same_dist = {}
 
         for _, row in self.df.iterrows():
-            horse_id = to_int(row.get("horse_id", 0), default=0)
-            current_rating = to_int(row.get("rating", 0), default=0)
-            current_weight = to_int(row.get("weight", 0), default=0)
-
-            prev_class_num = None
-            prev_class_str = ""
-            if horse_id:
-                if horse_id in cached_prev_class:
-                    prev_class_num, prev_class_str = cached_prev_class[horse_id]
-                else:
-                    hist = (
-                        self.session.query(HorseHistory.race_class, HorseHistory.race_date)
-                        .filter(HorseHistory.horse_id == horse_id)
-                        .order_by(HorseHistory.race_date.desc())
-                        .limit(10)
-                        .all()
-                    )
-                    for rc, _ in hist:
-                        n = parse_class_num(rc or "")
-                        if n is not None:
-                            prev_class_num = n
-                            prev_class_str = rc or ""
-                            break
-                    cached_prev_class[horse_id] = (prev_class_num, prev_class_str)
+            horse_id = self._to_int(row.get("horse_id", 0), default=0)
+            current_rating = self._to_int(row.get("rating", 0), default=0)
+            current_weight = self._to_int(row.get("weight", 0), default=0)
 
             best_win_rating = None
             best_win_weight = None
@@ -348,20 +330,14 @@ class FactorCalculator:
                         .first()
                     )
                     if rec:
-                        best_win_rating = to_int(rec[0], default=0) or None
-                        best_win_weight = to_int(rec[1], default=0) or None
+                        best_win_rating = self._to_int(rec[0], default=0) or None
+                        best_win_weight = self._to_int(rec[1], default=0) or None
                     cached_best_same_dist[key] = (best_win_rating, best_win_weight)
 
             delta_rating = (best_win_rating - current_rating) if (best_win_rating is not None and current_rating) else 0
             delta_weight = (best_win_weight - current_weight) if (best_win_weight is not None and current_weight) else 0
 
-            class_drop = False
-            if current_class_num in (4, 5) and prev_class_num in (3, 4):
-                class_drop = (current_class_num == prev_class_num + 1)
-
             score = 0.0
-            if class_drop:
-                score += 2.0
             if delta_rating > 0:
                 score += min(delta_rating, 15) / 5.0
             if delta_weight > 0:
@@ -370,13 +346,6 @@ class FactorCalculator:
             raw_scores.append(score)
 
             parts = []
-            if current_class_str:
-                parts.append(f"今班{current_class_str}")
-            if prev_class_str:
-                parts.append(f"上次班{prev_class_str}")
-            if class_drop and prev_class_num and current_class_num:
-                parts.append(f"降班{prev_class_num}→{current_class_num}")
-
             if current_distance:
                 parts.append(f"同程{current_distance}m")
 
@@ -415,12 +384,64 @@ class FactorCalculator:
         display = pd.Series(["無數據"] * len(self.df), index=self.df.index)
         return raw_scores, display
 
-    # 12. 班次表現 (Class Performance) - 真實邏輯：負磅越輕壓力越小
+    # 12. 班次表現 (Class Performance)
     def _calculate_class_performance(self):
-        # 負磅越輕，分數越高 (135磅 0分, 115磅 10分)
-        raw_scores = 145 - self.df["weight"]
-        display = self.df["weight"].apply(lambda x: f"負 {x} 磅")
-        return raw_scores, display
+        from database.models import HorseHistory, Race
+
+        race_id = self.df.iloc[0].get("race_id") if "race_id" in self.df.columns else None
+        race_id = self._to_int(race_id, default=0)
+        race = self.session.get(Race, race_id) if race_id else None
+        current_class_str = getattr(race, "race_class", "") if race else ""
+        current_class_num = self._parse_class_num(current_class_str)
+
+        raw_scores = []
+        displays = []
+
+        cached_prev_class = {}
+
+        for _, row in self.df.iterrows():
+            horse_id = self._to_int(row.get("horse_id", 0), default=0)
+
+            prev_class_num = None
+            prev_class_str = ""
+            if horse_id:
+                if horse_id in cached_prev_class:
+                    prev_class_num, prev_class_str = cached_prev_class[horse_id]
+                else:
+                    hist = (
+                        self.session.query(HorseHistory.race_class, HorseHistory.race_date)
+                        .filter(HorseHistory.horse_id == horse_id)
+                        .order_by(HorseHistory.race_date.desc())
+                        .limit(10)
+                        .all()
+                    )
+                    for rc, _ in hist:
+                        n = self._parse_class_num(rc or "")
+                        if n is not None:
+                            prev_class_num = n
+                            prev_class_str = rc or ""
+                            break
+                    cached_prev_class[horse_id] = (prev_class_num, prev_class_str)
+
+            class_drop = False
+            if current_class_num in (4, 5) and prev_class_num in (3, 4):
+                class_drop = (current_class_num == prev_class_num + 1)
+
+            score = 1.0 if class_drop else 0.0
+            raw_scores.append(score)
+
+            parts = []
+            if current_class_str:
+                parts.append(f"今班{current_class_str}")
+            if prev_class_str:
+                parts.append(f"上次班{prev_class_str}")
+            if class_drop and prev_class_num and current_class_num:
+                parts.append(f"降班{prev_class_num}→{current_class_num}")
+            else:
+                parts.append("無降班")
+            displays.append(" | ".join(parts) if parts else "無數據")
+
+        return pd.Series(raw_scores, index=self.df.index), pd.Series(displays, index=self.df.index)
 
     # 13. 場地狀況專長 (Going Specialty)
     def _calculate_going_specialty(self):
