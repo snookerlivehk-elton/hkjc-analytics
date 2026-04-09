@@ -234,15 +234,34 @@ def main():
         return
 
     # 提取所有可用的日期 (去重複並降序排列)
-    available_dates = sorted(list(set(r.race_date for r in races)), reverse=True)
-    date_options = [d.strftime('%Y-%m-%d') for d in available_dates]
+    # 將 datetime object 轉換為 date 來進行去重，避免因為時間部分不同而導致重複日期
+    available_dates = sorted(list(set(r.race_date.date() if hasattr(r.race_date, 'date') else r.race_date for r in races)), reverse=True)
     
-    # 1. 選擇日期 (Selectbox)
-    selected_date_str = st.sidebar.selectbox("📅 選擇賽事日期", date_options)
-    selected_date = available_dates[date_options.index(selected_date_str)]
+    # 將 datetime.date 陣列轉換回 datetime，以相容後面的比較
+    from datetime import datetime
+    available_datetimes = [datetime.combine(d, datetime.min.time()) for d in available_dates]
+    
+    # 1. 選擇日期 (日曆選擇器 Date Input)
+    st.sidebar.markdown("📅 **選擇賽事日期**")
+    selected_date_input = st.sidebar.date_input(
+        "請選擇日期",
+        value=available_dates[0] if available_dates else None,
+        min_value=available_dates[-1] if available_dates else None,
+        max_value=available_dates[0] if available_dates else None
+    )
+    
+    # 檢查選擇的日期是否有賽事資料
+    if selected_date_input not in available_dates:
+        st.sidebar.error("❌ 該日期沒有賽事資料，請選擇日曆上有顏色的日期。")
+        # 如果使用者選錯，自動退回最新有資料的一天
+        selected_date_input = available_dates[0]
+        
+    selected_date_str = selected_date_input.strftime('%Y-%m-%d')
+    selected_datetime = datetime.combine(selected_date_input, datetime.min.time())
     
     # 過濾出該日期的所有場次
-    races_on_date = [r for r in races if r.race_date == selected_date]
+    # 比較時只比對 date 部分
+    races_on_date = [r for r in races if (r.race_date.date() if hasattr(r.race_date, 'date') else r.race_date) == selected_date_input]
     
     # 2. 選擇場次 (按鈕陣列)
     st.sidebar.markdown("🏁 **選擇場次**")
