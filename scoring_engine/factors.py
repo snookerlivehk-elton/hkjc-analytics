@@ -257,10 +257,145 @@ class FactorCalculator:
 
     # 6. 負磅／評分表現 (Weight/Rating Perf) - 真實邏輯：高評分馬通常實力較強
     def _calculate_weight_rating_perf(self):
-        # 評分越高，分數越高
-        raw_scores = self.df["rating"] / 10
-        display = self.df["rating"].apply(lambda x: f"評分 {x}")
-        return raw_scores, display
+        import re
+        from database.models import HorseHistory, Race
+
+        def parse_class_num(s: str):
+            if not s:
+                return None
+            m = re.search(r'Class\s*([0-9]+)', s, re.IGNORECASE)
+            if m:
+                try:
+                    return int(m.group(1))
+                except ValueError:
+                    return None
+            m = re.search(r'第\s*([0-9]+)\s*班', s)
+            if m:
+                try:
+                    return int(m.group(1))
+                except ValueError:
+                    return None
+            m = re.search(r'第\s*([三四五])\s*班', s)
+            if m:
+                return {"三": 3, "四": 4, "五": 5}.get(m.group(1))
+            if str(s).strip() in {"3", "4", "5"}:
+                return int(str(s).strip())
+            return None
+
+        def to_int(v, default=0):
+            try:
+                if v is None:
+                    return default
+                return int(v)
+            except (ValueError, TypeError):
+                return default
+
+        race_id = self.df.iloc[0].get("race_id") if "race_id" in self.df.columns else None
+        race_id = to_int(race_id, default=0)
+        race = self.session.get(Race, race_id) if race_id else None
+        current_distance = to_int(getattr(race, "distance", 0), default=0) if race else 0
+        current_class_str = getattr(race, "race_class", "") if race else ""
+        current_class_num = parse_class_num(current_class_str)
+
+        raw_scores = []
+        displays = []
+
+        cached_prev_class = {}
+        cached_best_same_dist = {}
+
+        for _, row in self.df.iterrows():
+            horse_id = to_int(row.get("horse_id", 0), default=0)
+            current_rating = to_int(row.get("rating", 0), default=0)
+            current_weight = to_int(row.get("weight", 0), default=0)
+
+            prev_class_num = None
+            prev_class_str = ""
+            if horse_id:
+                if horse_id in cached_prev_class:
+                    prev_class_num, prev_class_str = cached_prev_class[horse_id]
+                else:
+                    hist = (
+                        self.session.query(HorseHistory.race_class, HorseHistory.race_date)
+                        .filter(HorseHistory.horse_id == horse_id)
+                        .order_by(HorseHistory.race_date.desc())
+                        .limit(10)
+                        .all()
+                    )
+                    for rc, _ in hist:
+                        n = parse_class_num(rc or "")
+                        if n is not None:
+                            prev_class_num = n
+                            prev_class_str = rc or ""
+                            break
+                    cached_prev_class[horse_id] = (prev_class_num, prev_class_str)
+
+            best_win_rating = None
+            best_win_weight = None
+            if horse_id and current_distance:
+                key = (horse_id, current_distance)
+                if key in cached_best_same_dist:
+                    best_win_rating, best_win_weight = cached_best_same_dist[key]
+                else:
+                    rec = (
+                        self.session.query(HorseHistory.rating, HorseHistory.weight)
+                        .filter(
+                            HorseHistory.horse_id == horse_id,
+                            HorseHistory.distance == current_distance,
+                            HorseHistory.rank == 1,
+                            HorseHistory.rating > 0
+                        )
+                        .order_by(HorseHistory.rating.desc())
+                        .first()
+                    )
+                    if rec:
+                        best_win_rating = to_int(rec[0], default=0) or None
+                        best_win_weight = to_int(rec[1], default=0) or None
+                    cached_best_same_dist[key] = (best_win_rating, best_win_weight)
+
+            delta_rating = (best_win_rating - current_rating) if (best_win_rating is not None and current_rating) else 0
+            delta_weight = (best_win_weight - current_weight) if (best_win_weight is not None and current_weight) else 0
+
+            class_drop = False
+            if current_class_num in (4, 5) and prev_class_num in (3, 4):
+                class_drop = (current_class_num == prev_class_num + 1)
+
+            score = 0.0
+            if class_drop:
+                score += 2.0
+            if delta_rating > 0:
+                score += min(delta_rating, 15) / 5.0
+            if delta_weight > 0:
+                score += min(delta_weight, 10) / 10.0
+
+            raw_scores.append(score)
+
+            parts = []
+            if current_class_str:
+                parts.append(f"今班{current_class_str}")
+            if prev_class_str:
+                parts.append(f"上次班{prev_class_str}")
+            if class_drop and prev_class_num and current_class_num:
+                parts.append(f"降班{prev_class_num}→{current_class_num}")
+
+            if current_distance:
+                parts.append(f"同程{current_distance}m")
+
+            if best_win_rating is not None:
+                dr = best_win_rating - current_rating
+                parts.append(f"同程可贏評{best_win_rating}({dr:+d})")
+            else:
+                parts.append("同程無勝仗")
+
+            if best_win_weight is not None and current_weight:
+                dw = best_win_weight - current_weight
+                parts.append(f"同程勝磅{best_win_weight}({dw:+d})")
+
+            parts.append(f"現評{current_rating}")
+            parts.append(f"負磅{current_weight}")
+
+            displays.append(" | ".join(parts) if parts else "無數據")
+
+        return pd.Series(raw_scores, index=self.df.index), pd.Series(displays, index=self.df.index)
 
     # 7. 晨操／試閘表現 (Morning/Trial Perf)
     def _calculate_morning_trial_perf(self):
