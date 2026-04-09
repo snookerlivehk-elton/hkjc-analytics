@@ -15,14 +15,14 @@ def populate_default_weights():
     session = get_session()
     
     factors = [
-        ("jockey_trainer_bond", "騎師＋練馬師合作 (同路程/場地)", 1.0),
+        ("jockey_trainer_bond", "騎師＋練馬師合作 (不論馬匹)", 1.0),
         ("horse_time_perf", "馬匹分段時間＋完成時間 (同路程歷史)", 1.5),
         ("odds_movement", "投注額變動 (早盤 vs 即時)", 1.2),
         ("venue_dist_specialty", "場地＋路程專長", 1.0),
         ("draw_stats", "檔位偏差 (官方 Draw Statistics)", 0.8),
         ("weight_rating_perf", "負磅／評分表現", 0.7),
         ("morning_trial_perf", "晨操／試閘表現", 1.0),
-        ("jockey_horse_bond", "騎師＋馬匹組合", 0.9),
+        ("jockey_horse_bond", "騎練與本駒合作 (近X次)", 0.9),
         ("trainer_horse_bond", "練馬師＋馬匹組合", 0.9),
         ("gear_change", "配備變化", 0.6),
         ("pace_analysis", "配速分析 (步速匹配度)", 1.3),
@@ -41,6 +41,9 @@ def populate_default_weights():
         if not existing:
             sw = ScoringWeight(factor_name=name, description=desc, weight=weight)
             session.add(sw)
+        else:
+            if existing.description != desc:
+                existing.description = desc
     
     try:
         session.commit()

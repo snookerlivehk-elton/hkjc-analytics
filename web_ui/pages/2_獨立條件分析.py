@@ -280,6 +280,58 @@ else:
                                 st.success(f"權重已儲存為 勝率={win_w}、入圍率={place_w}，並已重新計算分數！")
                                 st.rerun()
 
+                if selected_factor == "騎練與本駒合作 (近X次)":
+                    st.markdown("---")
+                    st.markdown("### 💡 演算法說明：騎練與本駒合作 (近X次)")
+                    st.markdown("""
+                    這個條件用於衡量「本場騎師＋練馬師」在**同一匹馬**身上的合作表現。
+                    
+                    - 只統計本駒歷史往績中，與本場相同騎師＋練馬師的合作紀錄
+                    - 可設定只取「近 5 次 / 近 10 次 / 最大(全部)」合作樣本
+                    - 原始分 = 勝出率 × 勝率權重 + 入圍率(前3) × 入圍權重
+                    - 最後會在同一場內做相對百分位標準化成 0–10 分
+                    """)
+                    
+                    with st.expander("⚙️ 調整近X次樣本 + 勝率/入圍率權重 (調整後將即時儲存並重算)"):
+                        from database.models import SystemConfig
+                        
+                        config = session.query(SystemConfig).filter_by(key="jt_horse_bond_config").first()
+                        if config and isinstance(config.value, dict):
+                            current_win_w = float(config.value.get("win", 0.7))
+                            current_place_w = float(config.value.get("place", 0.3))
+                            current_window = int(config.value.get("window", 0))
+                        else:
+                            current_win_w, current_place_w, current_window = 0.7, 0.3, 0
+                        
+                        window_options = {
+                            "近 5 次": 5,
+                            "近 10 次": 10,
+                            "最大 (全部)": 0
+                        }
+                        current_label = next((k for k, v in window_options.items() if v == current_window), "最大 (全部)")
+                        
+                        with st.form("jt_horse_bond_config_form"):
+                            col_a, col_b, col_c = st.columns(3)
+                            window_label = col_a.selectbox("合作樣本範圍", list(window_options.keys()), index=list(window_options.keys()).index(current_label))
+                            win_w = col_b.number_input("勝率權重", value=current_win_w, min_value=0.0, max_value=1.0, step=0.05)
+                            place_w = col_c.number_input("入圍率(前3)權重", value=current_place_w, min_value=0.0, max_value=1.0, step=0.05)
+                            
+                            submitted = st.form_submit_button("💾 儲存參數並為本場重新計分", type="primary")
+                            if submitted:
+                                new_cfg = {"window": int(window_options[window_label]), "win": float(win_w), "place": float(place_w)}
+                                if not config:
+                                    config = SystemConfig(key="jt_horse_bond_config", description="騎練與本駒合作：近X次樣本 + 勝率/入圍率權重")
+                                    session.add(config)
+                                config.value = new_cfg
+                                session.commit()
+                                
+                                from scoring_engine.core import ScoringEngine
+                                engine = ScoringEngine(session)
+                                engine.score_race(selected_race_id)
+                                
+                                st.success(f"參數已儲存為 {new_cfg}，並已重新計算分數！")
+                                st.rerun()
+
             else:
                 st.warning("未找到計分條件數據。")
                 
