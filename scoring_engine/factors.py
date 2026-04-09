@@ -175,10 +175,14 @@ class FactorCalculator:
         
         # 取得當前賽事資訊
         race_id = self.df.iloc[0].get("race_id") if "race_id" in self.df.columns else None
+        try:
+            race_id = int(race_id) if race_id is not None else None
+        except (ValueError, TypeError):
+            race_id = None
         race_no = None
         race_date_str = None
         if race_id:
-            race = self.session.query(Race).filter_by(id=race_id).first()
+            race = self.session.get(Race, race_id)
             if race:
                 race_no = race.race_no
                 if hasattr(race.race_date, 'strftime'):
