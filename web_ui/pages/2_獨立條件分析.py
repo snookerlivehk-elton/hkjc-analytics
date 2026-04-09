@@ -131,6 +131,8 @@ else:
                 # 初始化 session_state 以記憶當前選中的因子
                 if 'selected_factor' not in st.session_state:
                     st.session_state.selected_factor = available_factors[0]
+                if st.session_state.selected_factor not in available_factors:
+                    st.session_state.selected_factor = available_factors[0]
                 
                 # 使用 columns 建立按鈕網格 (每行 4 個按鈕)
                 cols_per_row = 4
@@ -149,6 +151,55 @@ else:
                 st.markdown("---")
                 st.markdown(f"#### 📌 目前檢視：{selected_factor}")
                 
+                if selected_factor in ("騎練與本駒合作 (近X次)", "騎師＋馬匹組合"):
+                    from database.models import SystemConfig, RaceEntry, ScoringFactor
+
+                    cfg = session.query(SystemConfig).filter_by(key="jt_horse_bond_config").first()
+                    win_w, place_w, window = 0.7, 0.3, 0
+                    if cfg and isinstance(cfg.value, dict):
+                        win_w = float(cfg.value.get("win", win_w))
+                        place_w = float(cfg.value.get("place", place_w))
+                        window = int(cfg.value.get("window", window))
+
+                    if win_w < 0:
+                        win_w = 0.0
+                    if place_w < 0:
+                        place_w = 0.0
+                    total_w = win_w + place_w
+                    if total_w <= 0:
+                        win_w, place_w, total_w = 0.7, 0.3, 1.0
+                    win_w /= total_w
+                    place_w /= total_w
+                    if window < 0:
+                        window = 0
+
+                    expected_window_label = f"近{window}" if window > 0 else "最大"
+                    expected_weight_label = f"權重 {win_w:.2f}/{place_w:.2f}"
+
+                    sample = (
+                        session.query(ScoringFactor.raw_data_display)
+                        .join(RaceEntry, RaceEntry.id == ScoringFactor.entry_id)
+                        .filter(
+                            RaceEntry.race_id == selected_race_id,
+                            ScoringFactor.factor_name == "jockey_horse_bond",
+                        )
+                        .first()
+                    )
+
+                    needs_rescore = (
+                        (not sample)
+                        or (not sample[0])
+                        or (expected_window_label not in sample[0])
+                        or (expected_weight_label not in sample[0])
+                    )
+                    auto_key = f"auto_rescore_jockey_horse_bond_{selected_race_id}_{expected_window_label}_{expected_weight_label}"
+                    if needs_rescore and not st.session_state.get(auto_key, False):
+                        st.session_state[auto_key] = True
+                        from scoring_engine.core import ScoringEngine
+                        engine = ScoringEngine(session)
+                        engine.score_race(selected_race_id)
+                        st.rerun()
+
                 # 提取基本資訊與該因子的分數
                 race = session.get(Race, selected_race_id)
                 track_display = race.track_type if race.track_type else race.venue
