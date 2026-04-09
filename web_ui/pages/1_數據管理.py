@@ -15,6 +15,17 @@ from scoring_engine.core import ScoringEngine
 
 st.set_page_config(page_title="數據管理 - HKJC Analytics", layout="wide")
 
+# 全站列表文字靠左
+st.markdown(
+    """
+    <style>
+    [data-testid="stDataFrame"] * { text-align: left !important; }
+    [data-testid="stTable"] * { text-align: left !important; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 # 初始化資料庫 (確保在雲端環境表結構存在)
 init_db()
 
@@ -124,7 +135,11 @@ def cleanup_removed_factor_data(session):
 st.title("🛠️ 數據管理後台")
 st.markdown("在此頁面執行數據更新、回填與清理操作。")
 
-st.markdown("[➡️ 前往獨立條件分析](/%E7%8D%A8%E7%AB%8B%E6%A2%9D%E4%BB%B6%E5%88%86%E6%9E%90)")
+if st.button("➡️ 前往獨立條件分析", use_container_width=False):
+    try:
+        st.switch_page("pages/2_獨立條件分析.py")
+    except Exception:
+        st.markdown("[➡️ 前往獨立條件分析](/%E7%8D%A8%E7%AB%8B%E6%A2%9D%E4%BB%B6%E5%88%86%E6%9E%90)")
 
 tab_ops, tab_members = st.tabs(["🛠️ 系統操作", "👥 會員組合"])
 

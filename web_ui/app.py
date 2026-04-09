@@ -24,6 +24,17 @@ from datetime import datetime
 # 設定頁面配置
 st.set_page_config(page_title="HKJC 每場賽事獨立計分排名系統", layout="wide")
 
+# 全站列表文字靠左
+st.markdown(
+    """
+    <style>
+    [data-testid="stDataFrame"] * { text-align: left !important; }
+    [data-testid="stTable"] * { text-align: left !important; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 # 初始化資料庫 (確保在雲端環境表結構存在)
 init_db()
 
@@ -665,15 +676,16 @@ def main():
                     df_div = df_div[order_cols].copy()
 
                     if "彩池" in df_div.columns:
-                        pools = [p for p in df_div["彩池"].tolist() if p]
+                        df_div["_彩池_raw"] = df_div["彩池"].astype(str)
+                        pools = [p for p in df_div["_彩池_raw"].tolist() if p]
                         pool_order = list(dict.fromkeys(pools))
                         if pool_order:
-                            df_div["彩池"] = pd.Categorical(df_div["彩池"], categories=pool_order, ordered=True)
-                            df_div = df_div.sort_values(["彩池", "勝出組合"] if "勝出組合" in df_div.columns else ["彩池"])
+                            df_div["_彩池_raw"] = pd.Categorical(df_div["_彩池_raw"], categories=pool_order, ordered=True)
+                            df_div = df_div.sort_values(["_彩池_raw", "勝出組合"] if "勝出組合" in df_div.columns else ["_彩池_raw"])
 
                             display_pool = []
                             prev = None
-                            for p in df_div["彩池"].tolist():
+                            for p in df_div["_彩池_raw"].tolist():
                                 p = "" if p is None else str(p)
                                 if prev == p:
                                     display_pool.append("")
@@ -682,15 +694,36 @@ def main():
                                     prev = p
                             df_div["彩池"] = display_pool
 
+                        palette = ["#0f172a", "#111827", "#0b1220", "#1f2937", "#0b1324", "#172036"]
+                        pool_to_color = {p: palette[i % len(palette)] for i, p in enumerate(pool_order)} if pool_order else {}
+
+                        def _style_dividends(_df: pd.DataFrame):
+                            out = []
+                            for p in _df.get("_彩池_raw", pd.Series([""] * len(_df))).astype(str).tolist():
+                                bg = pool_to_color.get(p, "")
+                                if bg:
+                                    out.append([f"background-color: {bg};"] * _df.shape[1])
+                                else:
+                                    out.append([""] * _df.shape[1])
+                            return out
+
+
                     if "單位" in df_div.columns:
                         df_div = df_div.drop(columns=["單位"])
-                    st.dataframe(df_div, use_container_width=True, hide_index=True)
+                    if "_彩池_raw" in df_div.columns:
+                        st.dataframe(
+                            df_div.drop(columns=["_彩池_raw"]).style.apply(_style_dividends, axis=None),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+                    else:
+                        st.dataframe(df_div, use_container_width=True, hide_index=True)
                 else:
                     st.info("本場尚未有派彩資料。")
             else:
                 st.info("本場尚未有派彩資料。")
-
     session.close()
+
 
 if __name__ == "__main__":
     main()

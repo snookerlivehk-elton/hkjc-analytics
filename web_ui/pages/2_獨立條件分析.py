@@ -15,6 +15,17 @@ from scoring_engine.constants import DISABLED_FACTORS
 
 st.set_page_config(page_title="獨立條件分析 - HKJC Analytics", layout="wide")
 
+# 全站列表文字靠左
+st.markdown(
+    """
+    <style>
+    [data-testid="stDataFrame"] * { text-align: left !important; }
+    [data-testid="stTable"] * { text-align: left !important; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 # 初始化資料庫 (確保在雲端環境表結構存在)
 init_db()
 
@@ -23,7 +34,11 @@ if not st.session_state.get("is_superadmin", False):
     st.error("❌ 此頁面目前僅限 Superadmin 使用。請先到「數據管理後台」登入。")
     st.stop()
 
-st.markdown("[➡️ 前往數據管理後台](/%E6%95%B8%E6%93%9A%E7%AE%A1%E7%90%86)")
+if st.button("➡️ 前往數據管理後台", use_container_width=False):
+    try:
+        st.switch_page("pages/1_數據管理.py")
+    except Exception:
+        st.markdown("[➡️ 前往數據管理後台](/%E6%95%B8%E6%93%9A%E7%AE%A1%E7%90%86)")
 
 def load_races(session: Session):
     return session.query(Race).order_by(Race.race_date.desc(), Race.race_no.asc()).all()
