@@ -42,9 +42,9 @@ def init_db():
             if not jt or not jh:
                 need_seed = True
             else:
-                if (jt.description or "") != "騎師＋練馬師合作 (不論馬匹)":
+                if (jt.description or "") != "騎師＋練馬師合作 (綜合)":
                     need_seed = True
-                if (jh.description or "") != "騎練與本駒合作 (近X次)":
+                if (jh.description or "") != "騎師＋馬匹組合":
                     need_seed = True
 
         if need_seed:
