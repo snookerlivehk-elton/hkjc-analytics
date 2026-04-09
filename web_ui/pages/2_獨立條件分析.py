@@ -59,9 +59,40 @@ races = load_races(session)
 if not races:
     st.warning("資料庫中尚無賽事數據，請先執行抓取。")
 else:
-    race_options = {f"{r.race_date.strftime('%Y-%m-%d')} | 第 {r.race_no} 場 | {r.venue}": r.id for r in races}
-    selected_race_label = st.sidebar.selectbox("選擇賽事", list(race_options.keys()))
-    selected_race_id = race_options[selected_race_label]
+    # 提取所有可用的日期 (去重複並降序排列)
+    available_dates = sorted(list(set(r.race_date for r in races)), reverse=True)
+    date_options = [d.strftime('%Y-%m-%d') for d in available_dates]
+    
+    # 1. 選擇日期 (Selectbox)
+    selected_date_str = st.sidebar.selectbox("📅 選擇賽事日期", date_options)
+    selected_date = available_dates[date_options.index(selected_date_str)]
+    
+    # 過濾出該日期的所有場次
+    races_on_date = [r for r in races if r.race_date == selected_date]
+    
+    # 2. 選擇場次 (按鈕陣列)
+    st.sidebar.markdown("🏁 **選擇場次**")
+    
+    # 初始化 session_state 以記憶當前選中的場次 ID
+    if 'factor_selected_race_id' not in st.session_state or st.session_state.factor_selected_race_id not in [r.id for r in races_on_date]:
+        st.session_state.factor_selected_race_id = races_on_date[0].id
+        
+    # 使用 columns 建立場次按鈕網格 (每行 5 個按鈕)
+    cols_per_row = 5
+    for i in range(0, len(races_on_date), cols_per_row):
+        cols = st.sidebar.columns(cols_per_row)
+        for j in range(cols_per_row):
+            if i + j < len(races_on_date):
+                r = races_on_date[i + j]
+                btn_label = str(r.race_no)
+                # 當前選中的場次使用 primary 顏色
+                btn_type = "primary" if st.session_state.factor_selected_race_id == r.id else "secondary"
+                
+                if cols[j].button(btn_label, key=f"factor_race_btn_{r.id}", type=btn_type, use_container_width=True):
+                    st.session_state.factor_selected_race_id = r.id
+                    st.rerun()
+
+    selected_race_id = st.session_state.factor_selected_race_id
 
     result = load_factor_data(session, selected_race_id)
     
@@ -105,6 +136,8 @@ else:
                 st.markdown(f"#### 📌 目前檢視：{selected_factor}")
                 
                 # 提取基本資訊與該因子的分數
+                race = session.query(Race).get(selected_race_id)
+                st.markdown(f"#### 📊 {selected_date_str} | 第 {race.race_no} 場 | {race.venue}")
                 view_cols = ["馬號", "馬名", "檔位", "負磅", "評分", f"{selected_factor}_raw", selected_factor]
                 factor_df = df[view_cols].copy()
                 
