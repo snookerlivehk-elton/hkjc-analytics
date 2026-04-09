@@ -92,6 +92,33 @@ with col1:
             st.success("✅ 歷史往績回填完成！")
 
 with col2:
+    st.subheader("🚀 批量計分操作")
+    if st.button("🚀 一鍵為當日所有賽事重新計分", use_container_width=True):
+        session = get_session()
+        try:
+            from database.models import Race
+            # 取得最新日期的所有賽事
+            latest_date = session.query(Race.race_date).order_by(Race.race_date.desc()).first()
+            if latest_date:
+                races = session.query(Race).filter_by(race_date=latest_date[0]).all()
+                engine = ScoringEngine(session)
+                
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                for i, race in enumerate(races):
+                    status_text.text(f"正在計算第 {race.race_no} 場賽事分數...")
+                    engine.score_race(race.id)
+                    progress_bar.progress((i + 1) / len(races))
+                    
+                st.success(f"✅ 已成功為 {latest_date[0]} 的 {len(races)} 場賽事完成重新計分！")
+            else:
+                st.warning("⚠️ 找不到任何賽事資料。")
+        except Exception as e:
+            st.error(f"❌ 批量計分失敗: {e}")
+        finally:
+            session.close()
+
     st.subheader("🧹 系統清理")
     if st.button("🗑️ 清空資料庫所有數據", use_container_width=True):
         session = get_session()
