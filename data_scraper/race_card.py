@@ -60,7 +60,36 @@ class RaceCardScraper:
             full_text = soup.get_text(separator=' ', strip=True)
             venue = "HV" if "跑馬地" in full_text else "ST"
             
-            race_data = {"race_no": race_no, "venue": venue, "entries": []}
+            # 定位賽事資訊 (如：第 1 場 - 寶靈平磅賽2026年4月12日, 星期日, 沙田, 12:30草地, "C" 賽道, 1000米)
+            # 因為新版資訊混在文本中，使用正則擷取
+            race_class = ""
+            distance = 0
+            going = "未知"
+            
+            # 嘗試擷取距離 (例如 1000米)
+            dist_match = re.search(r'(\d+)米', full_text)
+            if dist_match:
+                distance = int(dist_match.group(1))
+                
+            # 嘗試擷取班次 (例如 第一班, 第二班, 寶靈平磅賽, 新馬賽等)
+            class_match = re.search(r'第\s*\d+\s*班|新馬賽|平磅賽', full_text)
+            if class_match:
+                race_class = class_match.group(0)
+                
+            # 嘗試擷取場地狀況 (通常在排位表階段不會有場地狀況，只會有草地/泥地)
+            if "草地" in full_text:
+                going = "草地"
+            elif "全天候" in full_text or "泥地" in full_text:
+                going = "泥地"
+                
+            race_data = {
+                "race_no": race_no, 
+                "venue": venue, 
+                "distance": distance,
+                "race_class": race_class,
+                "going": going,
+                "entries": []
+            }
             
             # 定位表格
             table = soup.select_one("table.starter")
