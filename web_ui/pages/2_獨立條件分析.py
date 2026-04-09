@@ -102,7 +102,7 @@ else:
                 # 當前選中的場次使用 primary 顏色
                 btn_type = "primary" if st.session_state.factor_selected_race_id == r.id else "secondary"
                 
-                if cols[j].button(btn_label, key=f"factor_race_btn_{r.id}", type=btn_type, use_container_width=True):
+                if cols[j].button(btn_label, key=f"factor_race_btn_{r.id}", type=btn_type, width="stretch"):
                     st.session_state.factor_selected_race_id = r.id
                     st.rerun()
 
@@ -141,7 +141,7 @@ else:
                             factor = available_factors[i + j]
                             # 如果是當前選中的因子，使用 primary 顏色標示
                             button_type = "primary" if st.session_state.selected_factor == factor else "secondary"
-                            if cols[j].button(factor, key=f"btn_{factor}", type=button_type, use_container_width=True):
+                            if cols[j].button(factor, key=f"btn_{factor}", type=button_type, width="stretch"):
                                 st.session_state.selected_factor = factor
                                 st.rerun()
 
@@ -150,7 +150,7 @@ else:
                 st.markdown(f"#### 📌 目前檢視：{selected_factor}")
                 
                 # 提取基本資訊與該因子的分數
-                race = session.query(Race).get(selected_race_id)
+                race = session.get(Race, selected_race_id)
                 track_display = race.track_type if race.track_type else race.venue
                 st.markdown(f"#### 📊 {selected_date_str} | 第 {race.race_no} 場 | {track_display}")
                 view_cols = ["馬號", "馬名", "檔位", "負磅", "評分", f"{selected_factor}_raw", selected_factor]
@@ -175,7 +175,7 @@ else:
                 
                 st.dataframe(
                     factor_df.style.apply(highlight_first, axis=1),
-                    use_container_width=True
+                    width="stretch"
                 )
                 
                 # 針對特定因子顯示詳細說明與參數調整
@@ -280,7 +280,7 @@ else:
                                 st.success(f"權重已儲存為 勝率={win_w}、入圍率={place_w}，並已重新計算分數！")
                                 st.rerun()
 
-                if selected_factor == "騎練與本駒合作 (近X次)":
+                if selected_factor in ("騎練與本駒合作 (近X次)", "騎師＋馬匹組合"):
                     st.markdown("---")
                     st.markdown("### 💡 演算法說明：騎練與本駒合作 (近X次)")
                     st.markdown("""
@@ -342,6 +342,6 @@ else:
             # 總表按馬號排序
             full_df = df.sort_values(by="馬號").reset_index(drop=True)
             full_df.index = full_df.index + 1
-            st.dataframe(full_df, use_container_width=True)
+            st.dataframe(full_df, width="stretch")
 
 session.close()

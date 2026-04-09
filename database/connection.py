@@ -31,11 +31,23 @@ def init_db():
     """初始化資料庫表結構並預填權重"""
     Base.metadata.create_all(engine)
     
-    # 自動預填權重配置 (如果權重表為空)
+    # 自動預填/補齊權重配置 (避免既有資料庫因新增/改名因子而無法顯示)
     from database.models import ScoringWeight
     session = Session()
     try:
-        if session.query(ScoringWeight).count() == 0:
+        need_seed = session.query(ScoringWeight).count() == 0
+        if not need_seed:
+            jt = session.query(ScoringWeight).filter_by(factor_name="jockey_trainer_bond").first()
+            jh = session.query(ScoringWeight).filter_by(factor_name="jockey_horse_bond").first()
+            if not jt or not jh:
+                need_seed = True
+            else:
+                if (jt.description or "") != "騎師＋練馬師合作 (不論馬匹)":
+                    need_seed = True
+                if (jh.description or "") != "騎練與本駒合作 (近X次)":
+                    need_seed = True
+
+        if need_seed:
             from scripts.init_db import populate_default_weights
             populate_default_weights()
     except Exception as e:

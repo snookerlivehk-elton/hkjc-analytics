@@ -84,7 +84,7 @@ class ScoringEngine:
     def _save_results(self, df: pd.DataFrame):
         """儲存計分結果與因子得分"""
         for _, row in df.iterrows():
-            entry = self.session.query(RaceEntry).get(row["entry_id"])
+            entry = self.session.get(RaceEntry, row["entry_id"])
             if entry:
                 entry.total_score = row["total_score"]
                 entry.rank_in_race = row["rank_in_race"]
