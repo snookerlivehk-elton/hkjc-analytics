@@ -228,6 +228,50 @@ else:
                         engine.score_race(selected_race_id)
                         st.rerun()
 
+                if selected_factor == "檔位偏差 (官方 Draw Statistics)":
+                    from database.models import SystemConfig
+
+                    race = session.get(Race, selected_race_id)
+                    race_date_str = ""
+                    if race and hasattr(race.race_date, "strftime"):
+                        race_date_str = race.race_date.strftime("%Y/%m/%d")
+                    elif race:
+                        race_date_str = str(race.race_date)[:10].replace("-", "/")
+
+                    config_key = f"draw_stats_{race_date_str}" if race_date_str else ""
+                    config = session.query(SystemConfig).filter_by(key=config_key).first() if config_key else None
+                    has_official = bool(
+                        race
+                        and config
+                        and isinstance(config.value, dict)
+                        and (str(race.race_no) in config.value or race.race_no in config.value)
+                    )
+
+                    sample = (
+                        session.query(ScoringFactor.raw_data_display)
+                        .join(RaceEntry, RaceEntry.id == ScoringFactor.entry_id)
+                        .filter(
+                            RaceEntry.race_id == selected_race_id,
+                            ScoringFactor.factor_name == "draw_stats",
+                        )
+                        .first()
+                    )
+
+                    needs_rescore = False
+                    if has_official:
+                        if not sample or not sample[0]:
+                            needs_rescore = True
+                        elif ("未載入官方統計" in sample[0]) or ("無統計數據" in sample[0]):
+                            needs_rescore = True
+
+                    auto_key = f"auto_rescore_draw_stats_{selected_race_id}_{config_key}"
+                    if needs_rescore and not st.session_state.get(auto_key, False):
+                        st.session_state[auto_key] = True
+                        from scoring_engine.core import ScoringEngine
+                        engine = ScoringEngine(session)
+                        engine.score_race(selected_race_id)
+                        st.rerun()
+
                 # 提取基本資訊與該因子的分數
                 race = session.get(Race, selected_race_id)
                 track_display = race.track_type if race.track_type else race.venue
