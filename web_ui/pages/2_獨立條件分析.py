@@ -308,6 +308,41 @@ else:
                         engine.score_race(selected_race_id)
                         st.rerun()
 
+                if selected_factor == "初出／長休後表現":
+                    from database.models import SystemConfig, RaceEntry, ScoringFactor
+
+                    cfg = {"rest_days": 90}
+                    config = session.query(SystemConfig).filter_by(key="debut_long_rest_config").first()
+                    if config and isinstance(config.value, dict):
+                        v = config.value
+                        if "rest_days" in v:
+                            cfg["rest_days"] = int(v["rest_days"])
+
+                    expected = f"R{cfg['rest_days']}d"
+                    sample = (
+                        session.query(ScoringFactor.raw_data_display)
+                        .join(RaceEntry, RaceEntry.id == ScoringFactor.entry_id)
+                        .filter(
+                            RaceEntry.race_id == selected_race_id,
+                            ScoringFactor.factor_name == "debut_long_rest",
+                        )
+                        .first()
+                    )
+
+                    needs_rescore = False
+                    if not sample or not sample[0]:
+                        needs_rescore = True
+                    elif expected not in sample[0]:
+                        needs_rescore = True
+
+                    auto_key = f"auto_rescore_debut_long_rest_{selected_race_id}_{expected}"
+                    if needs_rescore and not st.session_state.get(auto_key, False):
+                        st.session_state[auto_key] = True
+                        from scoring_engine.core import ScoringEngine
+                        engine = ScoringEngine(session)
+                        engine.score_race(selected_race_id)
+                        st.rerun()
+
                 # 提取基本資訊與該因子的分數
                 race = session.get(Race, selected_race_id)
                 track_display = race.track_type if race.track_type else race.venue
@@ -476,6 +511,7 @@ else:
                     這個條件用於衡量馬匹是否在「同跑道類型（草地/泥地）＋同路程」具備明顯專長。
                     
                     - 以同條件下的歷史勝率與上名率（前 3）計算原始分
+                    - 勝率與上名率可選擇套用時間衰減（半衰期）以降低陳年數據的影響
                     - 透過「可信度降權」避免少量樣本造成分數過高（樣本越多可信度越高）
                     - 可設定時間窗（近 X 日）與樣本下限
                     - 最後在同一場內進行百分位標準化成 0–10 分

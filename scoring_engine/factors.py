@@ -832,6 +832,114 @@ class FactorCalculator:
 
     # 17. 初出／長休後表現 (Debut/Long Rest)
     def _calculate_debut_long_rest(self):
-        raw_scores = pd.Series(np.random.rand(len(self.df)), index=self.df.index)
-        display = pd.Series(["無數據"] * len(self.df), index=self.df.index)
-        return raw_scores, display
+        from datetime import datetime
+        from database.models import HorseHistory, Race, SystemConfig
+
+        race_id = self.df.iloc[0].get("race_id") if "race_id" in self.df.columns else None
+        race_id = self._to_int(race_id, default=0)
+        race = self.session.get(Race, race_id) if race_id else None
+
+        race_date = getattr(race, "race_date", None) if race else None
+        if not isinstance(race_date, datetime):
+            race_date = datetime.now()
+
+        cfg = {"rest_days": 90, "win_points": 1.0, "place_points": 0.5}
+        try:
+            config = self.session.query(SystemConfig).filter_by(key="debut_long_rest_config").first()
+            if config and isinstance(config.value, dict):
+                v = config.value
+                if "rest_days" in v:
+                    cfg["rest_days"] = int(v["rest_days"])
+                if "win_points" in v:
+                    cfg["win_points"] = float(v["win_points"])
+                if "place_points" in v:
+                    cfg["place_points"] = float(v["place_points"])
+        except Exception:
+            pass
+
+        if cfg["rest_days"] < 0:
+            cfg["rest_days"] = 0
+        if cfg["win_points"] < 0:
+            cfg["win_points"] = 0.0
+        if cfg["place_points"] < 0:
+            cfg["place_points"] = 0.0
+
+        scores = []
+        displays = []
+
+        cached = {}
+
+        for _, row in self.df.iterrows():
+            horse_id = self._to_int(row.get("horse_id", 0), default=0)
+            if not horse_id:
+                scores.append(0.0)
+                displays.append("無數據")
+                continue
+
+            if horse_id in cached:
+                current_rest, comeback_n, win_n, place_n, points, samples = cached[horse_id]
+            else:
+                hist = (
+                    self.session.query(HorseHistory.race_date, HorseHistory.rank)
+                    .filter(HorseHistory.horse_id == horse_id, HorseHistory.rank > 0)
+                    .order_by(HorseHistory.race_date.asc())
+                    .all()
+                )
+
+                if not hist:
+                    current_rest = None
+                    comeback_n = 0
+                    win_n = 0
+                    place_n = 0
+                    points = 0.0
+                    samples = []
+                else:
+                    last_hist_date = hist[-1][0] if isinstance(hist[-1][0], datetime) else None
+                    current_rest = max((race_date - last_hist_date).days, 0) if last_hist_date else None
+
+                    comeback_n = 0
+                    win_n = 0
+                    place_n = 0
+                    points = 0.0
+                    samples = []
+
+                    prev_date = None
+                    for dt, rnk in hist:
+                        if not isinstance(dt, datetime):
+                            prev_date = None
+                            continue
+                        if prev_date is not None:
+                            gap = (dt - prev_date).days
+                            if gap >= cfg["rest_days"]:
+                                comeback_n += 1
+                                if rnk == 1:
+                                    win_n += 1
+                                    points += cfg["win_points"]
+                                    samples.append(f"W@{gap}d")
+                                elif rnk in (2, 3):
+                                    place_n += 1
+                                    points += cfg["place_points"]
+                                    samples.append(f"P@{gap}d")
+                                else:
+                                    samples.append(f"-@{gap}d")
+                        prev_date = dt
+
+                cached[horse_id] = (current_rest, comeback_n, win_n, place_n, points, samples[:6])
+
+            if current_rest is None:
+                scores.append(0.0)
+                displays.append(f"初出/無往績 | R{cfg['rest_days']}d")
+                continue
+
+            if current_rest < cfg["rest_days"]:
+                scores.append(0.0)
+                displays.append(f"休{current_rest}d(<{cfg['rest_days']}d) | R{cfg['rest_days']}d")
+                continue
+
+            scores.append(points)
+            sample_str = ",".join(samples) if samples else "無樣本"
+            displays.append(
+                f"休{current_rest}d(≥{cfg['rest_days']}d) | 復出{comeback_n}次 冠{win_n} 位{place_n} | +{points:.2f} | {sample_str} | R{cfg['rest_days']}d"
+            )
+
+        return pd.Series(scores, index=self.df.index), pd.Series(displays, index=self.df.index)
