@@ -14,9 +14,11 @@ from database.connection import get_session, init_db
 from database.models import Race, RaceEntry, ScoringFactor, ScoringWeight, Horse, SystemConfig
 from scoring_engine.core import ScoringEngine
 from scoring_engine.constants import DISABLED_FACTORS
+from scoring_engine.utils import estimate_win_probability
 from utils.logger import logger
 import asyncio
 import subprocess
+from datetime import datetime
 
 # 設定頁面配置
 st.set_page_config(page_title="HKJC 每場賽事獨立計分排名系統", layout="wide")
@@ -164,33 +166,142 @@ def get_db_status(session: Session):
         "計分結果 (Scores)": session.query(ScoringFactor).count()
     }
 
-def load_scoring_data(session: Session, race_id: int):
-    """載入特定賽事的計分結果數據"""
+def _get_member_presets(session: Session, email: str):
+    e = str(email or "").strip().lower()
+    if not e:
+        return []
+    key = f"member_weight_presets:{e}"
+    cfg = session.query(SystemConfig).filter_by(key=key).first()
+    if cfg and isinstance(cfg.value, list):
+        out = []
+        for item in cfg.value:
+            if isinstance(item, dict) and item.get("name") and isinstance(item.get("weights"), dict):
+                out.append(item)
+        return out[:3]
+    return []
+
+def _save_member_presets(session: Session, email: str, presets: list):
+    e = str(email or "").strip().lower()
+    if not e:
+        return
+    key = f"member_weight_presets:{e}"
+    cfg = session.query(SystemConfig).filter_by(key=key).first()
+    if not cfg:
+        cfg = SystemConfig(key=key, description="會員權重配置組合")
+        session.add(cfg)
+    cfg.value = presets[:3]
+    session.commit()
+
+def _predict_top4_for_race(session: Session, race_id: int, weight_map: dict):
     entries = session.query(RaceEntry).filter_by(race_id=race_id).all()
+    if not entries:
+        return []
+    factor_names = list(weight_map.keys())
+    scores = []
+    for entry in entries:
+        factor_scores = (
+            session.query(ScoringFactor)
+            .filter_by(entry_id=entry.id)
+            .filter(ScoringFactor.factor_name.in_(factor_names))
+            .all()
+        )
+        total = 0.0
+        for f in factor_scores:
+            total += float(f.score or 0.0) * float(weight_map.get(f.factor_name, 0.0))
+        scores.append((entry.horse_no, total))
+    scores.sort(key=lambda x: x[1], reverse=True)
+    return [h for h, _ in scores[:4]]
+
+def _hit_rate_stats(session: Session, weight_map: dict, max_races: int = 200):
+    from database.models import RaceResult
+
+    race_ids = (
+        session.query(RaceEntry.race_id)
+        .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
+        .filter(RaceResult.rank != None)
+        .distinct()
+        .all()
+    )
+    race_ids = [r[0] for r in race_ids]
+    if not race_ids:
+        return {"races": 0, "win": 0, "qin": 0, "tri": 0, "q4": 0}
+
+    races = (
+        session.query(Race)
+        .filter(Race.id.in_(race_ids))
+        .order_by(Race.race_date.desc(), Race.race_no.desc())
+        .limit(max_races)
+        .all()
+    )
+
+    win = qin = tri = q4 = 0
+    used = 0
+    for race in races:
+        rows = (
+            session.query(RaceEntry.horse_no, RaceResult.rank)
+            .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
+            .filter(RaceEntry.race_id == race.id)
+            .filter(RaceResult.rank != None)
+            .all()
+        )
+        rows = sorted(rows, key=lambda x: x[1])
+        if len(rows) < 4:
+            continue
+        act = [rows[i][0] for i in range(4)]
+        pred = _predict_top4_for_race(session, race.id, weight_map)
+        if len(pred) < 4:
+            continue
+        used += 1
+        if pred[0] == act[0]:
+            win += 1
+        if pred[:2] == act[:2]:
+            qin += 1
+        if pred[:3] == act[:3]:
+            tri += 1
+        if pred[:4] == act[:4]:
+            q4 += 1
+
+    return {"races": used, "win": win, "qin": qin, "tri": tri, "q4": q4}
+
+def load_scoring_data(session: Session, race_id: int, weight_map: dict):
+    entries = session.query(RaceEntry).filter_by(race_id=race_id).all()
+    if not entries:
+        return pd.DataFrame()
+
+    factor_names = list(weight_map.keys())
     data = []
     for entry in entries:
         row = {
             "馬號": entry.horse_no,
             "馬名": entry.horse.name_ch if entry.horse else "未知",
             "馬匹編號": entry.horse.code if entry.horse else "",
-            "總分": round(entry.total_score, 2) if entry.total_score else 0,
-            "預估勝率": f"{round(entry.win_probability * 100, 1)}%" if entry.win_probability else "0%",
-            "排名": entry.rank_in_race,
+            "排名": 0,
             "騎師": entry.jockey.name_ch if entry.jockey else "",
             "練馬師": entry.trainer.name_ch if entry.trainer else "",
             "檔位": entry.draw,
             "負磅": entry.actual_weight,
-            "評分": entry.rating
+            "評分": entry.rating,
         }
-        # 載入個別因子分數
-        factors = session.query(ScoringFactor).filter_by(entry_id=entry.id).all()
-        for f in factors:
-            row[f.factor_name] = round(f.score, 1)
+
+        factor_scores = (
+            session.query(ScoringFactor)
+            .filter_by(entry_id=entry.id)
+            .filter(ScoringFactor.factor_name.in_(factor_names))
+            .all()
+        )
+        factor_map = {f.factor_name: float(f.score or 0.0) for f in factor_scores}
+        total = 0.0
+        for k, w in weight_map.items():
+            total += float(factor_map.get(k, 0.0)) * float(w)
+        row["總分"] = total
+        for k, v in factor_map.items():
+            row[k] = round(v, 1)
         data.append(row)
-    
+
     df = pd.DataFrame(data)
-    if not df.empty:
-        df = df.sort_values("排名")
+    df = df.sort_values("總分", ascending=False).reset_index(drop=True)
+    df["排名"] = range(1, len(df) + 1)
+    df["預估勝率"] = (estimate_win_probability(df["總分"]) * 100).round(1).astype(str) + "%"
     return df
 
 def main():
@@ -286,10 +397,42 @@ def main():
             .filter(~ScoringWeight.factor_name.in_(DISABLED_FACTORS))
             .all()
         )
+        base_weight_map = {w.factor_name: float(w.weight) for w in weights}
+        if "active_weight_map" not in st.session_state:
+            st.session_state["active_weight_map"] = dict(base_weight_map)
+
+        member_email = st.session_state.get("member_email")
+        presets = _get_member_presets(session, member_email) if member_email else []
+        preset_names = ["（手動調整）"] + [p["name"] for p in presets]
+        if "selected_preset_name" not in st.session_state:
+            st.session_state["selected_preset_name"] = preset_names[0]
+
+        selected_preset_name = st.selectbox(
+            "已儲存組合",
+            preset_names,
+            index=preset_names.index(st.session_state["selected_preset_name"]) if st.session_state["selected_preset_name"] in preset_names else 0,
+        )
+        if selected_preset_name != st.session_state["selected_preset_name"]:
+            st.session_state["selected_preset_name"] = selected_preset_name
+            if selected_preset_name != "（手動調整）":
+                p = next((x for x in presets if x["name"] == selected_preset_name), None)
+                if p:
+                    new_map = dict(base_weight_map)
+                    for k, v in p.get("weights", {}).items():
+                        if k in new_map:
+                            try:
+                                new_map[k] = float(v)
+                            except Exception:
+                                pass
+                    st.session_state["active_weight_map"] = new_map
+                    for k, v in new_map.items():
+                        st.session_state[f"weight_{k}"] = float(v)
+            st.rerun()
+
         updated_weights = {}
         for w in weights:
             key = f"weight_{w.factor_name}"
-            default_val = st.session_state.get(key, float(w.weight))
+            default_val = st.session_state.get(key, float(st.session_state["active_weight_map"].get(w.factor_name, w.weight)))
             updated_weights[w.factor_name] = st.slider(
                 f"{w.description}",
                 0.0,
@@ -299,15 +442,50 @@ def main():
                 key=key,
             )
 
-        changed = any(abs(updated_weights[w.factor_name] - float(w.weight)) > 1e-9 for w in weights)
-        if changed:
-            for w in weights:
-                w.weight = float(updated_weights[w.factor_name])
-            session.commit()
+        st.session_state["active_weight_map"] = dict(updated_weights)
 
-            engine = ScoringEngine(session)
-            engine.score_race(selected_race_id)
-            st.rerun()
+        if member_email:
+            st.markdown("**儲存/編輯組合（每位會員最多 3 個）**")
+            with st.form("preset_save_form"):
+                name = st.text_input("組合名稱", value="", placeholder="例如：穩健型 / 追熱型")
+                action = st.selectbox("操作", ["另存新組合", "更新目前組合", "刪除目前組合"])
+                submitted = st.form_submit_button("執行", type="primary")
+                if submitted:
+                    n = str(name or "").strip()
+                    now = datetime.now().isoformat()
+                    if action == "另存新組合":
+                        if not n:
+                            st.error("❌ 請輸入組合名稱")
+                        elif any(p["name"] == n for p in presets):
+                            st.error("❌ 組合名稱已存在")
+                        elif len(presets) >= 3:
+                            st.error("❌ 已達上限（最多 3 個組合）")
+                        else:
+                            presets.append({"name": n, "weights": dict(updated_weights), "updated_at": now})
+                            _save_member_presets(session, member_email, presets)
+                            st.session_state["selected_preset_name"] = n
+                            st.rerun()
+                    elif action == "更新目前組合":
+                        if st.session_state["selected_preset_name"] == "（手動調整）":
+                            st.error("❌ 請先選擇要更新的已儲存組合")
+                        else:
+                            target = st.session_state["selected_preset_name"]
+                            for p in presets:
+                                if p["name"] == target:
+                                    p["weights"] = dict(updated_weights)
+                                    p["updated_at"] = now
+                            _save_member_presets(session, member_email, presets)
+                            st.success("✅ 已更新")
+                            st.rerun()
+                    else:
+                        if st.session_state["selected_preset_name"] == "（手動調整）":
+                            st.error("❌ 請先選擇要刪除的已儲存組合")
+                        else:
+                            target = st.session_state["selected_preset_name"]
+                            presets = [p for p in presets if p["name"] != target]
+                            _save_member_presets(session, member_email, presets)
+                            st.session_state["selected_preset_name"] = "（手動調整）"
+                            st.rerun()
 
     # 主面板：賽事資訊
     race = session.query(Race).get(selected_race_id)
@@ -319,11 +497,65 @@ def main():
     col4.metric("場地狀況", race.going or "未知")
 
     # 數據加載與顯示
-    df = load_scoring_data(session, selected_race_id)
+    weight_map = st.session_state.get("active_weight_map", {})
+    df = load_scoring_data(session, selected_race_id, weight_map)
     if df.empty:
         st.info("本場賽事尚未進行計分運算，請先於「數據管理後台」執行抓取與計分。")
         
     if not df.empty:
+        member_email = st.session_state.get("member_email")
+        if member_email:
+            presets = _get_member_presets(session, member_email)
+            if presets:
+                st.markdown("### 📌 已儲存權重配置組合")
+                rows = []
+                for p in presets:
+                    stats = _hit_rate_stats(session, p.get("weights", {}), max_races=200)
+                    races_n = stats["races"]
+                    rows.append(
+                        {
+                            "組合": p["name"],
+                            "樣本(場)": races_n,
+                            "獨贏命中%": round((stats["win"] / races_n * 100.0), 1) if races_n else 0.0,
+                            "正Q命中%": round((stats["qin"] / races_n * 100.0), 1) if races_n else 0.0,
+                            "三重彩命中%": round((stats["tri"] / races_n * 100.0), 1) if races_n else 0.0,
+                            "四重彩命中%": round((stats["q4"] / races_n * 100.0), 1) if races_n else 0.0,
+                        }
+                    )
+                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+                with st.expander("🔖 本場各組合 Top4 預測", expanded=False):
+                    pr = []
+                    for p in presets:
+                        top4 = _predict_top4_for_race(session, selected_race_id, p.get("weights", {}))
+                        pr.append(
+                            {
+                                "組合": p["name"],
+                                "Top1": top4[0] if len(top4) > 0 else "",
+                                "Top2": top4[1] if len(top4) > 1 else "",
+                                "Top3": top4[2] if len(top4) > 2 else "",
+                                "Top4": top4[3] if len(top4) > 3 else "",
+                            }
+                        )
+                    st.dataframe(pd.DataFrame(pr), use_container_width=True, hide_index=True)
+
+        with st.expander("ℹ️ 專業排名表計算邏輯", expanded=False):
+            st.markdown("""
+            - 每個計分條件會先在同一場內獨立標準化成 0–10 分（分數越高越有利）。
+            - 總分 = Σ（條件分數 × 權重）。
+            - 預估勝率：以總分做 softmax 正規化，只作相對參考。
+            """)
+
+        with st.expander("📚 各條件功能說明", expanded=False):
+            weights_list = (
+                session.query(ScoringWeight)
+                .filter(ScoringWeight.is_active == True)
+                .filter(~ScoringWeight.factor_name.in_(DISABLED_FACTORS))
+                .all()
+            )
+            items = [{"條件": w.description, "代號": w.factor_name} for w in weights_list]
+            st.dataframe(pd.DataFrame(items), use_container_width=True, hide_index=True)
+
         # 專業排名表格
         st.markdown("### 🏆 專業排名表")
         
