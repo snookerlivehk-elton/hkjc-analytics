@@ -186,6 +186,7 @@ class HorseHistory(Base):
     rank = Column(Integer)
     draw = Column(Integer)
     jockey_name = Column(String(50))
+    trainer_name = Column(String(50))
     weight = Column(Integer)
     rating = Column(Integer)
     finish_time = Column(String(20))

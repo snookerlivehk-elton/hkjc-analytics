@@ -22,11 +22,46 @@ class FactorCalculator:
 
     # 1. 騎師＋練馬師合作 (J/T Bond)
     def _calculate_jockey_trainer_bond(self):
-        # 範例邏輯：查詢該騎練組合在過去 6-10 場的勝率
-        # (這裡簡化，實際應用中需查詢資料庫)
-        raw_scores = pd.Series(np.random.rand(len(self.df)), index=self.df.index)
-        display = pd.Series(["無數據"] * len(self.df), index=self.df.index)
-        return raw_scores, display
+        from database.models import HorseHistory
+        scores = []
+        displays = []
+        
+        for _, row in self.df.iterrows():
+            jockey = row["jockey_name"]
+            trainer = row["trainer_name"]
+            
+            if not jockey or not trainer:
+                scores.append(0.0)
+                displays.append("無騎練資料")
+                continue
+                
+            # 查詢歷史往績中，該騎練組合的合作紀錄
+            # 由於目前 HorseHistory 只包含參賽馬的往績，這是一個「抽樣」的騎練合作數據
+            history = self.session.query(HorseHistory).filter(
+                HorseHistory.jockey_name == jockey,
+                HorseHistory.trainer_name == trainer
+            ).all()
+            
+            total_runs = len(history)
+            if total_runs < 3:
+                scores.append(0.0) # 樣本數太少，給予中位基礎分
+                displays.append(f"合作樣本不足 ({total_runs}次)")
+                continue
+                
+            # 計算勝出 (第1名) 與 上名 (前3名) 次數
+            wins = sum(1 for h in history if h.rank == 1)
+            places = sum(1 for h in history if h.rank in (1, 2, 3))
+            
+            win_rate = wins / total_runs
+            place_rate = places / total_runs
+            
+            # 評分邏輯：勝率佔 70%，上名率佔 30%
+            bond_score = (win_rate * 0.7) + (place_rate * 0.3)
+            
+            scores.append(bond_score)
+            displays.append(f"合作{total_runs}次 冠{wins} 亞季{places-wins} (勝率 {win_rate*100:.1f}%)")
+            
+        return pd.Series(scores, index=self.df.index), pd.Series(displays, index=self.df.index)
 
     # 2. 馬匹分段時間＋完成時間 (Horse Time Perf)
     def _calculate_horse_time_perf(self):

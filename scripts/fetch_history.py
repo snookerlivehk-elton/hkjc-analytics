@@ -70,6 +70,7 @@ async def backfill_horse_history():
                         rank=int(str(rec.get("rank", "0"))) if str(rec.get("rank", "")).isdigit() else 0,
                         draw=int(str(rec.get("draw", "0"))) if str(rec.get("draw", "")).isdigit() else 0,
                         jockey_name=rec.get("jockey", ""),
+                        trainer_name=rec.get("trainer", ""),
                         weight=int(re.sub(r'\D', '', str(rec.get("weight", "")))) if re.sub(r'\D', '', str(rec.get("weight", ""))) else 0,
                         rating=int(re.sub(r'\D', '', str(rec.get("rating", "")))) if re.sub(r'\D', '', str(rec.get("rating", ""))) else 0,
                         finish_time=rec.get("finish_time", "")

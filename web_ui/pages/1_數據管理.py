@@ -150,7 +150,7 @@ with col2:
         try:
             env = os.environ.copy()
             process = subprocess.Popen(
-                ["python3", "scripts/upgrade_db.py"],
+                [sys.executable, "scripts/upgrade_db.py"],
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, env=env, bufsize=1
             )
