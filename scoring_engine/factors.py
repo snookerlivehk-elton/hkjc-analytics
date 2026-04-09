@@ -200,9 +200,126 @@ class FactorCalculator:
 
     # 4. 場地＋路程專長 (Venue/Dist Specialty)
     def _calculate_venue_dist_specialty(self):
-        raw_scores = pd.Series(np.random.rand(len(self.df)), index=self.df.index)
-        display = pd.Series(["無數據"] * len(self.df), index=self.df.index)
-        return raw_scores, display
+        from datetime import datetime, timedelta
+        from database.models import HorseHistory, Race, SystemConfig
+
+        race_id = self.df.iloc[0].get("race_id") if "race_id" in self.df.columns else None
+        race_id = self._to_int(race_id, default=0)
+        race = self.session.get(Race, race_id) if race_id else None
+
+        distance = self._to_int(getattr(race, "distance", 0), default=0) if race else 0
+        surface = getattr(race, "going", "") if race else ""
+        if surface not in ("草地", "泥地"):
+            tt = str(getattr(race, "track_type", "") if race else "")
+            if ("全天候" in tt) or ("泥地" in tt):
+                surface = "泥地"
+            elif "草地" in tt:
+                surface = "草地"
+
+        race_date = getattr(race, "race_date", None) if race else None
+        if not isinstance(race_date, datetime):
+            race_date = datetime.now()
+
+        cfg = {
+            "window_days": 720,
+            "min_samples": 3,
+            "confidence_runs": 8,
+            "win_w": 0.6,
+            "place_w": 0.4,
+        }
+        try:
+            config = self.session.query(SystemConfig).filter_by(key="venue_dist_specialty_config").first()
+            if config and isinstance(config.value, dict):
+                v = config.value
+                if "window_days" in v:
+                    cfg["window_days"] = int(v["window_days"])
+                if "min_samples" in v:
+                    cfg["min_samples"] = int(v["min_samples"])
+                if "confidence_runs" in v:
+                    cfg["confidence_runs"] = int(v["confidence_runs"])
+                if "win_w" in v:
+                    cfg["win_w"] = float(v["win_w"])
+                if "place_w" in v:
+                    cfg["place_w"] = float(v["place_w"])
+        except Exception:
+            pass
+
+        if cfg["window_days"] < 0:
+            cfg["window_days"] = 0
+        if cfg["min_samples"] < 0:
+            cfg["min_samples"] = 0
+        if cfg["confidence_runs"] <= 0:
+            cfg["confidence_runs"] = 1
+        if cfg["win_w"] < 0:
+            cfg["win_w"] = 0.0
+        if cfg["place_w"] < 0:
+            cfg["place_w"] = 0.0
+        tw = cfg["win_w"] + cfg["place_w"]
+        if tw <= 0:
+            cfg["win_w"], cfg["place_w"], tw = 0.6, 0.4, 1.0
+        cfg["win_w"] /= tw
+        cfg["place_w"] /= tw
+
+        cutoff_date = (race_date - timedelta(days=cfg["window_days"])) if cfg["window_days"] > 0 else None
+
+        scores = []
+        displays = []
+
+        cached = {}
+
+        for _, row in self.df.iterrows():
+            horse_id = self._to_int(row.get("horse_id", 0), default=0)
+            if not horse_id or not distance or surface not in ("草地", "泥地"):
+                scores.append(0.0)
+                displays.append("無數據")
+                continue
+
+            key = (horse_id, surface, distance, cfg["window_days"])
+            if key in cached:
+                runs, wins, places, last_days = cached[key]
+            else:
+                q = (
+                    self.session.query(HorseHistory.rank, HorseHistory.race_date)
+                    .filter(
+                        HorseHistory.horse_id == horse_id,
+                        HorseHistory.distance == distance,
+                        HorseHistory.surface == surface,
+                        HorseHistory.rank > 0
+                    )
+                    .order_by(HorseHistory.race_date.desc())
+                )
+                if cutoff_date:
+                    q = q.filter(HorseHistory.race_date >= cutoff_date)
+                hist = q.all()
+                runs = len(hist)
+                wins = sum(1 for rnk, _ in hist if rnk == 1)
+                places = sum(1 for rnk, _ in hist if rnk in (1, 2, 3))
+                last_days = None
+                if hist and isinstance(hist[0][1], datetime):
+                    last_days = max((race_date - hist[0][1]).days, 0)
+                cached[key] = (runs, wins, places, last_days)
+
+            if runs < cfg["min_samples"]:
+                scores.append(0.0)
+                displays.append(f"{surface}{distance}m 樣本不足({runs}<{cfg['min_samples']})")
+                continue
+
+            win_rate = wins / runs if runs else 0.0
+            place_rate = places / runs if runs else 0.0
+
+            raw = (win_rate * cfg["win_w"]) + (place_rate * cfg["place_w"])
+            confidence = min(runs / float(cfg["confidence_runs"]), 1.0)
+            raw *= confidence
+
+            scores.append(raw)
+
+            param_label = f"W{cfg['window_days']}d | N{cfg['min_samples']} | C{cfg['confidence_runs']} | WW{cfg['win_w']:.2f} | PW{cfg['place_w']:.2f}"
+            last_label = f"@{last_days}d" if last_days is not None else ""
+            displays.append(
+                f"{param_label} | {surface}{distance}m | 勝{win_rate*100:.1f}% | 位{place_rate*100:.1f}% | n{runs} | conf{confidence:.2f}{last_label}"
+            )
+
+        return pd.Series(scores, index=self.df.index), pd.Series(displays, index=self.df.index)
 
     # 5. 檔位偏差 (Draw Stats) - 基於當日檔位統計
     def _calculate_draw_stats(self):

@@ -263,6 +263,49 @@ else:
                         engine.score_race(selected_race_id)
                         st.rerun()
 
+                if selected_factor == "場地＋路程專長":
+                    from database.models import SystemConfig, RaceEntry, ScoringFactor
+
+                    cfg = {"window_days": 720, "min_samples": 3, "confidence_runs": 8, "win_w": 0.6, "place_w": 0.4}
+                    config = session.query(SystemConfig).filter_by(key="venue_dist_specialty_config").first()
+                    if config and isinstance(config.value, dict):
+                        v = config.value
+                        if "window_days" in v:
+                            cfg["window_days"] = int(v["window_days"])
+                        if "min_samples" in v:
+                            cfg["min_samples"] = int(v["min_samples"])
+                        if "confidence_runs" in v:
+                            cfg["confidence_runs"] = int(v["confidence_runs"])
+                        if "win_w" in v:
+                            cfg["win_w"] = float(v["win_w"])
+                        if "place_w" in v:
+                            cfg["place_w"] = float(v["place_w"])
+
+                    expected = f"W{cfg['window_days']}d | N{cfg['min_samples']} | C{cfg['confidence_runs']} | WW{cfg['win_w']:.2f} | PW{cfg['place_w']:.2f}"
+                    sample = (
+                        session.query(ScoringFactor.raw_data_display)
+                        .join(RaceEntry, RaceEntry.id == ScoringFactor.entry_id)
+                        .filter(
+                            RaceEntry.race_id == selected_race_id,
+                            ScoringFactor.factor_name == "venue_dist_specialty",
+                        )
+                        .first()
+                    )
+
+                    needs_rescore = False
+                    if not sample or not sample[0]:
+                        needs_rescore = True
+                    elif expected not in sample[0]:
+                        needs_rescore = True
+
+                    auto_key = f"auto_rescore_venue_dist_specialty_{selected_race_id}_{expected}"
+                    if needs_rescore and not st.session_state.get(auto_key, False):
+                        st.session_state[auto_key] = True
+                        from scoring_engine.core import ScoringEngine
+                        engine = ScoringEngine(session)
+                        engine.score_race(selected_race_id)
+                        st.rerun()
+
                 # 提取基本資訊與該因子的分數
                 race = session.get(Race, selected_race_id)
                 track_display = race.track_type if race.track_type else race.venue
@@ -422,6 +465,67 @@ else:
                                 engine = ScoringEngine(session)
                                 engine.score_race(selected_race_id)
                                 st.success("參數已儲存！已合併「近X次」與「不論馬匹」的邏輯並重新計分！")
+                                st.rerun()
+
+                elif selected_factor == "場地＋路程專長":
+                    st.markdown("---")
+                    st.markdown("### 💡 演算法說明：場地＋路程專長")
+                    st.markdown("""
+                    這個條件用於衡量馬匹是否在「同跑道類型（草地/泥地）＋同路程」具備明顯專長。
+                    
+                    - 以同條件下的歷史勝率與上名率（前 3）計算原始分
+                    - 透過「可信度降權」避免少量樣本造成分數過高（樣本越多可信度越高）
+                    - 可設定時間窗（近 X 日）與樣本下限
+                    - 最後在同一場內進行百分位標準化成 0–10 分
+                    """)
+                    with st.expander("⚙️ 調整時間窗/樣本下限/可信度與勝率權重 (調整後將即時儲存並重算)", expanded=False):
+                        from database.models import SystemConfig
+
+                        cfg = {"window_days": 720, "min_samples": 3, "confidence_runs": 8, "win_w": 0.6, "place_w": 0.4}
+                        config = session.query(SystemConfig).filter_by(key="venue_dist_specialty_config").first()
+                        if config and isinstance(config.value, dict):
+                            v = config.value
+                            if "window_days" in v:
+                                cfg["window_days"] = int(v["window_days"])
+                            if "min_samples" in v:
+                                cfg["min_samples"] = int(v["min_samples"])
+                            if "confidence_runs" in v:
+                                cfg["confidence_runs"] = int(v["confidence_runs"])
+                            if "win_w" in v:
+                                cfg["win_w"] = float(v["win_w"])
+                            if "place_w" in v:
+                                cfg["place_w"] = float(v["place_w"])
+
+                        window_options = {"近 180 日": 180, "近 365 日": 365, "近 720 日": 720, "全部": 0}
+                        cur_window_label = next((k for k, v in window_options.items() if v == cfg["window_days"]), "近 720 日")
+
+                        with st.form("venue_dist_specialty_config_form"):
+                            c1, c2, c3, c4, c5 = st.columns(5)
+                            window_label = c1.selectbox("時間窗", list(window_options.keys()), index=list(window_options.keys()).index(cur_window_label))
+                            min_samples = c2.number_input("樣本下限 N", value=int(cfg["min_samples"]), min_value=0, max_value=30, step=1)
+                            confidence_runs = c3.number_input("可信度滿分樣本", value=int(cfg["confidence_runs"]), min_value=1, max_value=50, step=1)
+                            win_w = c4.number_input("勝率權重", value=float(cfg["win_w"]), min_value=0.0, max_value=1.0, step=0.05)
+                            place_w = c5.number_input("上名率權重", value=float(cfg["place_w"]), min_value=0.0, max_value=1.0, step=0.05)
+
+                            submitted = st.form_submit_button("💾 儲存參數並為本場重新計分", type="primary")
+                            if submitted:
+                                new_cfg = {
+                                    "window_days": int(window_options[window_label]),
+                                    "min_samples": int(min_samples),
+                                    "confidence_runs": int(confidence_runs),
+                                    "win_w": float(win_w),
+                                    "place_w": float(place_w),
+                                }
+                                if not config:
+                                    config = SystemConfig(key="venue_dist_specialty_config", description="場地＋路程專長：時間窗/樣本/可信度/勝率權重")
+                                    session.add(config)
+                                config.value = new_cfg
+                                session.commit()
+
+                                from scoring_engine.core import ScoringEngine
+                                engine = ScoringEngine(session)
+                                engine.score_race(selected_race_id)
+                                st.success(f"參數已儲存：{new_cfg}，並已重新計分。")
                                 st.rerun()
 
                 elif selected_factor == "負磅／評分表現":

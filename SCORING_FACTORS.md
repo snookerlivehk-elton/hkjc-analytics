@@ -11,6 +11,7 @@
 | 條件（UI 名稱） | 內部代號 | 所需數據來源 | 評分邏輯摘要 |
 | :--- | :--- | :--- | :--- |
 | **騎師＋練馬師合作 (綜合)** | `jockey_trainer_bond` | 歷史往績 (`HorseHistory`: jockey_name / trainer_name / horse_id / rank / race_date) | 同時計算「全庫合作」與「本駒合作」的勝/上名率，依可調權重與可調樣本範圍加權合併；同場再做百分位標準化成 0–10 分。 |
+| **場地＋路程專長** | `venue_dist_specialty` | 排位表 (`Race.going` / `Race.distance`)、歷史往績 (`HorseHistory.surface/distance/rank/race_date`) | 以「同跑道類型(草/泥)＋同路程」的勝率/上名率計分，並加入可信度降權（樣本越少降權越多）；可調時間窗、樣本下限、可信度滿分樣本與勝/上名權重；同場再標準化成 0–10 分。 |
 | **檔位偏差 (官方 Draw Statistics)** | `draw_stats` | HKJC 當日檔位統計（抓取後暫存於 `SystemConfig`）、排位表檔位 (`RaceEntry.draw`) | 以當日該場次各檔位的勝率/上名率作基礎；以「最高勝率/最高上名率」為基準，計算相對強度（勝率 70% + 上名率 30%）；同場再標準化成 0–10 分。 |
 | **負磅／評分表現** | `weight_rating_perf` | 排位表 (`RaceEntry.rating` / `RaceEntry.actual_weight`)、歷史往績 (`HorseHistory.distance/rank/rating/weight/race_date`) | 主訊號為「同路程勝仗評分差」：在可調時間窗內找同程勝仗的最高可贏評分，計算與現評分差並加入同程勝磅差；輔助訊號為「同程上名率(前3)」並以半衰期做時間衰減，且需達同程樣本下限 N 才生效；最終按可調入圍權重合成 raw，再同場標準化成 0–10 分。 |
 | **班次表現** | `class_performance` | 本場班次 (`Race.race_class`)、歷史往績 (`HorseHistory.race_class`) | 現階段專注「降班訊號」：只在 3→4 / 4→5 時加分（透過解析「第X班/Class X」字串）；同場再標準化成 0–10 分。 |
@@ -22,7 +23,6 @@
 
 | 條件（UI 名稱） | 內部代號 | 現況 | 建議方向 |
 | :--- | :--- | :--- | :--- |
-| **場地＋路程專長** | `venue_dist_specialty` | 目前為 placeholder | 可用 `HorseHistory.venue + distance` 聚合統計同場地同路程上名率/勝率，並加入樣本不足降權。 |
 | **場地狀況專長 (Going)** | `going_specialty` | 目前為 placeholder；且賽前 Going 可能未公布 | Going 已可能存入 `Race.going`，若缺失可先用草/泥作 fallback；可用歷史在相同 Going（或相同跑道）表現聚合。 |
 | **初出／長休後表現** | `debut_long_rest` | 目前為 placeholder | 僅用 `HorseHistory.race_date` 即可計算休息天數（例如 >90 天）；再比較該馬歷史「長休後復出」表現。 |
 

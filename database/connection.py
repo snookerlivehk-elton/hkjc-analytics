@@ -1,5 +1,6 @@
 import os
 from sqlalchemy import create_engine
+from sqlalchemy import inspect, text
 from sqlalchemy.orm import sessionmaker, scoped_session
 from database.models import Base
 
@@ -30,6 +31,23 @@ Session = scoped_session(session_factory)
 def init_db():
     """初始化資料庫表結構並預填權重"""
     Base.metadata.create_all(engine)
+
+    try:
+        inspector = inspect(engine)
+        cols = {c["name"] for c in inspector.get_columns("horse_histories")}
+        if "surface" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE horse_histories ADD COLUMN surface VARCHAR(20)"))
+            inspector = inspect(engine)
+            cols2 = {c["name"] for c in inspector.get_columns("horse_histories")}
+            if "surface" in cols2:
+                try:
+                    with engine.begin() as conn:
+                        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_horse_histories_surface ON horse_histories (surface)"))
+                except Exception:
+                    pass
+    except Exception:
+        pass
     
     # 自動預填/補齊權重配置 (避免既有資料庫因新增/改名因子而無法顯示)
     from database.models import ScoringWeight

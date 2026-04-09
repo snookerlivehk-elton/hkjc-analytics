@@ -181,6 +181,7 @@ class HorseHistory(Base):
     horse_id = Column(Integer, ForeignKey('horses.id'))
     race_date = Column(DateTime, index=True)
     venue = Column(String(20))
+    surface = Column(String(20), index=True)  # 草地 / 泥地(全天候)
     race_class = Column(String(20))
     distance = Column(Integer)
     rank = Column(Integer)
