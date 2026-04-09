@@ -63,24 +63,18 @@ def trigger_history_backfill(target_date: str = None, mode: str = None):
         st.error(f"❌ 系統錯誤: {e}")
         return False
 
-def clear_database(session):
-    """清空資料庫"""
+def cleanup_removed_factor_data(session):
     try:
-        from database.models import Race, Horse, Jockey, Trainer, RaceEntry, ScoringFactor, RaceResult, HorseHistory
-        session.query(ScoringFactor).delete()
-        session.query(RaceResult).delete()
-        session.query(RaceEntry).delete()
-        session.query(HorseHistory).delete()
-        session.query(Race).delete()
-        session.query(Horse).delete()
-        session.query(Jockey).delete()
-        session.query(Trainer).delete()
+        from database.models import ScoringFactor, ScoringWeight, SystemConfig
+        deleted_sf = session.query(ScoringFactor).filter(ScoringFactor.factor_name == "trainer_horse_bond").delete()
+        deleted_sw = session.query(ScoringWeight).filter(ScoringWeight.factor_name == "trainer_horse_bond").delete()
+        deleted_cfg = session.query(SystemConfig).filter(SystemConfig.key == "trainer_horse_bond_config").delete()
         session.commit()
-        return True
+        return deleted_sf, deleted_sw, deleted_cfg
     except Exception as e:
         session.rollback()
-        st.error(f"❌ 清空失敗: {e}")
-        return False
+        st.error(f"❌ 清理失敗: {e}")
+        return 0, 0, 0
 
 st.title("🛠️ 數據管理後台")
 st.markdown("在此頁面執行數據更新、回填與清理操作。")
@@ -152,11 +146,14 @@ with col2:
             session.close()
 
     st.subheader("🧹 系統清理")
-    if st.button("🗑️ 清空資料庫所有數據", use_container_width=True):
-        session = get_session()
-        if clear_database(session):
-            st.success("✅ 資料庫已完全清空！")
-        session.close()
+    with st.expander("清理已移除因子舊記錄", expanded=False):
+        st.markdown("此操作只會刪除已移除因子在資料庫中的舊計分結果與設定，不會影響賽事、馬匹、往績等核心數據。")
+        confirm = st.checkbox("我明白此操作會刪除舊因子資料", value=False)
+        if st.button("🧹 清理 trainer_horse_bond 舊記錄", use_container_width=True, disabled=not confirm):
+            session = get_session()
+            deleted_sf, deleted_sw, deleted_cfg = cleanup_removed_factor_data(session)
+            session.close()
+            st.success(f"✅ 已刪除舊記錄：ScoringFactor {deleted_sf} 筆、ScoringWeight {deleted_sw} 筆、SystemConfig {deleted_cfg} 筆")
 
     st.subheader("🔌 系統測試與升級")
     if st.button("🔌 測試資料庫連線", use_container_width=True):

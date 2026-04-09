@@ -147,27 +147,6 @@ def create_dummy_data(session):
         st.sidebar.error(f"❌ 生成失敗: {e}")
         return False
 
-def clear_database(session):
-    """清空資料庫中所有賽事相關數據 (包含往績)"""
-    try:
-        from database.models import Race, Horse, Jockey, Trainer, RaceEntry, ScoringFactor, RaceResult, HorseHistory
-        # 由下而上刪除，確保不違反外鍵約束
-        session.query(ScoringFactor).delete()
-        session.query(RaceResult).delete()
-        session.query(RaceEntry).delete()
-        session.query(HorseHistory).delete() # 必須先刪除往績
-        session.query(Race).delete()
-        session.query(Horse).delete() # 才能刪除馬匹
-        session.query(Jockey).delete()
-        session.query(Trainer).delete()
-        session.commit()
-        st.sidebar.success("✅ 資料庫已完全清空！")
-        return True
-    except Exception as e:
-        session.rollback()
-        st.sidebar.error(f"❌ 清空失敗: {e}")
-        return False
-
 def load_races(session: Session):
     """載入所有可選賽事 (日期由新到舊排序)"""
     return session.query(Race).order_by(Race.race_date.desc(), Race.race_no.asc()).all()
