@@ -697,22 +697,22 @@ def main():
                         palette = ["#0f172a", "#111827", "#0b1220", "#1f2937", "#0b1324", "#172036"]
                         pool_to_color = {p: palette[i % len(palette)] for i, p in enumerate(pool_order)} if pool_order else {}
 
-                        def _style_dividends(_df: pd.DataFrame):
-                            out = []
-                            for p in _df.get("_彩池_raw", pd.Series([""] * len(_df))).astype(str).tolist():
+                        def _style_dividends(show_df: pd.DataFrame):
+                            style_df = pd.DataFrame("", index=show_df.index, columns=show_df.columns)
+                            raw = df_div["_彩池_raw"].astype(str).reindex(show_df.index).fillna("")
+                            for idx, p in raw.items():
                                 bg = pool_to_color.get(p, "")
                                 if bg:
-                                    out.append([f"background-color: {bg};"] * _df.shape[1])
-                                else:
-                                    out.append([""] * _df.shape[1])
-                            return out
+                                    style_df.loc[idx, :] = f"background-color: {bg};"
+                            return style_df
 
 
                     if "單位" in df_div.columns:
                         df_div = df_div.drop(columns=["單位"])
                     if "_彩池_raw" in df_div.columns:
+                        show_df = df_div.drop(columns=["_彩池_raw"])
                         st.dataframe(
-                            df_div.drop(columns=["_彩池_raw"]).style.apply(_style_dividends, axis=None),
+                            show_df.style.apply(_style_dividends, axis=None),
                             use_container_width=True,
                             hide_index=True,
                         )
