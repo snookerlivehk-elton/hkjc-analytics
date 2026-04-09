@@ -11,6 +11,7 @@
 | 條件（UI 名稱） | 內部代號 | 所需數據來源 | 評分邏輯摘要 |
 | :--- | :--- | :--- | :--- |
 | **騎師＋練馬師合作 (綜合)** | `jockey_trainer_bond` | 歷史往績 (`HorseHistory`: jockey_name / trainer_name / horse_id / rank / race_date) | 同時計算「全庫合作」與「本駒合作」的勝/上名率，依可調權重與可調樣本範圍加權合併；同場再做百分位標準化成 0–10 分。 |
+| **馬匹分段時間＋完成時間 (同路程歷史)** | `horse_time_perf` | 排位表 (`Race.track_type` / `Race.distance`)、歷史往績 (`HorseHistory.finish_time/venue/surface/distance/race_date`) | v1 先以「完成時間」作速度指標：同路程下取歷史最佳完成時間（track_type→草/泥→同程 fallback），時間越短越好；加入樣本下限與可信度降權，缺乏賽績則以中性處理；同場再標準化成 0–10 分。 |
 | **場地＋路程專長** | `venue_dist_specialty` | 排位表 (`Race.track_type` / `Race.distance`)、歷史往績 (`HorseHistory.venue/surface/distance/rank/race_date`) | 以「同跑道資訊（場地+草/泥/賽道）＋同路程」的勝率/上名率計分；勝/上名率使用半衰期做時間衰減，並加入可信度降權（樣本越少降權越多）；可調時間窗、半衰期、樣本下限、可信度滿分樣本與勝/上名權重；同場再標準化成 0–10 分。 |
 | **檔位偏差 (官方 Draw Statistics)** | `draw_stats` | HKJC 當日檔位統計（抓取後暫存於 `SystemConfig`）、排位表檔位 (`RaceEntry.draw`) | 以當日該場次各檔位的勝率/上名率作基礎；以「最高勝率/最高上名率」為基準，計算相對強度（勝率 70% + 上名率 30%）；同場再標準化成 0–10 分。 |
 | **負磅／評分表現** | `weight_rating_perf` | 排位表 (`RaceEntry.rating` / `RaceEntry.actual_weight`)、歷史往績 (`HorseHistory.distance/rank/rating/weight/race_date`) | 主訊號為「同路程勝仗評分差」：在可調時間窗內找同程勝仗的最高可贏評分，計算與現評分差並加入同程勝磅差；輔助訊號為「同程上名率(前3)」並以半衰期做時間衰減，且需達同程樣本下限 N 才生效；最終按可調入圍權重合成 raw，再同場標準化成 0–10 分。 |
@@ -25,7 +26,6 @@
 | 條件（UI 名稱） | 內部代號 | 現況 | 建議方向 |
 | :--- | :--- | :--- | :--- |
 | **場地狀況專長 (Going)** | `going_specialty` | 目前為 placeholder；且賽前 Going 可能未公布 | Going 已可能存入 `Race.going`，若缺失可先用草/泥作 fallback；可用歷史在相同 Going（或相同跑道）表現聚合。 |
-| **初出／長休後表現** | `debut_long_rest` | 已實作（可調參數） | 以可調「休息天數門檻」判斷本場是否屬長休復出；若是，回看該馬歷史上每次「休息≥門檻」後的復出賽績（勝/入位）並疊加加分；同場再標準化成 0–10 分。 |
 
 ---
 
@@ -45,7 +45,7 @@
 
 | 條件（UI 名稱） | 內部代號 | 缺少的關鍵資料 |
 | :--- | :--- | :--- |
-| **馬匹分段時間＋完成時間 (同路程歷史)** | `horse_time_perf` | 需要賽果頁的分段時間/完成時間（目前資料庫 `RaceResult.sectional_times` 尚未穩定填入）。 |
+| **馬匹分段時間（同路程歷史）** | `horse_time_perf` | v1 已以往績完成時間落地；如要加入「分段時間」則仍需賽果頁分段時間入庫（目前 `RaceResult.sectional_times` 尚未穩定填入）。 |
 | **投注額變動 (早盤 vs 即時)** | `odds_movement` | 需要早盤/臨場多時間點賠率或投注額序列（目前未建立完整時間序列）。 |
 | **晨操／試閘表現** | `morning_trial_perf` | 需要晨操/試閘頁面爬取與入庫（目前 `Workout` 尚未穩定填入）。 |
 | **配備變化** | `gear_change` | 需要在排位爬蟲中抓取並寫入 `RaceEntry.gear`（目前未完整入庫）。 |

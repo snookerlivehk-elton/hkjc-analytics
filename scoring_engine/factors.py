@@ -188,9 +188,209 @@ class FactorCalculator:
 
     # 2. 馬匹分段時間＋完成時間 (Horse Time Perf)
     def _calculate_horse_time_perf(self):
-        raw_scores = pd.Series(np.random.rand(len(self.df)), index=self.df.index)
-        display = pd.Series(["無數據"] * len(self.df), index=self.df.index)
-        return raw_scores, display
+        from datetime import datetime, timedelta
+        import math
+        import re
+        from database.models import HorseHistory, Race, SystemConfig
+
+        def parse_finish_time_to_seconds(s: str):
+            v = str(s or "").strip()
+            if not v:
+                return None
+            v = v.replace(" ", "")
+            v = v.replace("．", ".").replace("：", ":")
+            v = re.sub(r"[^0-9:\.]", "", v)
+            if not v:
+                return None
+
+            if ":" in v:
+                parts = v.split(":")
+                if len(parts) != 2:
+                    return None
+                try:
+                    m = int(parts[0])
+                except ValueError:
+                    return None
+                sec_str = parts[1]
+                try:
+                    sec = float(sec_str)
+                except ValueError:
+                    return None
+                if sec < 0:
+                    return None
+                return m * 60.0 + sec
+
+            if v.count(".") >= 2:
+                p = v.split(".")
+                try:
+                    m = int(p[0])
+                    s2 = int(p[1])
+                    frac = int(p[2])
+                except ValueError:
+                    return None
+                if m < 0 or s2 < 0 or s2 >= 60:
+                    return None
+                return m * 60.0 + s2 + (frac / (100.0 if frac >= 10 else 10.0))
+
+            try:
+                sec = float(v)
+            except ValueError:
+                return None
+            if sec <= 0:
+                return None
+            return sec
+
+        def norm_track(s: str):
+            return str(s or "").strip().replace(" ", "")
+
+        race_id = self.df.iloc[0].get("race_id") if "race_id" in self.df.columns else None
+        race_id = self._to_int(race_id, default=0)
+        race = self.session.get(Race, race_id) if race_id else None
+
+        distance = self._to_int(getattr(race, "distance", 0), default=0) if race else 0
+        track_key = str(getattr(race, "track_type", "") if race else "").strip()
+        track_key_norm = norm_track(track_key)
+
+        surface = ""
+        if ("全天候" in track_key) or ("泥地" in track_key):
+            surface = "泥地"
+        elif "草地" in track_key:
+            surface = "草地"
+        else:
+            g = getattr(race, "going", "") if race else ""
+            if g in ("草地", "泥地"):
+                surface = g
+
+        race_date = getattr(race, "race_date", None) if race else None
+        if not isinstance(race_date, datetime):
+            race_date = datetime.now()
+
+        cfg = {"min_samples": 3, "confidence_runs": 8, "fallback_strategy": "A_B_C", "window_days": 720}
+        try:
+            config = self.session.query(SystemConfig).filter_by(key="horse_time_perf_config").first()
+            if config and isinstance(config.value, dict):
+                v = config.value
+                if "min_samples" in v:
+                    cfg["min_samples"] = int(v["min_samples"])
+                if "confidence_runs" in v:
+                    cfg["confidence_runs"] = int(v["confidence_runs"])
+                if "fallback_strategy" in v:
+                    cfg["fallback_strategy"] = str(v["fallback_strategy"])
+                if "window_days" in v:
+                    cfg["window_days"] = int(v["window_days"])
+        except Exception:
+            pass
+
+        if cfg["min_samples"] < 0:
+            cfg["min_samples"] = 0
+        if cfg["confidence_runs"] <= 0:
+            cfg["confidence_runs"] = 1
+        if cfg["window_days"] < 0:
+            cfg["window_days"] = 0
+        if cfg["fallback_strategy"] not in ("A_B_C", "B_C", "C"):
+            cfg["fallback_strategy"] = "A_B_C"
+
+        cutoff_date = (race_date - timedelta(days=cfg["window_days"])) if cfg["window_days"] > 0 else None
+
+        rows = []
+        for _, row in self.df.iterrows():
+            horse_id = self._to_int(row.get("horse_id", 0), default=0)
+            rows.append(horse_id)
+
+        cached = {}
+        best_secs = [None] * len(rows)
+        best_n = [0] * len(rows)
+        best_mode = [""] * len(rows)
+
+        for i, horse_id in enumerate(rows):
+            if not horse_id or not distance:
+                continue
+
+            q = (
+                self.session.query(HorseHistory.finish_time, HorseHistory.race_date, HorseHistory.venue, HorseHistory.surface)
+                .filter(
+                    HorseHistory.horse_id == horse_id,
+                    HorseHistory.distance == distance,
+                    HorseHistory.rank > 0
+                )
+                .order_by(HorseHistory.race_date.desc())
+            )
+            if cutoff_date:
+                q = q.filter(HorseHistory.race_date >= cutoff_date)
+            hist = q.all()
+
+            times_A = []
+            times_B = []
+            times_C = []
+            for ft, _dt, v, sf in hist:
+                sec = parse_finish_time_to_seconds(ft)
+                if sec is None:
+                    continue
+                times_C.append(sec)
+                if surface and sf == surface:
+                    times_B.append(sec)
+                if track_key_norm and norm_track(v) == track_key_norm:
+                    times_A.append(sec)
+
+            modes = []
+            if cfg["fallback_strategy"] == "A_B_C":
+                modes = [("A", times_A), ("B", times_B), ("C", times_C)]
+            elif cfg["fallback_strategy"] == "B_C":
+                modes = [("B", times_B), ("C", times_C)]
+            else:
+                modes = [("C", times_C)]
+
+            chosen = None
+            chosen_n = 0
+            chosen_mode = ""
+            for m, ts in modes:
+                if len(ts) >= cfg["min_samples"]:
+                    chosen = min(ts)
+                    chosen_n = len(ts)
+                    chosen_mode = m
+                    break
+
+            if chosen is not None:
+                best_secs[i] = chosen
+                best_n[i] = chosen_n
+                best_mode[i] = chosen_mode
+
+        sig = f"N{cfg['min_samples']}|C{cfg['confidence_runs']}|{cfg['fallback_strategy']}"
+
+        avail = [v for v in best_secs if v is not None]
+        if not avail:
+            raw_scores = pd.Series([0.0] * len(rows), index=self.df.index)
+            display = pd.Series([f"無賽績參考 | {sig}"] * len(rows), index=self.df.index)
+            return raw_scores, display
+
+        t_min = min(avail)
+        tau = 1.0
+
+        raw_vals = []
+        displays = []
+        for i, horse_id in enumerate(rows):
+            t = best_secs[i]
+            if t is None:
+                raw_vals.append(None)
+                displays.append(f"無賽績參考 | {sig}")
+                continue
+
+            gap = t - t_min
+            base = math.exp(-gap / tau) if gap >= 0 else 1.0
+            conf = min(best_n[i] / float(cfg["confidence_runs"]), 1.0)
+            raw = base * conf
+            raw_vals.append(raw)
+
+            head = track_key if best_mode[i] == "A" else (surface if best_mode[i] == "B" else "同程")
+            displays.append(
+                f"{head}{distance}m | best{t:.2f}s | gap+{gap:.2f}s | n{best_n[i]} | conf{conf:.2f} | {best_mode[i]} | {sig}"
+            )
+
+        non_missing = [v for v in raw_vals if v is not None]
+        mid = float(pd.Series(non_missing).median()) if non_missing else 0.0
+        raw_vals = [mid if v is None else v for v in raw_vals]
+
+        return pd.Series(raw_vals, index=self.df.index), pd.Series(displays, index=self.df.index)
 
     # 3. 投注額變動 (Odds Movement)
     def _calculate_odds_movement(self):

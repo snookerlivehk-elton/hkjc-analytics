@@ -343,6 +343,45 @@ else:
                         engine.score_race(selected_race_id)
                         st.rerun()
 
+                if selected_factor == "馬匹分段時間＋完成時間 (同路程歷史)":
+                    from database.models import SystemConfig, RaceEntry, ScoringFactor
+
+                    cfg = {"min_samples": 3, "confidence_runs": 8, "fallback_strategy": "A_B_C"}
+                    config = session.query(SystemConfig).filter_by(key="horse_time_perf_config").first()
+                    if config and isinstance(config.value, dict):
+                        v = config.value
+                        if "min_samples" in v:
+                            cfg["min_samples"] = int(v["min_samples"])
+                        if "confidence_runs" in v:
+                            cfg["confidence_runs"] = int(v["confidence_runs"])
+                        if "fallback_strategy" in v:
+                            cfg["fallback_strategy"] = str(v["fallback_strategy"])
+
+                    expected = f"N{cfg['min_samples']}|C{cfg['confidence_runs']}|{cfg['fallback_strategy']}"
+                    sample = (
+                        session.query(ScoringFactor.raw_data_display)
+                        .join(RaceEntry, RaceEntry.id == ScoringFactor.entry_id)
+                        .filter(
+                            RaceEntry.race_id == selected_race_id,
+                            ScoringFactor.factor_name == "horse_time_perf",
+                        )
+                        .first()
+                    )
+
+                    needs_rescore = False
+                    if not sample or not sample[0]:
+                        needs_rescore = True
+                    elif expected not in sample[0]:
+                        needs_rescore = True
+
+                    auto_key = f"auto_rescore_horse_time_perf_{selected_race_id}_{expected}"
+                    if needs_rescore and not st.session_state.get(auto_key, False):
+                        st.session_state[auto_key] = True
+                        from scoring_engine.core import ScoringEngine
+                        engine = ScoringEngine(session)
+                        engine.score_race(selected_race_id)
+                        st.rerun()
+
                 # 提取基本資訊與該因子的分數
                 race = session.get(Race, selected_race_id)
                 track_display = race.track_type if race.track_type else race.venue
@@ -599,6 +638,63 @@ else:
                                 new_cfg = {"rest_days": int(rest_days)}
                                 if not config:
                                     config = SystemConfig(key="debut_long_rest_config", description="初出／長休後表現：休息天數門檻")
+                                    session.add(config)
+                                config.value = new_cfg
+                                session.commit()
+
+                                from scoring_engine.core import ScoringEngine
+                                engine = ScoringEngine(session)
+                                engine.score_race(selected_race_id)
+                                st.success(f"參數已儲存：{new_cfg}，並已重新計分。")
+                                st.rerun()
+
+                elif selected_factor == "馬匹分段時間＋完成時間 (同路程歷史)":
+                    st.markdown("---")
+                    st.markdown("### 💡 演算法說明：馬匹完成時間 (同路程歷史)")
+                    st.markdown("""
+                    這個條件用於衡量馬匹在「同路程」下的歷史速度能力（先以完成時間為主）。
+                    
+                    - **匹配層級 (fallback)**：優先同路程 + 同跑道資訊（track_type），不足則降級至同路程 + 草/泥，再不足則只用同路程；若仍無有效賽績則以中性處理。
+                    - **加分方向**：同條件下歷史最佳完成時間越短越好（相對於本場其他馬匹）。
+                    - **可信度降權**：樣本越少，分數越接近中性（避免 1-2 筆數據造成過大差距）。
+                    - **最後調整**：同場再做百分位標準化成 0–10 分。
+                    """)
+                    with st.expander("⚙️ 調整樣本下限/可信度與 fallback 規則 (調整後將即時儲存並重算)", expanded=False):
+                        from database.models import SystemConfig
+
+                        cfg = {"min_samples": 3, "confidence_runs": 8, "fallback_strategy": "A_B_C"}
+                        config = session.query(SystemConfig).filter_by(key="horse_time_perf_config").first()
+                        if config and isinstance(config.value, dict):
+                            v = config.value
+                            if "min_samples" in v:
+                                cfg["min_samples"] = int(v["min_samples"])
+                            if "confidence_runs" in v:
+                                cfg["confidence_runs"] = int(v["confidence_runs"])
+                            if "fallback_strategy" in v:
+                                cfg["fallback_strategy"] = str(v["fallback_strategy"])
+
+                        fs_map = {
+                            "A→B→C": "A_B_C",
+                            "B→C": "B_C",
+                            "只用 C": "C",
+                        }
+                        cur_fs_label = next((k for k, v in fs_map.items() if v == cfg["fallback_strategy"]), "A→B→C")
+
+                        with st.form("horse_time_perf_config_form"):
+                            c1, c2, c3 = st.columns(3)
+                            min_samples = c1.number_input("樣本下限 N", value=int(cfg["min_samples"]), min_value=0, max_value=30, step=1)
+                            confidence_runs = c2.number_input("可信度滿分樣本", value=int(cfg["confidence_runs"]), min_value=1, max_value=50, step=1)
+                            fs_label = c3.selectbox("Fallback 規則", list(fs_map.keys()), index=list(fs_map.keys()).index(cur_fs_label))
+
+                            submitted = st.form_submit_button("💾 儲存參數並為本場重新計分", type="primary")
+                            if submitted:
+                                new_cfg = {
+                                    "min_samples": int(min_samples),
+                                    "confidence_runs": int(confidence_runs),
+                                    "fallback_strategy": str(fs_map[fs_label]),
+                                }
+                                if not config:
+                                    config = SystemConfig(key="horse_time_perf_config", description="馬匹完成時間(同路程)：樣本/可信度/fallback")
                                     session.add(config)
                                 config.value = new_cfg
                                 session.commit()
