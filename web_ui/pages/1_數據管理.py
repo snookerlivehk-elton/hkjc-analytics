@@ -19,8 +19,17 @@ st.set_page_config(page_title="數據管理 - HKJC Analytics", layout="wide")
 st.markdown(
     """
     <style>
-    [data-testid="stDataFrame"] * { text-align: left !important; }
-    [data-testid="stTable"] * { text-align: left !important; }
+    div[data-testid="stDataFrame"] div[role="gridcell"],
+    div[data-testid="stDataFrame"] div[role="columnheader"] {
+      text-align: left !important;
+      justify-content: flex-start !important;
+    }
+    div[data-testid="stDataFrame"] table td,
+    div[data-testid="stDataFrame"] table th,
+    div[data-testid="stTable"] table td,
+    div[data-testid="stTable"] table th {
+      text-align: left !important;
+    }
     </style>
     """,
     unsafe_allow_html=True,

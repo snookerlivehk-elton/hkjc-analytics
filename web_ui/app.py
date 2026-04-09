@@ -28,8 +28,17 @@ st.set_page_config(page_title="HKJC 每場賽事獨立計分排名系統", layou
 st.markdown(
     """
     <style>
-    [data-testid="stDataFrame"] * { text-align: left !important; }
-    [data-testid="stTable"] * { text-align: left !important; }
+    div[data-testid="stDataFrame"] div[role="gridcell"],
+    div[data-testid="stDataFrame"] div[role="columnheader"] {
+      text-align: left !important;
+      justify-content: flex-start !important;
+    }
+    div[data-testid="stDataFrame"] table td,
+    div[data-testid="stDataFrame"] table th,
+    div[data-testid="stTable"] table td,
+    div[data-testid="stTable"] table th {
+      text-align: left !important;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -694,7 +703,7 @@ def main():
                                     prev = p
                             df_div["彩池"] = display_pool
 
-                        palette = ["#0f172a", "#111827", "#0b1220", "#1f2937", "#0b1324", "#172036"]
+                        palette = ["#2563eb", "#16a34a", "#f59e0b", "#9333ea", "#0ea5e9", "#db2777"]
                         pool_to_color = {p: palette[i % len(palette)] for i, p in enumerate(pool_order)} if pool_order else {}
 
                         def _style_dividends(show_df: pd.DataFrame):
@@ -703,7 +712,7 @@ def main():
                             for idx, p in raw.items():
                                 bg = pool_to_color.get(p, "")
                                 if bg:
-                                    style_df.loc[idx, :] = f"background-color: {bg};"
+                                    style_df.loc[idx, :] = f"border-left: 6px solid {bg}; color: #111827; background-color: #f8fafc;"
                             return style_df
 
 
