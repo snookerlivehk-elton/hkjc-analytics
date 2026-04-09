@@ -35,16 +35,26 @@ async def run_daily_scraper():
     scraper = RaceCardScraper()
     
     try:
-        print(">>> 正在啟動穩定版爬蟲...")
-        races_info = scraper.get_all_races_info()
+        # 從環境變數獲取目標日期 (Y/m/d)，如果沒有則預設為當天
+        target_date_str = os.getenv("TARGET_DATE", "")
+        if target_date_str:
+            print(f">>> 正在啟動穩定版爬蟲，目標日期: {target_date_str} ...")
+        else:
+            print(">>> 正在啟動穩定版爬蟲 (未指定日期，將自動抓取最新賽事)...")
+            
+        races_info = scraper.get_all_races_info(race_date=target_date_str)
         
         if not races_info:
-            print(">>> [失敗] 仍無法抓取賽事資訊。這通常是因為今日確實無賽事。")
+            print(f">>> [失敗] 無法抓取 {target_date_str or '今日'} 的賽事資訊。這通常是因為該日無賽事或尚未出排位。")
             return
 
         print(f">>> 成功發現 {len(races_info)} 場賽事，開始同步數據...")
         for race_info in races_info:
-            race_date = datetime.now()
+            # 如果有指定日期，使用該日期建立賽事，否則使用當天
+            if target_date_str:
+                race_date = datetime.strptime(target_date_str, "%Y/%m/%d")
+            else:
+                race_date = datetime.now()
             venue = race_info.get("venue", "ST")
             race = repo.create_race(
                 race_date, 

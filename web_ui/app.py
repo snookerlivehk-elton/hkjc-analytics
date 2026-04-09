@@ -32,7 +32,7 @@ import subprocess
 # 終極修復：指定 Playwright 瀏覽器安裝路徑 (Railway 必備)
 os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "/app/playwright_browsers"
 
-def trigger_scraper():
+def trigger_scraper(target_date: str = None):
     """使用 Popen 實現實時日誌串流輸出 (穩定版)"""
     st.markdown("### 🚀 爬蟲執行進度")
     log_placeholder = st.empty() 
@@ -40,6 +40,9 @@ def trigger_scraper():
     
     try:
         env = os.environ.copy()
+        if target_date:
+            env["TARGET_DATE"] = target_date
+            
         # 直接執行，不再檢查 Playwright
         process = subprocess.Popen(
             ["python3", "scripts/run_scraper.py"],
@@ -215,6 +218,25 @@ def main():
     st.markdown("---")
 
     session = get_db()
+    
+    # 右側：歡迎畫面與快速操作
+    st.subheader("💡 快速操作")
+    
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.markdown("#### 1. 更新賽事數據")
+        st.markdown("獲取最新的排位表與即時賠率")
+        
+        # 加入日期選擇器
+        from datetime import datetime
+        selected_date = st.date_input("選擇賽事日期", value=datetime.now(), key="quick_sync_date")
+        
+        if st.button("🔄 開始抓取該日賽事", use_container_width=True):
+            target_date_str = selected_date.strftime("%Y/%m/%d")
+            if trigger_scraper(target_date=target_date_str):
+                st.success(f"✅ {target_date_str} 數據同步完成！")
+
+    st.markdown("---")
     
     # Sidebar: 賽事選擇
     st.sidebar.header("🔍 賽事選擇")

@@ -14,13 +14,16 @@ from scoring_engine.core import ScoringEngine
 
 st.set_page_config(page_title="數據管理 - HKJC Analytics", layout="wide")
 
-def trigger_scraper():
+def trigger_scraper(target_date: str = None):
     """實時日誌串流輸出"""
     st.markdown("### 🚀 爬蟲執行進度")
     log_placeholder = st.empty() 
     full_log = ""
     try:
         env = os.environ.copy()
+        if target_date:
+            env["TARGET_DATE"] = target_date
+            
         process = subprocess.Popen(
             ["python3", "scripts/run_scraper.py"],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -81,10 +84,18 @@ st.markdown("在此頁面執行數據更新、回填與清理操作。")
 col1, col2 = st.columns(2)
 
 with col1:
-    st.subheader("📡 即時抓取")
-    if st.button("🔄 更新當日賽事數據", use_container_width=True):
-        if trigger_scraper():
-            st.success("✅ 當日數據更新成功！")
+    st.subheader("📡 抓取排位表與即時數據")
+    
+    # 加入日期選擇器
+    from datetime import datetime, timedelta
+    default_date = datetime.now()
+    # 如果今天星期一到星期二，預設下一個星期三；如果星期四到星期六，預設星期日 (簡單起見先預設今天)
+    selected_date = st.date_input("選擇要抓取的賽事日期", value=default_date)
+    
+    if st.button("🔄 開始抓取該日賽事", use_container_width=True):
+        target_date_str = selected_date.strftime("%Y/%m/%d")
+        if trigger_scraper(target_date=target_date_str):
+            st.success(f"✅ {target_date_str} 數據更新成功！")
 
     st.subheader("📚 歷史回填")
     if st.button("📚 回填馬匹歷史往績", use_container_width=True):

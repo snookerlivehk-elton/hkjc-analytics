@@ -10,7 +10,8 @@ class RaceCardScraper:
     """生產環境穩定版：精確表格對位 + 自動雜訊過濾"""
 
     def __init__(self):
-        self.base_url = "https://racing.hkjc.com/racing/information/Chinese/Racing/RaceCard.aspx"
+        # 支援新版 URL
+        self.base_url = "https://racing.hkjc.com/zh-hk/local/information/racecard"
         self.session = requests.Session()
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
@@ -24,12 +25,14 @@ class RaceCardScraper:
         print(f">>> 正在初始化連線: {date_str}")
         
         try:
-            resp = self.session.get(f"{self.base_url}?RaceDate={date_str}&RaceNo=1", headers=self.headers, timeout=15)
+            # 請求第一場，因為新版 URL 參數為 racedate
+            resp = self.session.get(f"{self.base_url}?racedate={date_str}&RaceNo=1", headers=self.headers, timeout=15)
             soup = BeautifulSoup(resp.text, 'lxml')
             
             race_nos = set()
+            # 新版 URL 的參數通常小寫
             for a in soup.select("a[href*='RaceNo=']"):
-                m = re.search(r'RaceNo=(\d+)', a.get('href', ''))
+                m = re.search(r'RaceNo=(\d+)', a.get('href', ''), re.IGNORECASE)
                 if m: race_nos.add(int(m.group(1)))
             
             race_count = max(race_nos) if race_nos else 9
@@ -37,7 +40,7 @@ class RaceCardScraper:
 
             races = []
             for i in range(1, race_count + 1):
-                url = f"{self.base_url}?RaceDate={date_str}&RaceNo={i}"
+                url = f"{self.base_url}?racedate={date_str}&RaceNo={i}"
                 print(f">>> 正在同步第 {i} 場數據...")
                 race_info = self.scrape_single_race(url, i)
                 if race_info and race_info.get("entries"):
