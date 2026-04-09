@@ -197,6 +197,12 @@ class FactorCalculator:
                 str_race_no = str(race_no)
                 if str_race_no in config.value:
                     stats_list = config.value[str_race_no]
+                elif race_no in config.value:
+                    stats_list = config.value[race_no]
+                else:
+                    stats_list = []
+
+                if isinstance(stats_list, list):
                     for item in stats_list:
                         draw_stats_dict[item["draw"]] = item
         

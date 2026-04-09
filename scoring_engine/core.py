@@ -32,6 +32,7 @@ class ScoringEngine:
         horse_data = []
         for entry in entries:
             horse_data.append({
+                "race_id": race_id,
                 "entry_id": entry.id,
                 "horse_id": entry.horse_id,
                 "horse_code": entry.horse.code if entry.horse else "",

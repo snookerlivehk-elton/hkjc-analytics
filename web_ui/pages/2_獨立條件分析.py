@@ -402,6 +402,47 @@ else:
                       3. 若該檔位樣本數為 0 或尚未載入官方數據，則會退回簡單邏輯（內檔分數較高）。
                     - **最後調整**：將上述綜合分數在同場賽事中進行百分位標準化，得出 0–10 分。
                     """)
+
+                    from database.models import SystemConfig, Race
+                    import pandas as pd
+
+                    race = session.get(Race, selected_race_id)
+                    if race and hasattr(race.race_date, "strftime"):
+                        race_date_str = race.race_date.strftime("%Y/%m/%d")
+                    elif race:
+                        race_date_str = str(race.race_date)[:10].replace("-", "/")
+                    else:
+                        race_date_str = ""
+
+                    config_key = f"draw_stats_{race_date_str}" if race_date_str else ""
+                    config = session.query(SystemConfig).filter_by(key=config_key).first() if config_key else None
+                    raw = config.value if (config and isinstance(config.value, dict)) else None
+
+                    st.markdown("#### 📌 來源數據檢查")
+                    if race_date_str and race:
+                        st.markdown(f"- HKJC 檔位統計頁： https://racing.hkjc.com/zh-hk/local/information/draw#race{race.race_no}")
+                        st.markdown(f"- 本地暫存 Key：{config_key}")
+
+                    if raw:
+                        race_key_str = str(race.race_no) if race else ""
+                        stats_list = raw.get(race_key_str) or raw.get(race.race_no) or []
+                        if isinstance(stats_list, list) and stats_list:
+                            stats_df = pd.DataFrame(stats_list)
+                            if "draw" in stats_df.columns:
+                                stats_df = stats_df.sort_values(by="draw")
+
+                            show_cols = [c for c in ["draw", "total_runs", "win", "win_rate", "place_rate"] if c in stats_df.columns]
+                            st.dataframe(stats_df[show_cols], width="stretch")
+
+                            chart_df = stats_df.set_index("draw")[["win_rate", "place_rate"]] if all(
+                                c in stats_df.columns for c in ["draw", "win_rate", "place_rate"]
+                            ) else None
+                            if chart_df is not None:
+                                st.bar_chart(chart_df, width="stretch")
+                        else:
+                            st.warning("找不到本場次的官方檔位統計（可能尚未爬取或 Key 不匹配）。")
+                    else:
+                        st.warning("尚未載入當日官方檔位統計，請先執行賽日資料抓取後再檢查。")
                     
                 elif selected_factor == "練馬師＋馬匹組合":
                     st.markdown("---")
