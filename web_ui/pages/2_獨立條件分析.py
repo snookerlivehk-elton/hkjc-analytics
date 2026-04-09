@@ -284,9 +284,9 @@ else:
                                 st.success(f"參數已儲存為 {new_weights}，並已重新計算分數！")
                                 st.rerun()
                 
-                if selected_factor == "騎師＋練馬師合作 (同路程/場地)":
+                if selected_factor in ("騎師＋練馬師合作 (同路程/場地)", "騎師＋練馬師合作 (不論馬匹)"):
                     st.markdown("---")
-                    st.markdown("### 💡 演算法說明：騎師＋練馬師合作 (同路程/場地)")
+                    st.markdown(f"### 💡 演算法說明：{selected_factor}")
                     st.markdown("""
                     這個條件用於衡量「本場騎師＋練馬師」在歷史往績資料中的合作表現（目前以合作樣本中的勝出率與前 3 名入圍率計算）。
                     
