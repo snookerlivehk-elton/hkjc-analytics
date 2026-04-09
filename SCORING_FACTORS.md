@@ -16,6 +16,7 @@
 | **負磅／評分表現** | `weight_rating_perf` | 排位表 (`RaceEntry.rating` / `RaceEntry.actual_weight`)、歷史往績 (`HorseHistory.distance/rank/rating/weight/race_date`) | 主訊號為「同路程勝仗評分差」：在可調時間窗內找同程勝仗的最高可贏評分，計算與現評分差並加入同程勝磅差；輔助訊號為「同程上名率(前3)」並以半衰期做時間衰減，且需達同程樣本下限 N 才生效；最終按可調入圍權重合成 raw，再同場標準化成 0–10 分。 |
 | **班次表現** | `class_performance` | 本場班次 (`Race.race_class`)、歷史往績 (`HorseHistory.race_class`) | 現階段專注「降班訊號」：只在 3→4 / 4→5 時加分（透過解析「第X班/Class X」字串）；同場再標準化成 0–10 分。 |
 | **近期狀態 (Last 6 Runs)** | `recent_form` | 歷史往績 (`HorseHistory.rank` / `race_date`)、可調權重 (`SystemConfig.recent_form_weights`) | 取最近 6 仗有效名次，使用時間衰減權重計算加權平均名次；以「負的加權平均名次」作為 raw（名次越好 raw 越高），同場再標準化成 0–10 分。 |
+| **初出／長休後表現** | `debut_long_rest` | 歷史往績 (`HorseHistory.race_date/rank`) | 以可調「休息天數門檻」判斷本場是否屬長休復出；若是，回看該馬歷史上每次「休息≥門檻」後的復出賽績（勝/入位）並疊加加分；同場再標準化成 0–10 分。 |
 
 ---
 

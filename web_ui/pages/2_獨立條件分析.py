@@ -572,6 +572,43 @@ else:
                                 st.success(f"參數已儲存：{new_cfg}，並已重新計分。")
                                 st.rerun()
 
+                elif selected_factor == "初出／長休後表現":
+                    st.markdown("---")
+                    st.markdown("### 💡 演算法說明：初出／長休後表現")
+                    st.markdown("""
+                    這個條件用於評估馬匹是否「長休後復出」以及其歷史上「長休後復出」的表現。
+                    
+                    - **休息天數門檻 (可調)**：本場距離上仗日數 ≥ 門檻，視為長休復出。
+                    - **疊加加分**：回看該馬歷史上每次「休息≥門檻」後的復出賽績；若復出賽勝出/入位，按設定分值疊加加分。
+                    - **最後調整**：同場再做百分位標準化成 0–10 分。
+                    """)
+                    with st.expander("⚙️ 調整休息天數門檻 (調整後將即時儲存並重算)", expanded=False):
+                        from database.models import SystemConfig
+
+                        cfg = {"rest_days": 90}
+                        config = session.query(SystemConfig).filter_by(key="debut_long_rest_config").first()
+                        if config and isinstance(config.value, dict):
+                            v = config.value
+                            if "rest_days" in v:
+                                cfg["rest_days"] = int(v["rest_days"])
+
+                        with st.form("debut_long_rest_config_form"):
+                            rest_days = st.number_input("休息天數門檻 (日)", value=int(cfg["rest_days"]), min_value=0, max_value=365, step=5)
+                            submitted = st.form_submit_button("💾 儲存參數並為本場重新計分", type="primary")
+                            if submitted:
+                                new_cfg = {"rest_days": int(rest_days)}
+                                if not config:
+                                    config = SystemConfig(key="debut_long_rest_config", description="初出／長休後表現：休息天數門檻")
+                                    session.add(config)
+                                config.value = new_cfg
+                                session.commit()
+
+                                from scoring_engine.core import ScoringEngine
+                                engine = ScoringEngine(session)
+                                engine.score_race(selected_race_id)
+                                st.success(f"參數已儲存：{new_cfg}，並已重新計分。")
+                                st.rerun()
+
                 elif selected_factor == "負磅／評分表現":
                     st.markdown("---")
                     st.markdown("### 💡 演算法說明：負磅／評分表現")
