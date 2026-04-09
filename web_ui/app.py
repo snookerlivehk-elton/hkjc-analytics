@@ -16,7 +16,7 @@ from scoring_engine.core import ScoringEngine
 from scoring_engine.constants import DISABLED_FACTORS
 from scoring_engine.utils import estimate_win_probability
 from scoring_engine.member_stats import update_member_preset_stats_incremental, load_member_preset_stats, delete_member_preset_stats, STATS_START_DATE, STATS_WINDOW_DAYS
-from web_ui.ui_table import render_table, render_dividends
+from web_ui.ui_table import render_dividends
 from utils.logger import logger
 import asyncio
 import subprocess
@@ -458,7 +458,7 @@ def main():
                             share = (float(v) / total_w * 100.0) if total_w > 0 else 0.0
                             rows.append({"條件": weights_lookup[k], "權重": round(float(v), 2), "佔比%": round(share, 1)})
                     rows = sorted(rows, key=lambda x: x["佔比%"], reverse=True)
-                    render_table(pd.DataFrame(rows), key="confirm_shares")
+                    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
                 c1, c2 = st.columns(2)
                 confirm = c1.button("確認儲存", type="primary", use_container_width=True)
@@ -545,7 +545,7 @@ def main():
                             "四重彩命中%": round((q4_n / races_n * 100.0), 1) if races_n else 0.0,
                         }
                     )
-                render_table(pd.DataFrame(rows), key="preset_stats")
+                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
                 with st.expander("🔖 本場各組合 Top4 預測", expanded=False):
                     pr = []
@@ -572,7 +572,7 @@ def main():
                                 "Top4": top4[3] if len(top4) > 3 else "",
                             }
                         )
-                    render_table(pd.DataFrame(pr), key="top4_predictions")
+                    st.dataframe(pd.DataFrame(pr), use_container_width=True, hide_index=True)
 
         with st.expander("ℹ️ 專業排名表計算邏輯", expanded=False):
             st.markdown("""
@@ -647,7 +647,7 @@ def main():
         df_display = df[display_cols + ["騎師", "練馬師", "檔位", "負磅", "評分"]].copy()
         df_display.insert(0, "賽果", df_display["馬號"].apply(lambda x: rank_map.get(int(x), "")))
 
-        render_table(df_display, key="pro_ranking")
+        st.dataframe(df_display, use_container_width=True, hide_index=True)
 
         div = session.query(RaceDividend).filter_by(race_id=selected_race_id).first()
         has_div = bool(div and isinstance(div.dividends, list) and div.dividends)
