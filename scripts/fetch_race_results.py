@@ -11,6 +11,7 @@ if root_path not in sys.path:
 from database.connection import init_db, get_session
 from database.models import Race, RaceEntry, RaceResult, RaceDividend
 from data_scraper.local_results import LocalResultsScraper
+from scoring_engine.member_stats import update_all_members_preset_stats_for_race_date
 
 
 def parse_finish_time_to_seconds(s: str):
@@ -112,6 +113,15 @@ def main():
         ok += 1
 
     print(f"完成：已同步 {ok} 場賽果與派彩")
+    try:
+        print(f"正在更新會員命中率統計（賽日 {target_date}）...")
+        res = update_all_members_preset_stats_for_race_date(session, target_date)
+        if isinstance(res, dict) and res.get("ok"):
+            print(f"完成：已更新會員命中率（races={res.get('races')} members={res.get('members')} presets={res.get('presets')}）")
+        else:
+            print(f"會員命中率更新失敗: {res}")
+    except Exception as e:
+        print(f"會員命中率更新失敗: {e}")
 
 
 if __name__ == "__main__":

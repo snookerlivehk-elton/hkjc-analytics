@@ -246,3 +246,120 @@ def update_member_preset_stats_incremental(
     if changed_any:
         save_member_preset_stats(session, email, stats)
     return stats
+
+
+def update_all_members_preset_stats_for_race_date(session: Session, race_date_str: str) -> Dict[str, Any]:
+    try:
+        target_date = datetime.strptime(str(race_date_str), "%Y/%m/%d").date()
+    except ValueError:
+        return {"ok": False, "error": "race_date_str 格式應為 YYYY/MM/DD"}
+
+    cutoff = _cutoff_date().date()
+    if target_date < cutoff:
+        return {"ok": True, "skipped": True, "reason": "date_before_cutoff"}
+
+    races = (
+        session.query(Race)
+        .join(RaceEntry, RaceEntry.race_id == Race.id)
+        .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
+        .filter(func.date(Race.race_date) == target_date.isoformat())
+        .filter(RaceResult.rank != None)
+        .group_by(Race.id)
+        .having(func.count(RaceResult.id) >= 4)
+        .order_by(Race.race_no.asc(), Race.id.asc())
+        .all()
+    )
+    if not races:
+        return {"ok": True, "races": 0, "members": 0, "presets": 0}
+
+    member_cfgs = (
+        session.query(SystemConfig)
+        .filter(SystemConfig.key.like("member_weight_presets:%"))
+        .all()
+    )
+
+    members = 0
+    presets_n = 0
+    for cfg in member_cfgs:
+        if not isinstance(cfg.value, list) or not cfg.value:
+            continue
+        email = cfg.key.split(":", 1)[1] if ":" in cfg.key else ""
+        email = str(email or "").strip().lower()
+        if not email:
+            continue
+
+        stats = load_member_preset_stats(session, email)
+        now = datetime.now().isoformat()
+        members += 1
+
+        for p in cfg.value[:3]:
+            if not isinstance(p, dict):
+                continue
+            name = str(p.get("name") or "").strip()
+            weights = p.get("weights") if isinstance(p.get("weights"), dict) else {}
+            if not name:
+                continue
+            presets_n += 1
+
+            st = stats.get(name)
+            if not isinstance(st, dict) or st.get("policy") != CURRENT_POLICY:
+                st = {
+                    "races": 0,
+                    "win": 0,
+                    "qin": 0,
+                    "tri": 0,
+                    "q4": 0,
+                    "last_date": None,
+                    "last_race_no": None,
+                    "last_race_id": None,
+                    "updated_at": None,
+                    "policy": CURRENT_POLICY,
+                }
+
+            last_date = None
+            if st.get("last_date"):
+                try:
+                    last_date = datetime.fromisoformat(st["last_date"]).date()
+                except Exception:
+                    last_date = None
+            last_race_no = int(st.get("last_race_no") or 0) if st.get("last_race_no") is not None else None
+            last_race_id = int(st.get("last_race_id") or 0) if st.get("last_race_id") is not None else None
+
+            for race in races:
+                race_d = race.race_date.date() if hasattr(race.race_date, "date") else race.race_date
+                if last_date is not None and last_race_no is not None and last_race_id is not None:
+                    if race_d < last_date:
+                        continue
+                    if race_d == last_date:
+                        if int(race.race_no or 0) < last_race_no:
+                            continue
+                        if int(race.race_no or 0) == last_race_no and int(race.id) <= last_race_id:
+                            continue
+
+                act = _actual_top4_for_race(session, race.id)
+                if len(act) < 4:
+                    continue
+                pred = _predict_top4_for_race(session, race.id, weights)
+                if len(pred) < 4:
+                    continue
+
+                st["races"] = int(st.get("races") or 0) + 1
+                if pred[0] == act[0]:
+                    st["win"] = int(st.get("win") or 0) + 1
+                if pred[:2] == act[:2]:
+                    st["qin"] = int(st.get("qin") or 0) + 1
+                if pred[:3] == act[:3]:
+                    st["tri"] = int(st.get("tri") or 0) + 1
+                if pred[:4] == act[:4]:
+                    st["q4"] = int(st.get("q4") or 0) + 1
+
+                st["last_date"] = race_d.isoformat() if hasattr(race_d, "isoformat") else str(race_d)
+                st["last_race_no"] = int(race.race_no or 0)
+                st["last_race_id"] = int(race.id)
+                st["updated_at"] = now
+
+            stats[name] = st
+
+        save_member_preset_stats(session, email, stats)
+
+    return {"ok": True, "races": len(races), "members": members, "presets": presets_n, "date": target_date.isoformat()}
