@@ -136,6 +136,7 @@ def update_member_preset_stats_incremental(
     stats = load_member_preset_stats(session, email)
     now = datetime.now().isoformat()
     changed_any = False
+    policy = {"start_date": STATS_START_DATE.date().isoformat(), "window_days": int(STATS_WINDOW_DAYS)}
 
     for p in (presets or [])[:3]:
         name = str(p.get("name") or "").strip()
@@ -155,7 +156,24 @@ def update_member_preset_stats_incremental(
                 "last_race_no": None,
                 "last_race_id": None,
                 "updated_at": None,
+                "policy": policy,
             }
+            changed_any = True
+        else:
+            if st.get("policy") != policy:
+                st = {
+                    "races": 0,
+                    "win": 0,
+                    "qin": 0,
+                    "tri": 0,
+                    "q4": 0,
+                    "last_date": None,
+                    "last_race_no": None,
+                    "last_race_id": None,
+                    "updated_at": None,
+                    "policy": policy,
+                }
+                changed_any = True
 
         last_date = None
         if st.get("last_date"):
@@ -167,9 +185,18 @@ def update_member_preset_stats_incremental(
         last_race_id = st.get("last_race_id")
 
         if last_date is not None and last_date < cutoff:
+            st["races"] = 0
+            st["win"] = 0
+            st["qin"] = 0
+            st["tri"] = 0
+            st["q4"] = 0
+            st["last_date"] = None
+            st["last_race_no"] = None
+            st["last_race_id"] = None
             last_date = None
             last_race_no = None
             last_race_id = None
+            changed_any = True
 
         races = _list_completed_races(
             session=session,
