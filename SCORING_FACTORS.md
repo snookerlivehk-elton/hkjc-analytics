@@ -4,6 +4,26 @@
 
 > 提示：新增/更新計分邏輯後，如要套用到既有賽事資料，需在「數據管理」頁面執行 Batch Rescore 才會更新舊結果。
 
+## Top5 快照與命中統計（重要）
+
+系統會把每場預測「落庫成快照」，再以快照作為命中統計與對外輸出來源：
+
+- **PredictionTop5（Top5 快照）**
+  - 每筆代表：某賽日某場次、某條件/某會員組合的 Top5 預測馬號。
+  - `predictor_type=factor`：獨立條件（單一因子）Top5
+  - `predictor_type=preset`：會員儲存組合（多因子加權）Top5
+- **結算日與流程**
+  - 排位/即時數據更新 + 計分後：生成 Top5 快照（建議使用後台「⚡ 一鍵完整更新」確保資料完整）
+  - 賽果/派彩入庫後：以「Top5 快照」對比賽果 Top5 計算命中（WIN/P/Q1/PQ/T3E/T3/F4/F4Q/B5W/B5P），並回寫到快照 meta.hits / meta.actual_top5
+
+建議順序（以某賽日為單位）：
+
+1. 抓取排位表（建立 Race/RaceEntry 等）
+2. 回填該日涉及馬匹往績（HorseHistory）
+3. 重算該日所有場次（ScoringEngine.score_race）
+4. 生成 Top5 快照（factor + preset）
+5. 抓取賽果/派彩並結算命中（回寫 hits）
+
 ---
 
 ## ✅ 已開發完成（已上線）
