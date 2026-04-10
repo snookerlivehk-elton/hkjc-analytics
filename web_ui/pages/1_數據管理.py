@@ -356,19 +356,31 @@ with tab_members:
                 stt = stats_map.get(name, {}) if isinstance(stats_map, dict) else {}
                 races_n = int(stt.get("races") or 0)
                 win_n = int(stt.get("win") or 0)
-                qin_n = int(stt.get("qin") or 0)
-                tri_n = int(stt.get("tri") or 0)
-                q4_n = int(stt.get("q4") or 0)
+                p_n = int(stt.get("p") or 0)
+                q1_n = int(stt.get("q1") or 0)
+                pq_n = int(stt.get("pq") or 0)
+                t3e_n = int(stt.get("t3e") or 0)
+                t3_n = int(stt.get("t3") or 0)
+                f4_n = int(stt.get("f4") or 0)
+                f4q_n = int(stt.get("f4q") or 0)
+                b5w_n = int(stt.get("b5w") or 0)
+                b5p_n = int(stt.get("b5p") or 0)
                 rows.append(
                     {
                         "Email": email,
                         "組合": name,
                         "更新時間": str(p.get("updated_at") or ""),
                         "樣本(場)": races_n,
-                        "獨贏%": round((win_n / races_n * 100.0), 1) if races_n else 0.0,
-                        "正Q%": round((qin_n / races_n * 100.0), 1) if races_n else 0.0,
-                        "三重彩%": round((tri_n / races_n * 100.0), 1) if races_n else 0.0,
-                        "四重彩%": round((q4_n / races_n * 100.0), 1) if races_n else 0.0,
+                        "WIN%": round((win_n / races_n * 100.0), 1) if races_n else 0.0,
+                        "P%": round((p_n / races_n * 100.0), 1) if races_n else 0.0,
+                        "Q1%": round((q1_n / races_n * 100.0), 1) if races_n else 0.0,
+                        "PQ%": round((pq_n / races_n * 100.0), 1) if races_n else 0.0,
+                        "T3E%": round((t3e_n / races_n * 100.0), 1) if races_n else 0.0,
+                        "T3%": round((t3_n / races_n * 100.0), 1) if races_n else 0.0,
+                        "F4%": round((f4_n / races_n * 100.0), 1) if races_n else 0.0,
+                        "F4Q%": round((f4q_n / races_n * 100.0), 1) if races_n else 0.0,
+                        "B5W%": round((b5w_n / races_n * 100.0), 1) if races_n else 0.0,
+                        "B5P%": round((b5p_n / races_n * 100.0), 1) if races_n else 0.0,
                         "_weights": weights_map,
                     }
                 )

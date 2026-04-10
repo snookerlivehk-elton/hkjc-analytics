@@ -214,9 +214,9 @@ def _save_member_presets(session: Session, email: str, presets: list):
     cfg.value = presets[:3]
     session.commit()
 
-def _predict_top4_for_race(session: Session, race_id: int, weight_map: dict):
+def _predict_topk_for_race(session: Session, race_id: int, weight_map: dict, k: int):
     weights = {k: float(v) for k, v in (weight_map or {}).items()}
-    if not weights:
+    if not weights or k <= 0:
         return []
 
     entries = session.query(RaceEntry.id, RaceEntry.horse_no).filter_by(race_id=race_id).all()
@@ -237,7 +237,11 @@ def _predict_top4_for_race(session: Session, race_id: int, weight_map: dict):
         totals[int(entry_id)] += float(score or 0.0) * float(weights.get(factor_name, 0.0))
 
     ranked = sorted(totals.items(), key=lambda x: x[1], reverse=True)
-    return [entry_id_to_no[eid] for eid, _ in ranked[:4] if eid in entry_id_to_no]
+    return [entry_id_to_no[eid] for eid, _ in ranked[:k] if eid in entry_id_to_no]
+
+
+def _predict_top4_for_race(session: Session, race_id: int, weight_map: dict):
+    return _predict_topk_for_race(session, race_id, weight_map, 4)
 
 def load_scoring_data(session: Session, race_id: int, weight_map: dict):
     entries = session.query(RaceEntry).filter_by(race_id=race_id).all()
@@ -532,44 +536,58 @@ def main():
                     stt = stats_map.get(p["name"], {}) if isinstance(stats_map, dict) else {}
                     races_n = int(stt.get("races") or 0)
                     win_n = int(stt.get("win") or 0)
-                    qin_n = int(stt.get("qin") or 0)
-                    tri_n = int(stt.get("tri") or 0)
-                    q4_n = int(stt.get("q4") or 0)
+                    p_n = int(stt.get("p") or 0)
+                    q1_n = int(stt.get("q1") or 0)
+                    pq_n = int(stt.get("pq") or 0)
+                    t3e_n = int(stt.get("t3e") or 0)
+                    t3_n = int(stt.get("t3") or 0)
+                    f4_n = int(stt.get("f4") or 0)
+                    f4q_n = int(stt.get("f4q") or 0)
+                    b5w_n = int(stt.get("b5w") or 0)
+                    b5p_n = int(stt.get("b5p") or 0)
                     rows.append(
                         {
                             "組合": p["name"],
                             "樣本(場)": races_n,
-                            "獨贏命中%": round((win_n / races_n * 100.0), 1) if races_n else 0.0,
-                            "正Q命中%": round((qin_n / races_n * 100.0), 1) if races_n else 0.0,
-                            "三重彩命中%": round((tri_n / races_n * 100.0), 1) if races_n else 0.0,
-                            "四重彩命中%": round((q4_n / races_n * 100.0), 1) if races_n else 0.0,
+                            "WIN%": round((win_n / races_n * 100.0), 1) if races_n else 0.0,
+                            "P%": round((p_n / races_n * 100.0), 1) if races_n else 0.0,
+                            "Q1%": round((q1_n / races_n * 100.0), 1) if races_n else 0.0,
+                            "PQ%": round((pq_n / races_n * 100.0), 1) if races_n else 0.0,
+                            "T3E%": round((t3e_n / races_n * 100.0), 1) if races_n else 0.0,
+                            "T3%": round((t3_n / races_n * 100.0), 1) if races_n else 0.0,
+                            "F4%": round((f4_n / races_n * 100.0), 1) if races_n else 0.0,
+                            "F4Q%": round((f4q_n / races_n * 100.0), 1) if races_n else 0.0,
+                            "B5W%": round((b5w_n / races_n * 100.0), 1) if races_n else 0.0,
+                            "B5P%": round((b5p_n / races_n * 100.0), 1) if races_n else 0.0,
                         }
                     )
                 st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-                with st.expander("🔖 本場各組合 Top4 預測", expanded=False):
+                with st.expander("🔖 本場各組合 Top5 預測", expanded=False):
                     pr = []
                     active_name = st.session_state.get("selected_preset_name", "（手動調整）")
                     active_weights = st.session_state.get("active_weight_map", {})
-                    active_top4 = _predict_top4_for_race(session, selected_race_id, active_weights)
+                    active_top5 = _predict_topk_for_race(session, selected_race_id, active_weights, 5)
                     pr.append(
                         {
                             "組合": f"目前頁面：{active_name}",
-                            "Top1": active_top4[0] if len(active_top4) > 0 else "",
-                            "Top2": active_top4[1] if len(active_top4) > 1 else "",
-                            "Top3": active_top4[2] if len(active_top4) > 2 else "",
-                            "Top4": active_top4[3] if len(active_top4) > 3 else "",
+                            "Top1": active_top5[0] if len(active_top5) > 0 else "",
+                            "Top2": active_top5[1] if len(active_top5) > 1 else "",
+                            "Top3": active_top5[2] if len(active_top5) > 2 else "",
+                            "Top4": active_top5[3] if len(active_top5) > 3 else "",
+                            "Top5": active_top5[4] if len(active_top5) > 4 else "",
                         }
                     )
                     for p in presets:
-                        top4 = _predict_top4_for_race(session, selected_race_id, p.get("weights", {}))
+                        top5 = _predict_topk_for_race(session, selected_race_id, p.get("weights", {}), 5)
                         pr.append(
                             {
                                 "組合": p["name"],
-                                "Top1": top4[0] if len(top4) > 0 else "",
-                                "Top2": top4[1] if len(top4) > 1 else "",
-                                "Top3": top4[2] if len(top4) > 2 else "",
-                                "Top4": top4[3] if len(top4) > 3 else "",
+                                "Top1": top5[0] if len(top5) > 0 else "",
+                                "Top2": top5[1] if len(top5) > 1 else "",
+                                "Top3": top5[2] if len(top5) > 2 else "",
+                                "Top4": top5[3] if len(top5) > 3 else "",
+                                "Top5": top5[4] if len(top5) > 4 else "",
                             }
                         )
                     st.dataframe(pd.DataFrame(pr), use_container_width=True, hide_index=True)
@@ -607,11 +625,17 @@ def main():
             st.markdown(f"""
             - 統計起始：{STATS_START_DATE.date().isoformat()}（之前忽略）
             - 統計窗口：最近 {STATS_WINDOW_DAYS} 天（若起始日更近，則以起始日為準）
-            - 命中定義：以模型 Top4 預測與賽果名次比較：
-              - 獨贏：Top1 命中冠軍
-              - 正Q：Top2 順序完全命中
-              - 三重彩：Top3 順序完全命中
-              - 四重彩：Top4 順序完全命中
+            - 命中定義：以模型 Top5/Top4/Top3/Top2 預測與賽果名次比較：
+              - WIN：預測首2位包含冠軍
+              - P：預測首3位 = 賽果三甲（3隻全中）
+              - Q1：預測首2位包含冠軍 且 預測首3位包含亞軍
+              - PQ：預測首3位命中三甲其中兩隻或以上
+              - T3E：預測首2位包含冠軍 且 預測首4位包含亞軍+季軍
+              - T3：預測首4位包含三甲全部馬匹
+              - F4：預測首2位包含冠軍 且 預測首5位包含2-4名
+              - F4Q：預測首5位包含四甲全部馬匹
+              - B5W：預測首5位包含冠軍
+              - B5P：預測首5位包含三甲全部馬匹
             """)
 
         # 專業排名表格

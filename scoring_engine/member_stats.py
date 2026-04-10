@@ -11,7 +11,13 @@ from database.models import SystemConfig, Race, RaceEntry, RaceResult, ScoringFa
 
 STATS_START_DATE = datetime(2026, 4, 8)
 STATS_WINDOW_DAYS = 720
-CURRENT_POLICY = {"start_date": STATS_START_DATE.date().isoformat(), "window_days": int(STATS_WINDOW_DAYS), "cmp": "date"}
+CURRENT_POLICY = {
+    "start_date": STATS_START_DATE.date().isoformat(),
+    "window_days": int(STATS_WINDOW_DAYS),
+    "cmp": "date",
+    "v": 2,
+    "metrics": ["WIN", "P", "Q1", "PQ", "T3E", "T3", "F4", "F4Q", "B5W", "B5P"],
+}
 
 
 def _cutoff_date(now: Optional[datetime] = None) -> datetime:
@@ -74,7 +80,7 @@ def _list_completed_races(
         .filter(RaceResult.rank != None)
         .filter(func.date(Race.race_date) >= cutoff_s)
         .group_by(Race.id)
-        .having(func.count(RaceResult.id) >= 4)
+        .having(func.count(RaceResult.id) >= 5)
         .order_by(func.date(Race.race_date).asc(), Race.race_no.asc(), Race.id.asc())
     )
 
@@ -120,17 +126,77 @@ def _predict_top4_for_race(session: Session, race_id: int, weight_map: Dict[str,
     return top4
 
 
-def _actual_top4_for_race(session: Session, race_id: int) -> List[int]:
+def _predict_topk_for_race(session: Session, race_id: int, weight_map: Dict[str, float], k: int) -> List[int]:
+    weights = {k2: float(v2) for k2, v2 in (weight_map or {}).items()}
+    if not weights or k <= 0:
+        return []
+
+    entries = session.query(RaceEntry.id, RaceEntry.horse_no).filter_by(race_id=race_id).all()
+    if not entries:
+        return []
+
+    entry_ids = [e[0] for e in entries]
+    entry_id_to_no = {e[0]: int(e[1]) for e in entries}
+    factor_names = list(weights.keys())
+
+    factors = (
+        session.query(ScoringFactor.entry_id, ScoringFactor.factor_name, ScoringFactor.score)
+        .filter(ScoringFactor.entry_id.in_(entry_ids))
+        .filter(ScoringFactor.factor_name.in_(factor_names))
+        .all()
+    )
+
+    totals: Dict[int, float] = {eid: 0.0 for eid in entry_ids}
+    for entry_id, factor_name, score in factors:
+        totals[int(entry_id)] += float(score or 0.0) * float(weights.get(factor_name, 0.0))
+
+    ranked = sorted(totals.items(), key=lambda x: x[1], reverse=True)
+    return [entry_id_to_no[eid] for eid, _ in ranked[:k] if eid in entry_id_to_no]
+
+
+def _actual_topk_for_race(session: Session, race_id: int, k: int) -> List[int]:
     rows = (
         session.query(RaceEntry.horse_no, RaceResult.rank)
         .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
         .filter(RaceEntry.race_id == race_id)
         .filter(RaceResult.rank != None)
         .order_by(RaceResult.rank.asc())
-        .limit(4)
+        .limit(k)
         .all()
     )
     return [int(r[0]) for r in rows]
+
+
+def _calc_hits(pred: List[int], act: List[int]) -> Dict[str, int]:
+    p2 = pred[:2]
+    p3 = pred[:3]
+    p4 = pred[:4]
+    p5 = pred[:5]
+    a1 = act[:1]
+    a2 = act[:2]
+    a3 = act[:3]
+    a4 = act[:4]
+
+    if len(act) < 5 or len(pred) < 5:
+        return {}
+
+    winner = a1[0]
+    runner_up = a2[1]
+    top3 = set(a3)
+    top4 = set(a4)
+
+    return {
+        "win": int(winner in p2),
+        "p": int(set(p3) == top3),
+        "q1": int((winner in p2) and (runner_up in p3)),
+        "pq": int(len(set(p3) & top3) >= 2),
+        "t3e": int((winner in p2) and (a2[1] in p4) and (a3[2] in p4)),
+        "t3": int(set(a3).issubset(set(p4))),
+        "f4": int((winner in p2) and (a2[1] in p5) and (a3[2] in p5) and (a4[3] in p5)),
+        "f4q": int(top4.issubset(set(p5))),
+        "b5w": int(winner in p5),
+        "b5p": int(top3.issubset(set(p5))),
+    }
 
 
 def update_member_preset_stats_incremental(
@@ -156,9 +222,15 @@ def update_member_preset_stats_incremental(
             st = {
                 "races": 0,
                 "win": 0,
-                "qin": 0,
-                "tri": 0,
-                "q4": 0,
+                "p": 0,
+                "q1": 0,
+                "pq": 0,
+                "t3e": 0,
+                "t3": 0,
+                "f4": 0,
+                "f4q": 0,
+                "b5w": 0,
+                "b5p": 0,
                 "last_date": None,
                 "last_race_no": None,
                 "last_race_id": None,
@@ -171,9 +243,15 @@ def update_member_preset_stats_incremental(
                 st = {
                     "races": 0,
                     "win": 0,
-                    "qin": 0,
-                    "tri": 0,
-                    "q4": 0,
+                    "p": 0,
+                    "q1": 0,
+                    "pq": 0,
+                    "t3e": 0,
+                    "t3": 0,
+                    "f4": 0,
+                    "f4q": 0,
+                    "b5w": 0,
+                    "b5p": 0,
                     "last_date": None,
                     "last_race_no": None,
                     "last_race_id": None,
@@ -194,9 +272,15 @@ def update_member_preset_stats_incremental(
         if last_date is not None and last_date < cutoff:
             st["races"] = 0
             st["win"] = 0
-            st["qin"] = 0
-            st["tri"] = 0
-            st["q4"] = 0
+            st["p"] = 0
+            st["q1"] = 0
+            st["pq"] = 0
+            st["t3e"] = 0
+            st["t3"] = 0
+            st["f4"] = 0
+            st["f4q"] = 0
+            st["b5w"] = 0
+            st["b5p"] = 0
             st["last_date"] = None
             st["last_race_no"] = None
             st["last_race_id"] = None
@@ -216,22 +300,15 @@ def update_member_preset_stats_incremental(
 
         processed = 0
         for race in races:
-            act = _actual_top4_for_race(session, race.id)
-            if len(act) < 4:
-                continue
-            pred = _predict_top4_for_race(session, race.id, weights)
-            if len(pred) < 4:
+            act = _actual_topk_for_race(session, race.id, 5)
+            pred = _predict_topk_for_race(session, race.id, weights, 5)
+            hits = _calc_hits(pred, act)
+            if not hits:
                 continue
 
             st["races"] = int(st.get("races") or 0) + 1
-            if pred[0] == act[0]:
-                st["win"] = int(st.get("win") or 0) + 1
-            if pred[:2] == act[:2]:
-                st["qin"] = int(st.get("qin") or 0) + 1
-            if pred[:3] == act[:3]:
-                st["tri"] = int(st.get("tri") or 0) + 1
-            if pred[:4] == act[:4]:
-                st["q4"] = int(st.get("q4") or 0) + 1
+            for k2, v2 in hits.items():
+                st[k2] = int(st.get(k2) or 0) + int(v2)
 
             st["last_date"] = race.race_date.date().isoformat() if hasattr(race.race_date, "date") else str(race.race_date)
             st["last_race_no"] = int(race.race_no or 0)
@@ -265,7 +342,7 @@ def update_all_members_preset_stats_for_race_date(session: Session, race_date_st
         .filter(func.date(Race.race_date) == target_date.isoformat())
         .filter(RaceResult.rank != None)
         .group_by(Race.id)
-        .having(func.count(RaceResult.id) >= 4)
+        .having(func.count(RaceResult.id) >= 5)
         .order_by(Race.race_no.asc(), Race.id.asc())
         .all()
     )
@@ -306,9 +383,15 @@ def update_all_members_preset_stats_for_race_date(session: Session, race_date_st
                 st = {
                     "races": 0,
                     "win": 0,
-                    "qin": 0,
-                    "tri": 0,
-                    "q4": 0,
+                    "p": 0,
+                    "q1": 0,
+                    "pq": 0,
+                    "t3e": 0,
+                    "t3": 0,
+                    "f4": 0,
+                    "f4q": 0,
+                    "b5w": 0,
+                    "b5p": 0,
                     "last_date": None,
                     "last_race_no": None,
                     "last_race_id": None,
@@ -336,22 +419,15 @@ def update_all_members_preset_stats_for_race_date(session: Session, race_date_st
                         if int(race.race_no or 0) == last_race_no and int(race.id) <= last_race_id:
                             continue
 
-                act = _actual_top4_for_race(session, race.id)
-                if len(act) < 4:
-                    continue
-                pred = _predict_top4_for_race(session, race.id, weights)
-                if len(pred) < 4:
+                act = _actual_topk_for_race(session, race.id, 5)
+                pred = _predict_topk_for_race(session, race.id, weights, 5)
+                hits = _calc_hits(pred, act)
+                if not hits:
                     continue
 
                 st["races"] = int(st.get("races") or 0) + 1
-                if pred[0] == act[0]:
-                    st["win"] = int(st.get("win") or 0) + 1
-                if pred[:2] == act[:2]:
-                    st["qin"] = int(st.get("qin") or 0) + 1
-                if pred[:3] == act[:3]:
-                    st["tri"] = int(st.get("tri") or 0) + 1
-                if pred[:4] == act[:4]:
-                    st["q4"] = int(st.get("q4") or 0) + 1
+                for k2, v2 in hits.items():
+                    st[k2] = int(st.get(k2) or 0) + int(v2)
 
                 st["last_date"] = race_d.isoformat() if hasattr(race_d, "isoformat") else str(race_d)
                 st["last_race_no"] = int(race.race_no or 0)
