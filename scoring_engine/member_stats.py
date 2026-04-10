@@ -15,7 +15,7 @@ CURRENT_POLICY = {
     "start_date": STATS_START_DATE.date().isoformat(),
     "window_days": int(STATS_WINDOW_DAYS),
     "cmp": "date",
-    "v": 2,
+    "v": 3,
     "metrics": ["WIN", "P", "Q1", "PQ", "T3E", "T3", "F4", "F4Q", "B5W", "B5P"],
 }
 
@@ -187,7 +187,7 @@ def _calc_hits(pred: List[int], act: List[int]) -> Dict[str, int]:
 
     return {
         "win": int(winner in p2),
-        "p": int(set(p3) == top3),
+        "p": int(len(set(p3) & top3) >= 1),
         "q1": int((winner in p2) and (runner_up in p3)),
         "pq": int(len(set(p3) & top3) >= 2),
         "t3e": int((winner in p2) and (a2[1] in p4) and (a3[2] in p4)),
@@ -195,7 +195,7 @@ def _calc_hits(pred: List[int], act: List[int]) -> Dict[str, int]:
         "f4": int((winner in p2) and (a2[1] in p5) and (a3[2] in p5) and (a4[3] in p5)),
         "f4q": int(top4.issubset(set(p5))),
         "b5w": int(winner in p5),
-        "b5p": int(top3.issubset(set(p5))),
+        "b5p": int(len(set(p5) & top3) >= 1),
     }
 
 
