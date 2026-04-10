@@ -1,5 +1,34 @@
 [phases.setup]
-nixPkgs = ["python311"]
+nixPkgs = [
+    "python311",
+    "glib",
+    "nss",
+    "nspr",
+    "atk",
+    "cairo",
+    "pango",
+    "gdk-pixbuf",
+    "gtk3",
+    "alsa-lib",
+    "cups",
+    "dbus",
+    "libdrm",
+    "mesa",
+    "xorg.libX11",
+    "xorg.libXcomposite",
+    "xorg.libXdamage",
+    "xorg.libXext",
+    "xorg.libXfixes",
+    "xorg.libXrandr",
+    "xorg.libxcb",
+    "xorg.libXi",
+    "xorg.libXtst",
+    "xorg.libxkbcommon",
+    "fontconfig",
+    "freetype",
+    "noto-fonts",
+    "noto-fonts-cjk-sans"
+]
 
 [phases.build]
 cmds = [
