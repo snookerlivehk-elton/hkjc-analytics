@@ -28,6 +28,20 @@ class FactorCalculator:
         except (ValueError, TypeError):
             return default
 
+    def _race_cutoff_dt(self):
+        from datetime import datetime, time
+        from database.models import Race
+
+        race_id = self.df.iloc[0].get("race_id") if "race_id" in self.df.columns else None
+        race_id = self._to_int(race_id, default=0)
+        race = self.session.get(Race, race_id) if race_id else None
+        race_date = getattr(race, "race_date", None) if race else None
+        if isinstance(race_date, datetime):
+            d = race_date.date()
+        else:
+            d = datetime.now().date()
+        return datetime.combine(d, time.min)
+
     def _parse_class_num(self, s: str):
         import re
 
@@ -70,6 +84,7 @@ class FactorCalculator:
         race_date = getattr(race, "race_date", None) if race else None
         if not isinstance(race_date, datetime):
             race_date = datetime.now()
+        cutoff_dt = self._race_cutoff_dt()
 
         cfg = {
             "global_window": 0,
@@ -135,7 +150,7 @@ class FactorCalculator:
             q_global = self.session.query(HorseHistory).filter(
                 HorseHistory.jockey_name == jockey,
                 HorseHistory.trainer_name == trainer
-            ).filter(HorseHistory.race_date < race_date).order_by(HorseHistory.race_date.desc())
+            ).filter(HorseHistory.race_date < cutoff_dt).order_by(HorseHistory.race_date.desc())
             
             if cfg["global_window"] > 0:
                 q_global = q_global.limit(cfg["global_window"])
@@ -166,7 +181,7 @@ class FactorCalculator:
                     HorseHistory.horse_id == int(horse_id),
                     HorseHistory.jockey_name == jockey,
                     HorseHistory.trainer_name == trainer
-                ).filter(HorseHistory.race_date < race_date).order_by(HorseHistory.race_date.desc())
+                ).filter(HorseHistory.race_date < cutoff_dt).order_by(HorseHistory.race_date.desc())
                 
                 if cfg["horse_window"] > 0:
                     q_horse = q_horse.limit(cfg["horse_window"])
@@ -272,6 +287,7 @@ class FactorCalculator:
         race_date = getattr(race, "race_date", None) if race else None
         if not isinstance(race_date, datetime):
             race_date = datetime.now()
+        cutoff_dt = self._race_cutoff_dt()
 
         cfg = {"min_samples": 3, "confidence_runs": 8, "fallback_strategy": "A_B_C", "window_days": 720}
         try:
@@ -320,7 +336,7 @@ class FactorCalculator:
                     HorseHistory.horse_id == horse_id,
                     HorseHistory.distance == distance,
                     HorseHistory.rank > 0,
-                    HorseHistory.race_date < race_date
+                    HorseHistory.race_date < cutoff_dt
                 )
                 .order_by(HorseHistory.race_date.desc())
             )
@@ -428,6 +444,7 @@ class FactorCalculator:
         race_date = getattr(race, "race_date", None) if race else None
         if not isinstance(race_date, datetime):
             race_date = datetime.now()
+        cutoff_dt = self._race_cutoff_dt()
 
         cfg = {
             "window_days": 720,
@@ -501,7 +518,7 @@ class FactorCalculator:
                         HorseHistory.horse_id == horse_id,
                         HorseHistory.distance == distance,
                         HorseHistory.rank > 0,
-                        HorseHistory.race_date < race_date
+                        HorseHistory.race_date < cutoff_dt
                     )
                     .order_by(HorseHistory.race_date.desc())
                 )
@@ -673,6 +690,7 @@ class FactorCalculator:
         race_date = getattr(race, "race_date", None) if race else None
         if not isinstance(race_date, datetime):
             race_date = datetime.now()
+        cutoff_dt = self._race_cutoff_dt()
 
         cfg = {
             "window_days": 365,
@@ -735,7 +753,7 @@ class FactorCalculator:
                             HorseHistory.distance == current_distance,
                             HorseHistory.rank == 1,
                             HorseHistory.rating > 0,
-                            HorseHistory.race_date < race_date
+                            HorseHistory.race_date < cutoff_dt
                         )
                         .order_by(HorseHistory.rating.desc())
                     )
@@ -762,7 +780,7 @@ class FactorCalculator:
                         HorseHistory.distance == current_distance,
                         HorseHistory.rank.in_((1, 2, 3)),
                         HorseHistory.weight > 0,
-                        HorseHistory.race_date < race_date
+                        HorseHistory.race_date < cutoff_dt
                     )
                     .order_by(HorseHistory.race_date.desc())
                 )
@@ -788,7 +806,7 @@ class FactorCalculator:
                             HorseHistory.horse_id == horse_id,
                             HorseHistory.distance == current_distance,
                             HorseHistory.rank > 0,
-                            HorseHistory.race_date < race_date
+                            HorseHistory.race_date < cutoff_dt
                         )
                         .order_by(HorseHistory.race_date.desc())
                     )
@@ -909,6 +927,7 @@ class FactorCalculator:
         race_date = getattr(race, "race_date", None) if race else None
         if not isinstance(race_date, datetime):
             race_date = datetime.now()
+        cutoff_dt = self._race_cutoff_dt()
 
         raw_scores = []
         displays = []
@@ -927,7 +946,7 @@ class FactorCalculator:
                     hist = (
                         self.session.query(HorseHistory.race_class, HorseHistory.race_date)
                         .filter(HorseHistory.horse_id == horse_id)
-                        .filter(HorseHistory.race_date < race_date)
+                        .filter(HorseHistory.race_date < cutoff_dt)
                         .order_by(HorseHistory.race_date.desc())
                         .limit(10)
                         .all()
@@ -1067,6 +1086,7 @@ class FactorCalculator:
         race_date = getattr(race, "race_date", None) if race else None
         if not isinstance(race_date, datetime):
             race_date = datetime.now()
+        cutoff_dt = self._race_cutoff_dt()
         
         # 讀取自訂權重參數 (如果沒有則使用預設值 [6, 5, 4, 3, 2, 1])
         config = self.session.query(SystemConfig).filter_by(key="recent_form_weights").first()
@@ -1080,7 +1100,7 @@ class FactorCalculator:
             history = self.session.query(HorseHistory)\
                 .join(Horse)\
                 .filter(Horse.code == row["horse_code"])\
-                .filter(HorseHistory.race_date < race_date)\
+                .filter(HorseHistory.race_date < cutoff_dt)\
                 .order_by(HorseHistory.race_date.desc())\
                 .limit(6).all()
             
@@ -1178,7 +1198,7 @@ class FactorCalculator:
             else:
                 hist = (
                     self.session.query(HorseHistory.race_date, HorseHistory.rank)
-                    .filter(HorseHistory.horse_id == horse_id, HorseHistory.rank > 0, HorseHistory.race_date < race_date)
+                    .filter(HorseHistory.horse_id == horse_id, HorseHistory.rank > 0, HorseHistory.race_date < cutoff_dt)
                     .order_by(HorseHistory.race_date.asc())
                     .all()
                 )
