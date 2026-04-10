@@ -239,7 +239,7 @@ with tab_ops:
     st.subheader("📊 數據取得狀態")
     session_status = get_session()
     try:
-        from database.models import Race, Horse, Jockey, Trainer, RaceEntry, HorseHistory, ScoringFactor, RaceResult, RaceDividend, OddsHistory, ScoringWeight, SystemConfig
+        from database.models import Race, Horse, Jockey, Trainer, RaceEntry, HorseHistory, ScoringFactor, RaceResult, RaceDividend, OddsHistory, ScoringWeight, SystemConfig, PredictionTop5
 
         status = {
             "賽事": session_status.query(Race).count(),
@@ -247,6 +247,7 @@ with tab_ops:
             "賽果": session_status.query(RaceResult).count(),
             "派彩": session_status.query(RaceDividend).count(),
             "計分": session_status.query(ScoringFactor).count(),
+            "Top5快照": session_status.query(PredictionTop5).count(),
             "馬匹": session_status.query(Horse).count(),
             "往績": session_status.query(HorseHistory).count(),
             "騎師": session_status.query(Jockey).count(),

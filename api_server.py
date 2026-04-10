@@ -41,6 +41,16 @@ def health():
     return {"ok": True}
 
 
+@app.get("/health/db")
+def health_db() -> Dict[str, Any]:
+    session = get_session()
+    try:
+        race_cnt = session.query(PredictionTop5.race_id).count()
+        return {"ok": True, "prediction_top5": int(race_cnt)}
+    finally:
+        session.close()
+
+
 @app.get("/api/v1/top5")
 def top5(
     date_: Optional[str] = Query(default=None, alias="date"),
