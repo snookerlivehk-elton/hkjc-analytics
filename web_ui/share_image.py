@@ -1,6 +1,8 @@
 import asyncio
 import html
 import os
+import subprocess
+import sys
 from typing import List, Dict, Any, Optional
 
 
@@ -29,6 +31,21 @@ async def _html_to_png_bytes_async(html_content: str, width: int = 1080) -> byte
             os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "/app/playwright_browsers"
 
     async with async_playwright() as p:
+        exe = getattr(p.chromium, "executable_path", "") or ""
+        if exe and not os.path.exists(exe):
+            env = os.environ.copy()
+            if env.get("PLAYWRIGHT_BROWSERS_PATH") is None:
+                env["PLAYWRIGHT_BROWSERS_PATH"] = "/app/playwright_browsers"
+            subprocess.run(
+                [sys.executable, "-m", "playwright", "install", "chromium"],
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=300,
+                check=False,
+            )
+
         browser = await p.chromium.launch(args=launch_args)
         page = await browser.new_page(viewport={"width": int(width), "height": 600})
         await page.set_content(html_content, wait_until="load")
