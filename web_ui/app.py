@@ -517,7 +517,12 @@ def main():
     col1.metric("跑道資訊", race.track_type if race.track_type else race.venue)
     col2.metric("班次", race.race_class or "N/A")
     col3.metric("路程", f"{race.distance}m" if race.distance else "N/A")
-    col4.metric("場地狀況", race.going or "未知")
+    going = str(race.going or "").strip()
+    if going in ("草地", "泥地", "全天候", "TURF", "AW", "A/W", "ALL WEATHER", ""):
+        going_display = "N/A"
+    else:
+        going_display = going
+    col4.metric("場地狀況", going_display)
 
     # 數據加載與顯示
     weight_map = st.session_state.get("active_weight_map", {})
@@ -563,23 +568,22 @@ def main():
                             }
                         )
                     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-
-                with st.expander("📌 命中率統計口徑", expanded=False):
-                    st.markdown(f"""
-                    - 統計起始：{STATS_START_DATE.date().isoformat()}（之前忽略）
-                    - 統計窗口：最近 {STATS_WINDOW_DAYS} 天（若起始日更近，則以起始日為準）
-                    - 命中定義：以模型 Top5/Top4/Top3/Top2 預測與賽果名次比較：
-                      - WIN：預測首2位包含冠軍
-                      - P：預測首3位包含三甲中任意一隻
-                      - Q1：預測首2位包含冠軍 且 預測首3位包含亞軍
-                      - PQ：預測首3位命中三甲其中兩隻或以上
-                      - T3E：預測首2位包含冠軍 且 預測首4位包含亞軍+季軍
-                      - T3：預測首4位包含三甲全部馬匹
-                      - F4：預測首2位包含冠軍 且 預測首5位包含2-4名
-                      - F4Q：預測首5位包含四甲全部馬匹
-                      - B5W：預測首5位包含冠軍
-                      - B5P：預測首5位包含三甲中任意一隻
-                    """)
+                    with st.expander("📌 命中率統計口徑", expanded=False):
+                        st.markdown(f"""
+                        - 統計起始：{STATS_START_DATE.date().isoformat()}（之前忽略）
+                        - 統計窗口：最近 {STATS_WINDOW_DAYS} 天（若起始日更近，則以起始日為準）
+                        - 命中定義：以模型 Top5/Top4/Top3/Top2 預測與賽果名次比較：
+                          - WIN：預測首2位包含冠軍
+                          - P：預測首3位包含三甲中任意一隻
+                          - Q1：預測首2位包含冠軍 且 預測首3位包含亞軍
+                          - PQ：預測首3位命中三甲其中兩隻或以上
+                          - T3E：預測首2位包含冠軍 且 預測首4位包含亞軍+季軍
+                          - T3：預測首4位包含三甲全部馬匹
+                          - F4：預測首2位包含冠軍 且 預測首5位包含2-4名
+                          - F4Q：預測首5位包含四甲全部馬匹
+                          - B5W：預測首5位包含冠軍
+                          - B5P：預測首5位包含三甲中任意一隻
+                        """)
 
                 with st.expander("🔖 本場各組合 Top5 預測", expanded=False):
                     pr = []
@@ -641,7 +645,25 @@ def main():
                 else:
                     end_default = available_dates[0]
                     start_default = max(end_default - timedelta(days=30), min(available_dates))
-                    d1, d2 = st.date_input("統計日期範圍", value=(start_default, end_default), key="member_factor_hit_range")
+                    range_key = "member_factor_hit_range"
+                    if range_key not in st.session_state:
+                        st.session_state[range_key] = (start_default, end_default)
+
+                    b1, b2, b3, b4 = st.columns(4)
+                    if b1.button("前30日", use_container_width=True):
+                        st.session_state[range_key] = (max(end_default - timedelta(days=30), min(available_dates)), end_default)
+                        st.rerun()
+                    if b2.button("前60日", use_container_width=True):
+                        st.session_state[range_key] = (max(end_default - timedelta(days=60), min(available_dates)), end_default)
+                        st.rerun()
+                    if b3.button("前180日", use_container_width=True):
+                        st.session_state[range_key] = (max(end_default - timedelta(days=180), min(available_dates)), end_default)
+                        st.rerun()
+                    if b4.button("最長日子", use_container_width=True):
+                        st.session_state[range_key] = (min(available_dates), end_default)
+                        st.rerun()
+
+                    d1, d2 = st.date_input("統計日期範圍", value=st.session_state[range_key], key=range_key)
                     if isinstance(d1, date) and isinstance(d2, date) and d1 > d2:
                         d1, d2 = d2, d1
 

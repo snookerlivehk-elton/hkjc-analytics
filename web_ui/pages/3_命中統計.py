@@ -93,7 +93,25 @@ with tab_factor:
         else:
             end_default = available_dates[0]
             start_default = max(end_default - timedelta(days=30), min(available_dates))
-            d1, d2 = st.date_input("統計日期範圍", value=(start_default, end_default), key="hit_factor_range")
+            range_key = "hit_factor_range"
+            if range_key not in st.session_state:
+                st.session_state[range_key] = (start_default, end_default)
+
+            b1, b2, b3, b4 = st.columns(4)
+            if b1.button("前30日", use_container_width=True):
+                st.session_state[range_key] = (max(end_default - timedelta(days=30), min(available_dates)), end_default)
+                st.rerun()
+            if b2.button("前60日", use_container_width=True):
+                st.session_state[range_key] = (max(end_default - timedelta(days=60), min(available_dates)), end_default)
+                st.rerun()
+            if b3.button("前180日", use_container_width=True):
+                st.session_state[range_key] = (max(end_default - timedelta(days=180), min(available_dates)), end_default)
+                st.rerun()
+            if b4.button("最長日子", use_container_width=True):
+                st.session_state[range_key] = (min(available_dates), end_default)
+                st.rerun()
+
+            d1, d2 = st.date_input("統計日期範圍", value=st.session_state[range_key], key=range_key)
             if isinstance(d1, date) and isinstance(d2, date) and d1 > d2:
                 d1, d2 = d2, d1
 
@@ -270,4 +288,3 @@ with tab_preset:
                     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
     finally:
         session.close()
-
