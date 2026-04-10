@@ -3,6 +3,5 @@ nixPkgs = ["python311"]
 
 [phases.build]
 cmds = [
-    "pip install -r requirements.txt", 
-    "python scripts/init_db.py"
+    "python -m pip install -r requirements.txt"
 ]
