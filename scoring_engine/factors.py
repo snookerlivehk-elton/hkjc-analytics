@@ -1159,6 +1159,7 @@ class FactorCalculator:
         race_date = getattr(race, "race_date", None) if race else None
         if not isinstance(race_date, datetime):
             race_date = datetime.now()
+        cutoff_dt = self._race_cutoff_dt()
 
         cfg = {"rest_days": 90, "win_points": 1.0, "place_points": 0.5}
         try:
