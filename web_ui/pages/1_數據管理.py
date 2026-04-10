@@ -279,7 +279,55 @@ with tab_ops:
         from datetime import datetime, timedelta
         default_date = datetime.now()
         selected_date = st.date_input("選擇要抓取的賽事日期", value=default_date)
+        st.session_state["admin_selected_date"] = selected_date
         
+        st.subheader("⚡ 一鍵完整更新（建議）")
+        if st.button("⚡ 一鍵：抓排位 → 回填馬匹往績 → 重算當日 → 生成Top5快照", use_container_width=True):
+            target_date_str = selected_date.strftime("%Y/%m/%d")
+            ok1 = trigger_scraper(target_date=target_date_str)
+            if not ok1:
+                st.error("❌ 抓取排位/即時數據失敗，已中止後續流程。")
+            else:
+                st.success(f"✅ {target_date_str} 排位/即時數據更新完成。")
+
+                ok2 = trigger_history_backfill(target_date=target_date_str, mode="date")
+                if not ok2:
+                    st.error("❌ 回填馬匹往績失敗，已中止後續流程。")
+                else:
+                    st.success(f"✅ {target_date_str} 馬匹往績回填完成。")
+
+                    session_rescore = get_session()
+                    try:
+                        from database.models import Race
+                        from sqlalchemy import func
+                        races_to_score = (
+                            session_rescore.query(Race)
+                            .filter(func.date(Race.race_date) == selected_date)
+                            .order_by(Race.race_no.asc(), Race.id.asc())
+                            .all()
+                        )
+                        if not races_to_score:
+                            st.warning("⚠️ 找不到該日賽事資料（請先確認排位已成功入庫）。")
+                        else:
+                            engine = ScoringEngine(session_rescore)
+                            progress_bar = st.progress(0)
+                            status_text = st.empty()
+                            for i, race in enumerate(races_to_score):
+                                status_text.text(f"正在重算：第 {race.race_no} 場...")
+                                engine.score_race(race.id)
+                                progress_bar.progress((i + 1) / len(races_to_score))
+                            st.success(f"✅ 已完成 {target_date_str} {len(races_to_score)} 場賽事重新計分。")
+                    except Exception as e:
+                        st.error(f"❌ 重算當日賽事失敗: {e}")
+                    finally:
+                        session_rescore.close()
+
+                    ok4 = trigger_predictions_snapshot(target_date_str)
+                    if ok4:
+                        st.success(f"✅ 已生成 {target_date_str} Top5 預測快照（包含 factor + preset）。")
+                    else:
+                        st.error("❌ 生成 Top5 預測快照失敗。")
+
         if st.button("🔄 開始抓取該日賽事", use_container_width=True):
             target_date_str = selected_date.strftime("%Y/%m/%d")
             if trigger_scraper(target_date=target_date_str):
@@ -312,30 +360,36 @@ with tab_ops:
 
     with col2:
         st.subheader("🚀 批量計分操作")
-        if st.button("🚀 一鍵為當日所有賽事重新計分", use_container_width=True):
+        if st.button("🚀 重算所選日期所有賽事", use_container_width=True):
             session = get_session()
             try:
                 from database.models import Race
-                from datetime import datetime
-                races = session.query(Race).order_by(Race.race_date.desc()).all()
-                
-                if races:
-                    latest_date_val = races[0].race_date
-                    latest_date_only = latest_date_val.date() if hasattr(latest_date_val, 'date') else latest_date_val
-                    races_to_score = [r for r in races if (r.race_date.date() if hasattr(r.race_date, 'date') else r.race_date) == latest_date_only]
-                    
+                from sqlalchemy import func
+
+                sd = st.session_state.get("admin_selected_date")
+                races_to_score = []
+                if sd:
+                    races_to_score = (
+                        session.query(Race)
+                        .filter(func.date(Race.race_date) == sd)
+                        .order_by(Race.race_no.asc(), Race.id.asc())
+                        .all()
+                    )
+
+                if races_to_score:
                     engine = ScoringEngine(session)
                     progress_bar = st.progress(0)
                     status_text = st.empty()
-                    
+
                     for i, race in enumerate(races_to_score):
                         status_text.text(f"正在計算第 {race.race_no} 場賽事分數...")
                         engine.score_race(race.id)
                         progress_bar.progress((i + 1) / len(races_to_score))
-                        
-                    st.success(f"✅ 已成功為 {latest_date_only} 的 {len(races_to_score)} 場賽事完成重新計分！")
+
+                    sd_str = sd.strftime("%Y/%m/%d") if hasattr(sd, "strftime") else str(sd)
+                    st.success(f"✅ 已成功為 {sd_str} 的 {len(races_to_score)} 場賽事完成重新計分！")
                 else:
-                    st.warning("⚠️ 找不到任何賽事資料。")
+                    st.warning("⚠️ 找不到所選日期的賽事資料。")
             except Exception as e:
                 st.error(f"❌ 批量計分失敗: {e}")
             finally:
