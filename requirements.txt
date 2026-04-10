@@ -19,6 +19,10 @@ lxml>=4.9.0
 streamlit>=1.25.0
 plotly>=5.15.0
 
+# API
+fastapi>=0.110.0
+uvicorn>=0.27.0
+
 # Utils
 pyyaml>=6.0
 python-dotenv>=1.0.0
