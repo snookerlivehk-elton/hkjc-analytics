@@ -950,9 +950,91 @@ class FactorCalculator:
 
     # 14. HKJC SpeedPRO 能量分 (SpeedPRO)
     def _calculate_speedpro_energy(self):
-        raw_scores = pd.Series(np.random.rand(len(self.df)), index=self.df.index)
-        display = pd.Series(["無數據"] * len(self.df), index=self.df.index)
-        return raw_scores, display
+        from database.models import Race, SystemConfig
+
+        race_id = self.df.iloc[0].get("race_id") if "race_id" in self.df.columns else None
+        race_id = self._to_int(race_id, default=0)
+        if not race_id:
+            return pd.Series(0.0, index=self.df.index), pd.Series("無數據", index=self.df.index)
+
+        cfg = self.session.query(SystemConfig).filter_by(key=f"speedpro_energy:{race_id}").first()
+        data_map = cfg.value if cfg and isinstance(cfg.value, dict) else {}
+        if not isinstance(data_map, dict) or not data_map:
+            return pd.Series(0.0, index=self.df.index), pd.Series("無數據", index=self.df.index)
+
+        priority_cfg = self.session.query(SystemConfig).filter_by(key="speedpro_energy_sort_priority").first()
+        priority = priority_cfg.value if priority_cfg and isinstance(priority_cfg.value, list) else None
+        if not isinstance(priority, list) or not priority:
+            priority = ["energy_required", "status_rating", "energy_assess"]
+        priority = [str(x) for x in priority if str(x) in {"energy_required", "status_rating", "energy_assess", "energy_diff"}]
+        if not priority:
+            priority = ["energy_required", "status_rating", "energy_assess"]
+        priority = priority[:3]
+
+        def _get_metric(hn: int):
+            v = data_map.get(str(hn))
+            if v is None:
+                v = data_map.get(int(hn)) if isinstance(list(data_map.keys())[0], int) else None
+            return v if isinstance(v, dict) else {}
+
+        def _num(v):
+            try:
+                if v is None:
+                    return None
+                return float(v)
+            except Exception:
+                return None
+
+        def _key_for(hn: int):
+            m = _get_metric(hn)
+            er = _num(m.get("energy_required"))
+            sr = _num(m.get("status_rating"))
+            ea = _num(m.get("energy_assess"))
+            ed = _num(m.get("energy_diff"))
+
+            def asc(x):
+                return x if x is not None else 1e18
+
+            def desc(x):
+                return -(x if x is not None else -1e18)
+
+            out = []
+            for p in priority:
+                if p == "energy_required":
+                    out.append(asc(er))
+                elif p == "status_rating":
+                    out.append(desc(sr))
+                elif p == "energy_assess":
+                    out.append(desc(ea))
+                elif p == "energy_diff":
+                    out.append(asc(ed))
+            out.append(int(hn))
+            return tuple(out)
+
+        horse_nos = [self._to_int(x, default=0) for x in self.df["horse_no"].tolist()] if "horse_no" in self.df.columns else []
+        horse_nos = [hn for hn in horse_nos if hn > 0]
+        sorted_hn = sorted(set(horse_nos), key=_key_for)
+        rank_map = {hn: i + 1 for i, hn in enumerate(sorted_hn)}
+        n_total = len(sorted_hn) if sorted_hn else 0
+
+        raw_scores = []
+        displays = []
+        for _, row in self.df.iterrows():
+            hn = self._to_int(row.get("horse_no"), default=0)
+            m = _get_metric(hn) if hn else {}
+            er = m.get("energy_required")
+            sr = m.get("status_rating")
+            ea = m.get("energy_assess")
+            ed = m.get("energy_diff")
+            rnk = rank_map.get(hn)
+            if not rnk or not n_total:
+                raw_scores.append(0.0)
+                displays.append("無數據")
+            else:
+                raw_scores.append(float(n_total - rnk))
+                displays.append(f"需{er}｜評{sr}｜評估{ea}｜差{ed}｜排{rnk}")
+
+        return pd.Series(raw_scores, index=self.df.index), pd.Series(displays, index=self.df.index)
 
     # 15. 近期狀態 (Recent Form - Last 6 Runs) - 真實邏輯：加權計算過去 6 場的平均名次
     def _calculate_recent_form(self):

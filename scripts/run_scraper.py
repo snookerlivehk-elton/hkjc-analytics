@@ -14,6 +14,7 @@ from database.repository import RacingRepository
 from data_scraper.race_card import RaceCardScraper
 from data_scraper.odds import OddsScraper
 from data_scraper.horse import HorseScraper
+from data_scraper.speedpro_energy import SpeedProEnergyScraper
 from scoring_engine.core import ScoringEngine
 from scoring_engine.prediction_snapshots import generate_prediction_top5_for_race_date
 from utils.logger import logger
@@ -52,6 +53,7 @@ async def run_daily_scraper():
         from data_scraper.special_stats import SpecialStatsScraper
         special_scraper = SpecialStatsScraper()
         draw_stats_by_race = await special_scraper.get_draw_stats(racedate=target_date_str)
+        speedpro_scraper = SpeedProEnergyScraper()
         
         # 將檔位統計儲存到 SystemConfig 以供計分使用
         if draw_stats_by_race:
@@ -115,6 +117,23 @@ async def run_daily_scraper():
             
             session.commit()
             print(f">>> 場次 {race.race_no} 數據同步完成，執行計分中...")
+            try:
+                from database.models import SystemConfig
+
+                sp = speedpro_scraper.scrape(int(race.race_no or 0))
+                if isinstance(sp, dict) and sp:
+                    key = f"speedpro_energy:{int(race.id)}"
+                    cfg = session.query(SystemConfig).filter_by(key=key).first()
+                    if not cfg:
+                        cfg = SystemConfig(key=key, description=f"SpeedPRO 能量分（race_id={int(race.id)}）")
+                        session.add(cfg)
+                    cfg.value = sp
+                    session.commit()
+                    print(f">>> 已同步 SpeedPRO 能量分：race_no={race.race_no} entries={len(sp)}")
+            except Exception as e:
+                print(f">>> [警告] SpeedPRO 能量分同步失敗（race_no={race.race_no}）: {e}")
+                session.rollback()
+
             engine.score_race(race.id)
             
         race_date_str = target_date_str or datetime.now().strftime("%Y/%m/%d")

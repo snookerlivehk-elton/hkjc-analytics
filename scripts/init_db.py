@@ -24,7 +24,7 @@ def populate_default_weights():
         ("gear_change", "配備變化", 0.6, False),
         ("class_performance", "班次表現", 1.0, True),
         ("going_specialty", "場地狀況專長 (Going)", 0.8, False),
-        ("speedpro_energy", "HKJC SpeedPRO 能量分", 1.2, False),
+        ("speedpro_energy", "HKJC SpeedPRO 能量分", 1.2, True),
         ("recent_form", "近期狀態 (Last 6 Runs)", 1.4, True),
         ("vet_rest_days", "獸醫報告／休息天數", 0.5, False),
         ("debut_long_rest", "初出／長休後表現", 0.7, True)

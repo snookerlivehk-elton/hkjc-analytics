@@ -81,11 +81,15 @@ def init_db():
             from scripts.init_db import populate_default_weights
             populate_default_weights()
         else:
-            disabled = ("gear_change", "going_specialty", "morning_trial_perf", "odds_movement", "pace_analysis", "speedpro_energy", "vet_rest_days")
+            disabled = ("gear_change", "going_specialty", "morning_trial_perf", "odds_movement", "pace_analysis", "vet_rest_days")
             session.query(ScoringWeight).filter(ScoringWeight.factor_name.in_(disabled)).update(
                 {ScoringWeight.is_active: False, ScoringWeight.weight: 0.0},
                 synchronize_session=False,
             )
+            sp = session.query(ScoringWeight).filter_by(factor_name="speedpro_energy").first()
+            if sp and (sp.is_active is False) and (float(sp.weight or 0.0) == 0.0):
+                sp.is_active = True
+                sp.weight = 1.2
             session.commit()
     except Exception as e:
         print(f"預填權重失敗: {e}")
