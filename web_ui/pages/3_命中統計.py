@@ -98,7 +98,10 @@ with tab_factor:
                 format_func=lambda x: f"{factor_desc.get(str(x), str(x))} ({x})",
             )
 
-            if share_c3.button("生成分享圖片", use_container_width=True):
+            btn_img = share_c3.button("生成分享圖片", use_container_width=True, key="share_factor_img")
+            btn_text = share_c3.button("生成分享字段", use_container_width=True, key="share_factor_text")
+
+            if btn_img or btn_text:
                 rows = (
                     session.query(PredictionTop5.race_no, PredictionTop5.top5)
                     .filter(PredictionTop5.predictor_type == "factor")
@@ -121,30 +124,68 @@ with tab_factor:
                 if not races:
                     st.info("該賽日未找到此獨立條件的 Top5 快照。")
                 else:
-                    from web_ui.share_image import build_factor_share_html, html_to_png_bytes
-
                     factor_label = factor_desc.get(str(share_factor), str(share_factor))
-                    html_content = build_factor_share_html(
-                        factor_label=factor_label,
-                        factor_code=str(share_factor),
-                        race_day_iso=share_date.isoformat(),
-                        races=races,
-                    )
-                    try:
-                        png = html_to_png_bytes(html_content, width=1080)
-                    except Exception as e:
-                        st.error(f"生成分享圖片失敗：{e}")
-                        png = None
 
-                    if png:
-                        st.image(png, caption=f"{factor_label} | {share_date.isoformat()}", use_container_width=True)
+                    if btn_text:
+                        import json
+
+                        payload = {
+                            "race_date": share_date.isoformat(),
+                            "factor_code": str(share_factor),
+                            "factor_name": factor_label,
+                            "races": races,
+                        }
+                        txt_lines = [
+                            f"獨立條件：{factor_label} ({share_factor})",
+                            f"賽日：{share_date.isoformat()}",
+                        ]
+                        for r in races:
+                            top5_s = ",".join(str(x) for x in (r.get("top5") or [])[:5])
+                            txt_lines.append(f"第{int(r.get('race_no') or 0)}場：{top5_s}")
+                        txt = "\n".join(txt_lines) + "\n"
+
+                        st.code(txt, language="text")
                         st.download_button(
-                            "下載 PNG",
-                            data=png,
-                            file_name=f"factor_top5_{share_factor}_{share_date.isoformat()}.png",
-                            mime="image/png",
+                            "下載 TXT",
+                            data=txt.encode("utf-8"),
+                            file_name=f"factor_top5_{share_factor}_{share_date.isoformat()}.txt",
+                            mime="text/plain",
                             use_container_width=False,
+                            key="share_factor_txt_download",
                         )
+                        st.download_button(
+                            "下載 JSON",
+                            data=json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"),
+                            file_name=f"factor_top5_{share_factor}_{share_date.isoformat()}.json",
+                            mime="application/json",
+                            use_container_width=False,
+                            key="share_factor_json_download",
+                        )
+
+                    if btn_img:
+                        from web_ui.share_image import build_factor_share_html, html_to_png_bytes
+
+                        html_content = build_factor_share_html(
+                            factor_label=factor_label,
+                            factor_code=str(share_factor),
+                            race_day_iso=share_date.isoformat(),
+                            races=races,
+                        )
+                        try:
+                            png = html_to_png_bytes(html_content, width=1080)
+                        except Exception as e:
+                            st.error(f"生成分享圖片失敗：{e}")
+                            png = None
+
+                        if png:
+                            st.image(png, caption=f"{factor_label} | {share_date.isoformat()}", use_container_width=True)
+                            st.download_button(
+                                "下載 PNG",
+                                data=png,
+                                file_name=f"factor_top5_{share_factor}_{share_date.isoformat()}.png",
+                                mime="image/png",
+                                use_container_width=False,
+                            )
 
             end_default = available_dates[0]
             start_default = max(end_default - timedelta(days=30), min(available_dates))
