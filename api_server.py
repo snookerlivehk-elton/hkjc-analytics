@@ -117,3 +117,62 @@ def top5(
     finally:
         session.close()
 
+
+@app.get("/api/v1/like")
+def like(
+    date_: str = Query(..., alias="date"),
+    type_: str = Query(default="all", alias="type", pattern="^(all|factor|preset)$"),
+) -> Dict[str, Any]:
+    d = _parse_date(date_)
+    if not d:
+        return {"code": 1, "message": "date format must be YYYY-MM-DD", "data": None, "count": 0}
+
+    session = get_session()
+    try:
+        q = (
+            session.query(
+                PredictionTop5.race_no,
+                PredictionTop5.predictor_type,
+                PredictionTop5.predictor_key,
+                PredictionTop5.member_email,
+                PredictionTop5.top5,
+                PredictionTop5.meta,
+            )
+            .filter(func.date(PredictionTop5.race_date) == d.isoformat())
+            .order_by(
+                PredictionTop5.predictor_type.asc(),
+                PredictionTop5.member_email.asc(),
+                PredictionTop5.predictor_key.asc(),
+                PredictionTop5.race_no.asc(),
+            )
+        )
+        if type_ != "all":
+            q = q.filter(PredictionTop5.predictor_type == type_)
+
+        groups: Dict[str, Dict[str, Any]] = {}
+        for race_no, predictor_type, predictor_key, member_email, top5, meta in q.all():
+            pt = str(predictor_type)
+            pk = str(predictor_key)
+            me = str(member_email).lower() if member_email else None
+
+            if pt == "preset" and me:
+                code = f"{pk}::{me}"
+            else:
+                code = pk
+
+            m = meta if isinstance(meta, dict) else {}
+            name = m.get("desc") if isinstance(m, dict) and m.get("desc") else pk
+
+            g = groups.get(code)
+            if g is None:
+                g = {"condition_name": name, "condition_code": code, "races": {}}
+                groups[code] = g
+
+            g["races"][str(int(race_no or 0))] = top5 if isinstance(top5, list) else []
+
+        items = list(groups.values())
+        items.sort(key=lambda x: str(x.get("condition_code") or ""))
+
+        return {"code": 0, "message": "查询成功", "data": {"date": d.isoformat(), "items": items}, "count": len(items)}
+    finally:
+        session.close()
