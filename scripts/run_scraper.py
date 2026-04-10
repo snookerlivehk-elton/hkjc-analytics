@@ -15,6 +15,7 @@ from data_scraper.race_card import RaceCardScraper
 from data_scraper.odds import OddsScraper
 from data_scraper.horse import HorseScraper
 from scoring_engine.core import ScoringEngine
+from scoring_engine.prediction_snapshots import generate_prediction_top5_for_race_date
 from utils.logger import logger
 
 async def run_daily_scraper():
@@ -116,6 +117,15 @@ async def run_daily_scraper():
             print(f">>> 場次 {race.race_no} 數據同步完成，執行計分中...")
             engine.score_race(race.id)
             
+        race_date_str = target_date_str or datetime.now().strftime("%Y/%m/%d")
+        try:
+            print(f">>> 正在生成預測 Top5 快照（賽日 {race_date_str}）...")
+            res = generate_prediction_top5_for_race_date(session, race_date_str)
+            print(f">>> 完成：Top5 快照 races={res.get('races')} factor_rows={res.get('factor_rows')} preset_rows={res.get('preset_rows')}")
+        except Exception as e:
+            print(f">>> [警告] 生成 Top5 快照失敗: {e}")
+            session.rollback()
+
         print(">>> 每日抓取與計分流程全部完成！")
         
     except Exception as e:

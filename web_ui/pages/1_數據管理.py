@@ -148,6 +148,28 @@ def trigger_fixture_fetch():
         st.error(f"❌ 系統錯誤: {e}")
         return False
 
+def trigger_predictions_snapshot(target_date: str):
+    st.markdown("### 🧾 Top5 預測快照生成進度")
+    log_placeholder = st.empty()
+    full_log = ""
+    try:
+        env = os.environ.copy()
+        if target_date:
+            env["TARGET_DATE"] = target_date
+        process = subprocess.Popen(
+            ["python3", "scripts/generate_predictions.py"],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, env=env, bufsize=1
+        )
+        for line in iter(process.stdout.readline, ""):
+            full_log += line
+            log_placeholder.code(full_log)
+        process.stdout.close()
+        return process.wait() == 0
+    except Exception as e:
+        st.error(f"❌ 系統錯誤: {e}")
+        return False
+
 def cleanup_removed_factor_data(session):
     try:
         from database.models import ScoringFactor, ScoringWeight, SystemConfig
@@ -170,7 +192,13 @@ if st.button("➡️ 前往獨立條件分析", use_container_width=False):
     except Exception:
         st.markdown("[➡️ 前往獨立條件分析](/%E7%8D%A8%E7%AB%8B%E6%A2%9D%E4%BB%B6%E5%88%86%E6%9E%90)")
 
-tab_ops, tab_members = st.tabs(["🛠️ 系統操作", "👥 會員組合"])
+if st.button("➡️ 前往命中統計總覽", use_container_width=False):
+    try:
+        st.switch_page("pages/3_命中統計.py")
+    except Exception:
+        st.markdown("[➡️ 前往命中統計總覽](/%E5%91%BD%E4%B8%AD%E7%B5%B1%E8%A8%88)")
+
+tab_ops, tab_members, tab_hits = st.tabs(["🛠️ 系統操作", "👥 會員組合", "📈 命中統計"])
 
 with tab_ops:
     st.subheader("👥 會員白名單")
@@ -256,6 +284,12 @@ with tab_ops:
             target_date_str = selected_date.strftime("%Y/%m/%d")
             if trigger_scraper(target_date=target_date_str):
                 st.success(f"✅ {target_date_str} 數據更新成功！")
+
+        st.subheader("🧾 預測快照 (Top5)")
+        if st.button("🧾 生成當日 Top5 預測快照", use_container_width=True):
+            target_date_str = selected_date.strftime("%Y/%m/%d")
+            if trigger_predictions_snapshot(target_date_str):
+                st.success(f"✅ 已生成 {target_date_str} Top5 預測快照！")
 
         st.subheader("🏁 抓取賽果與派彩")
         if st.button("🏁 抓取該日賽果與派彩", use_container_width=True):
@@ -440,3 +474,224 @@ with tab_members:
                         st.info("此組合沒有可用的權重資料。")
     finally:
         session_all.close()
+
+with tab_hits:
+    sub_factor, sub_preset = st.tabs(["📈 獨立條件", "👥 會員儲存組合"])
+
+    with sub_factor:
+        st.subheader("📈 獨立條件命中率統計")
+        from datetime import date, timedelta
+        from sqlalchemy import func
+        from database.models import PredictionTop5, RaceResult, RaceEntry, ScoringWeight
+        from scoring_engine.constants import DISABLED_FACTORS
+
+        session_hit = get_session()
+        try:
+            factors = (
+                session_hit.query(ScoringWeight.factor_name, ScoringWeight.description)
+                .filter(ScoringWeight.is_active == True)
+                .filter(~ScoringWeight.factor_name.in_(DISABLED_FACTORS))
+                .order_by(ScoringWeight.factor_name.asc())
+                .all()
+            )
+            factor_desc = {str(fn): str(desc or fn) for fn, desc in factors}
+            factor_names = list(factor_desc.keys())
+
+            drows = (
+                session_hit.query(func.date(PredictionTop5.race_date))
+                .filter(PredictionTop5.predictor_type == "factor")
+                .distinct()
+                .order_by(func.date(PredictionTop5.race_date).desc())
+                .limit(90)
+                .all()
+            )
+            available_dates = [r[0] for r in drows if r and r[0]]
+            if not available_dates:
+                st.info("目前未有任何獨立條件 Top5 快照。請先抓取排位並生成預測快照。")
+            else:
+                end_default = available_dates[0]
+                start_default = max(end_default - timedelta(days=30), min(available_dates))
+                d1, d2 = st.date_input("統計日期範圍", value=(start_default, end_default))
+                if isinstance(d1, date) and isinstance(d2, date) and d1 > d2:
+                    d1, d2 = d2, d1
+
+                preds = (
+                    session_hit.query(
+                        PredictionTop5.race_id,
+                        PredictionTop5.predictor_key,
+                        PredictionTop5.top5,
+                        PredictionTop5.meta,
+                    )
+                    .filter(PredictionTop5.predictor_type == "factor")
+                    .filter(PredictionTop5.predictor_key.in_(factor_names))
+                    .filter(func.date(PredictionTop5.race_date) >= d1.isoformat())
+                    .filter(func.date(PredictionTop5.race_date) <= d2.isoformat())
+                    .all()
+                )
+                if not preds:
+                    st.info("選定範圍內沒有任何獨立條件 Top5 快照。")
+                else:
+                    from scoring_engine.member_stats import _calc_hits
+
+                    def actual_top5(race_id: int):
+                        rows = (
+                            session_hit.query(RaceEntry.horse_no, RaceResult.rank)
+                            .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
+                            .filter(RaceEntry.race_id == race_id)
+                            .filter(RaceResult.rank != None)
+                            .order_by(RaceResult.rank.asc())
+                            .limit(5)
+                            .all()
+                        )
+                        return [int(r[0]) for r in rows]
+
+                    agg = {
+                        fn: {"races": 0, "win": 0, "p": 0, "q1": 0, "pq": 0, "t3e": 0, "t3": 0, "f4": 0, "f4q": 0, "b5w": 0, "b5p": 0}
+                        for fn in factor_names
+                    }
+                    cache_act = {}
+
+                    for race_id, factor_name, top5, meta in preds:
+                        if not isinstance(top5, list) or len(top5) < 5:
+                            continue
+
+                        hits = None
+                        if isinstance(meta, dict):
+                            h = meta.get("hits")
+                            if isinstance(h, dict):
+                                hits = {str(k).lower(): int(v) for k, v in h.items()}
+
+                        if hits is None:
+                            act = cache_act.get(int(race_id))
+                            if act is None:
+                                act = actual_top5(int(race_id))
+                                cache_act[int(race_id)] = act
+                            if len(act) < 5:
+                                continue
+                            hits = _calc_hits([int(x) for x in top5], act)
+
+                        if not hits:
+                            continue
+
+                        a = agg.get(str(factor_name))
+                        if not a:
+                            continue
+                        a["races"] += 1
+                        for k, v in hits.items():
+                            kk = str(k).lower()
+                            if kk in a:
+                                a[kk] += int(v)
+
+                    rows = []
+                    for fn in factor_names:
+                        a = agg[fn]
+                        n = int(a["races"] or 0)
+                        rows.append(
+                            {
+                                "條件": factor_desc.get(fn, fn),
+                                "代號": fn,
+                                "樣本(場)": n,
+                                "WIN%": round((a["win"] / n * 100.0), 1) if n else 0.0,
+                                "P%": round((a["p"] / n * 100.0), 1) if n else 0.0,
+                                "Q1%": round((a["q1"] / n * 100.0), 1) if n else 0.0,
+                                "PQ%": round((a["pq"] / n * 100.0), 1) if n else 0.0,
+                                "T3E%": round((a["t3e"] / n * 100.0), 1) if n else 0.0,
+                                "T3%": round((a["t3"] / n * 100.0), 1) if n else 0.0,
+                                "F4%": round((a["f4"] / n * 100.0), 1) if n else 0.0,
+                                "F4Q%": round((a["f4q"] / n * 100.0), 1) if n else 0.0,
+                                "B5W%": round((a["b5w"] / n * 100.0), 1) if n else 0.0,
+                                "B5P%": round((a["b5p"] / n * 100.0), 1) if n else 0.0,
+                            }
+                        )
+                    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        finally:
+            session_hit.close()
+
+    with sub_preset:
+        st.subheader("👥 會員儲存組合命中率統計")
+        from datetime import date, timedelta
+        from sqlalchemy import func
+        from database.models import PredictionTop5
+
+        session_p = get_session()
+        try:
+            drows = (
+                session_p.query(func.date(PredictionTop5.race_date))
+                .filter(PredictionTop5.predictor_type == "preset")
+                .distinct()
+                .order_by(func.date(PredictionTop5.race_date).desc())
+                .limit(90)
+                .all()
+            )
+            available_dates = [r[0] for r in drows if r and r[0]]
+            if not available_dates:
+                st.info("目前未有任何會員組合 Top5 快照。請先抓取排位並生成預測快照。")
+            else:
+                end_default = available_dates[0]
+                start_default = max(end_default - timedelta(days=30), min(available_dates))
+                d1, d2 = st.date_input("統計日期範圍", value=(start_default, end_default), key="preset_hit_range")
+                if isinstance(d1, date) and isinstance(d2, date) and d1 > d2:
+                    d1, d2 = d2, d1
+
+                preds = (
+                    session_p.query(
+                        PredictionTop5.member_email,
+                        PredictionTop5.predictor_key,
+                        PredictionTop5.meta,
+                    )
+                    .filter(PredictionTop5.predictor_type == "preset")
+                    .filter(func.date(PredictionTop5.race_date) >= d1.isoformat())
+                    .filter(func.date(PredictionTop5.race_date) <= d2.isoformat())
+                    .all()
+                )
+                if not preds:
+                    st.info("選定範圍內沒有任何會員組合 Top5 快照。")
+                else:
+                    agg = {}
+                    for email, preset_name, meta in preds:
+                        email_k = str(email or "").strip().lower()
+                        preset_k = str(preset_name or "").strip()
+                        if not email_k or not preset_k:
+                            continue
+                        h = None
+                        if isinstance(meta, dict):
+                            h = meta.get("hits")
+                        if not isinstance(h, dict):
+                            continue
+                        key = (email_k, preset_k)
+                        a = agg.get(key)
+                        if a is None:
+                            a = {"races": 0, "win": 0, "p": 0, "q1": 0, "pq": 0, "t3e": 0, "t3": 0, "f4": 0, "f4q": 0, "b5w": 0, "b5p": 0}
+                            agg[key] = a
+                        a["races"] += 1
+                        for mk, mv in h.items():
+                            kk = str(mk).lower()
+                            if kk in a:
+                                a[kk] += int(mv or 0)
+
+                    rows = []
+                    for (email_k, preset_k), a in agg.items():
+                        n = int(a["races"] or 0)
+                        rows.append(
+                            {
+                                "Email": email_k,
+                                "組合": preset_k,
+                                "樣本(場)": n,
+                                "WIN%": round((a["win"] / n * 100.0), 1) if n else 0.0,
+                                "P%": round((a["p"] / n * 100.0), 1) if n else 0.0,
+                                "Q1%": round((a["q1"] / n * 100.0), 1) if n else 0.0,
+                                "PQ%": round((a["pq"] / n * 100.0), 1) if n else 0.0,
+                                "T3E%": round((a["t3e"] / n * 100.0), 1) if n else 0.0,
+                                "T3%": round((a["t3"] / n * 100.0), 1) if n else 0.0,
+                                "F4%": round((a["f4"] / n * 100.0), 1) if n else 0.0,
+                                "F4Q%": round((a["f4q"] / n * 100.0), 1) if n else 0.0,
+                                "B5W%": round((a["b5w"] / n * 100.0), 1) if n else 0.0,
+                                "B5P%": round((a["b5p"] / n * 100.0), 1) if n else 0.0,
+                            }
+                        )
+                    if not rows:
+                        st.info("目前未有任何已結算（已抓賽果）的會員組合命中資料。")
+                    else:
+                        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        finally:
+            session_p.close()

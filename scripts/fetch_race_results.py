@@ -12,6 +12,7 @@ from database.connection import init_db, get_session
 from database.models import Race, RaceEntry, RaceResult, RaceDividend
 from data_scraper.local_results import LocalResultsScraper
 from scoring_engine.member_stats import update_all_members_preset_stats_for_race_date
+from scoring_engine.prediction_snapshots import finalize_prediction_top5_hits_for_race_date
 
 
 def parse_finish_time_to_seconds(s: str):
@@ -122,6 +123,13 @@ def main():
             print(f"會員命中率更新失敗: {res}")
     except Exception as e:
         print(f"會員命中率更新失敗: {e}")
+
+    try:
+        print(f"正在結算 Top5 快照命中（賽日 {target_date}）...")
+        res2 = finalize_prediction_top5_hits_for_race_date(session, target_date)
+        print(f"完成：Top5 命中結算 updated={res2.get('updated')} skipped={res2.get('skipped')} races={res2.get('races')}")
+    except Exception as e:
+        print(f"Top5 命中結算失敗: {e}")
 
 
 if __name__ == "__main__":

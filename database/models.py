@@ -183,6 +183,33 @@ class SystemConfig(Base):
     description = Column(String(200))
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
+
+class PredictionTop5(Base):
+    __tablename__ = "prediction_top5"
+    id = Column(Integer, primary_key=True)
+    race_id = Column(Integer, ForeignKey("races.id"), index=True, nullable=False)
+    race_date = Column(DateTime, index=True, nullable=False)
+    race_no = Column(Integer, nullable=False)
+    predictor_type = Column(String(20), nullable=False)  # factor | preset
+    predictor_key = Column(String(100), nullable=False)  # factor_name | preset_name
+    member_email = Column(String(120), nullable=True)
+    top5 = Column(JSON, nullable=False)
+    meta = Column(JSON)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "race_id",
+            "predictor_type",
+            "predictor_key",
+            "member_email",
+            name="uq_prediction_top5",
+        ),
+    )
+
+    race = relationship("Race")
+
 class HorseHistory(Base):
     """馬匹歷史往績 (簡化版，用於快速計分)"""
     __tablename__ = 'horse_histories'
