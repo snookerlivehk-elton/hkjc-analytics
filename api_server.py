@@ -118,6 +118,7 @@ def top5(
         session.close()
 
 
+@app.get("/api/hkjc/base")
 @app.get("/api/v1/like")
 def like(
     date_: str = Query(..., alias="date"),

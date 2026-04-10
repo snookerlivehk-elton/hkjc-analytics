@@ -531,38 +531,38 @@ def main():
             presets = _get_member_presets(session, member_email)
             if presets:
                 stats_map = update_member_preset_stats_incremental(session, member_email, presets, per_preset_max_new_races=30)
-                st.markdown("### 📌 已儲存權重配置組合")
-                rows = []
-                for p in presets:
-                    stt = stats_map.get(p["name"], {}) if isinstance(stats_map, dict) else {}
-                    races_n = int(stt.get("races") or 0)
-                    win_n = int(stt.get("win") or 0)
-                    p_n = int(stt.get("p") or 0)
-                    q1_n = int(stt.get("q1") or 0)
-                    pq_n = int(stt.get("pq") or 0)
-                    t3e_n = int(stt.get("t3e") or 0)
-                    t3_n = int(stt.get("t3") or 0)
-                    f4_n = int(stt.get("f4") or 0)
-                    f4q_n = int(stt.get("f4q") or 0)
-                    b5w_n = int(stt.get("b5w") or 0)
-                    b5p_n = int(stt.get("b5p") or 0)
-                    rows.append(
-                        {
-                            "組合": p["name"],
-                            "樣本(場)": races_n,
-                            "WIN%": round((win_n / races_n * 100.0), 1) if races_n else 0.0,
-                            "P%": round((p_n / races_n * 100.0), 1) if races_n else 0.0,
-                            "Q1%": round((q1_n / races_n * 100.0), 1) if races_n else 0.0,
-                            "PQ%": round((pq_n / races_n * 100.0), 1) if races_n else 0.0,
-                            "T3E%": round((t3e_n / races_n * 100.0), 1) if races_n else 0.0,
-                            "T3%": round((t3_n / races_n * 100.0), 1) if races_n else 0.0,
-                            "F4%": round((f4_n / races_n * 100.0), 1) if races_n else 0.0,
-                            "F4Q%": round((f4q_n / races_n * 100.0), 1) if races_n else 0.0,
-                            "B5W%": round((b5w_n / races_n * 100.0), 1) if races_n else 0.0,
-                            "B5P%": round((b5p_n / races_n * 100.0), 1) if races_n else 0.0,
-                        }
-                    )
-                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                with st.expander("📌 已儲存權重配置組合", expanded=False):
+                    rows = []
+                    for p in presets:
+                        stt = stats_map.get(p["name"], {}) if isinstance(stats_map, dict) else {}
+                        races_n = int(stt.get("races") or 0)
+                        win_n = int(stt.get("win") or 0)
+                        p_n = int(stt.get("p") or 0)
+                        q1_n = int(stt.get("q1") or 0)
+                        pq_n = int(stt.get("pq") or 0)
+                        t3e_n = int(stt.get("t3e") or 0)
+                        t3_n = int(stt.get("t3") or 0)
+                        f4_n = int(stt.get("f4") or 0)
+                        f4q_n = int(stt.get("f4q") or 0)
+                        b5w_n = int(stt.get("b5w") or 0)
+                        b5p_n = int(stt.get("b5p") or 0)
+                        rows.append(
+                            {
+                                "組合": p["name"],
+                                "樣本(場)": races_n,
+                                "WIN%": round((win_n / races_n * 100.0), 1) if races_n else 0.0,
+                                "P%": round((p_n / races_n * 100.0), 1) if races_n else 0.0,
+                                "Q1%": round((q1_n / races_n * 100.0), 1) if races_n else 0.0,
+                                "PQ%": round((pq_n / races_n * 100.0), 1) if races_n else 0.0,
+                                "T3E%": round((t3e_n / races_n * 100.0), 1) if races_n else 0.0,
+                                "T3%": round((t3_n / races_n * 100.0), 1) if races_n else 0.0,
+                                "F4%": round((f4_n / races_n * 100.0), 1) if races_n else 0.0,
+                                "F4Q%": round((f4q_n / races_n * 100.0), 1) if races_n else 0.0,
+                                "B5W%": round((b5w_n / races_n * 100.0), 1) if races_n else 0.0,
+                                "B5P%": round((b5p_n / races_n * 100.0), 1) if races_n else 0.0,
+                            }
+                        )
+                    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
                 with st.expander("📌 命中率統計口徑", expanded=False):
                     st.markdown(f"""
@@ -610,97 +610,220 @@ def main():
                         )
                     st.dataframe(pd.DataFrame(pr), use_container_width=True, hide_index=True)
 
-        # 專業排名表格
+        if member_email:
+            with st.expander("📈 各獨立條件命中統計", expanded=False):
+                from datetime import date, timedelta
+                from sqlalchemy import func
+                from database.models import PredictionTop5
+                from scoring_engine.member_stats import _calc_hits
+
+                factors = (
+                    session.query(ScoringWeight.factor_name, ScoringWeight.description)
+                    .filter(ScoringWeight.is_active == True)
+                    .filter(~ScoringWeight.factor_name.in_(DISABLED_FACTORS))
+                    .order_by(ScoringWeight.factor_name.asc())
+                    .all()
+                )
+                factor_desc = {str(fn): str(desc or fn) for fn, desc in factors}
+                factor_names = list(factor_desc.keys())
+
+                drows = (
+                    session.query(func.date(PredictionTop5.race_date))
+                    .filter(PredictionTop5.predictor_type == "factor")
+                    .distinct()
+                    .order_by(func.date(PredictionTop5.race_date).desc())
+                    .limit(90)
+                    .all()
+                )
+                available_dates = [r[0] for r in drows if r and r[0]]
+                if not available_dates:
+                    st.info("目前未有任何獨立條件 Top5 快照。")
+                else:
+                    end_default = available_dates[0]
+                    start_default = max(end_default - timedelta(days=30), min(available_dates))
+                    d1, d2 = st.date_input("統計日期範圍", value=(start_default, end_default), key="member_factor_hit_range")
+                    if isinstance(d1, date) and isinstance(d2, date) and d1 > d2:
+                        d1, d2 = d2, d1
+
+                    preds = (
+                        session.query(
+                            PredictionTop5.race_id,
+                            PredictionTop5.predictor_key,
+                            PredictionTop5.top5,
+                            PredictionTop5.meta,
+                        )
+                        .filter(PredictionTop5.predictor_type == "factor")
+                        .filter(PredictionTop5.predictor_key.in_(factor_names))
+                        .filter(func.date(PredictionTop5.race_date) >= d1.isoformat())
+                        .filter(func.date(PredictionTop5.race_date) <= d2.isoformat())
+                        .all()
+                    )
+
+                    if not preds:
+                        st.info("選定範圍內沒有任何獨立條件 Top5 快照。")
+                    else:
+                        def actual_top5(race_id: int):
+                            rows = (
+                                session.query(RaceEntry.horse_no, RaceResult.rank)
+                                .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
+                                .filter(RaceEntry.race_id == race_id)
+                                .filter(RaceResult.rank != None)
+                                .order_by(RaceResult.rank.asc())
+                                .limit(5)
+                                .all()
+                            )
+                            return [int(r[0]) for r in rows]
+
+                        agg = {
+                            fn: {"races": 0, "win": 0, "p": 0, "q1": 0, "pq": 0, "t3e": 0, "t3": 0, "f4": 0, "f4q": 0, "b5w": 0, "b5p": 0}
+                            for fn in factor_names
+                        }
+                        cache_act = {}
+                        for race_id, factor_name, top5, meta in preds:
+                            if not isinstance(top5, list) or len(top5) < 5:
+                                continue
+
+                            hits = None
+                            if isinstance(meta, dict):
+                                h = meta.get("hits")
+                                if isinstance(h, dict):
+                                    hits = {str(k).lower(): int(v) for k, v in h.items()}
+
+                            if hits is None:
+                                act = cache_act.get(int(race_id))
+                                if act is None:
+                                    act = actual_top5(int(race_id))
+                                    cache_act[int(race_id)] = act
+                                if len(act) < 5:
+                                    continue
+                                hits = _calc_hits([int(x) for x in top5], act)
+
+                            if not hits:
+                                continue
+
+                            a = agg.get(str(factor_name))
+                            if not a:
+                                continue
+                            a["races"] += 1
+                            for k, v in hits.items():
+                                kk = str(k).lower()
+                                if kk in a:
+                                    a[kk] += int(v)
+
+                        rows = []
+                        for fn in factor_names:
+                            a = agg[fn]
+                            n = int(a["races"] or 0)
+                            rows.append(
+                                {
+                                    "條件": factor_desc.get(fn, fn),
+                                    "代號": fn,
+                                    "樣本(場)": n,
+                                    "WIN%": round((a["win"] / n * 100.0), 1) if n else 0.0,
+                                    "P%": round((a["p"] / n * 100.0), 1) if n else 0.0,
+                                    "Q1%": round((a["q1"] / n * 100.0), 1) if n else 0.0,
+                                    "PQ%": round((a["pq"] / n * 100.0), 1) if n else 0.0,
+                                    "T3E%": round((a["t3e"] / n * 100.0), 1) if n else 0.0,
+                                    "T3%": round((a["t3"] / n * 100.0), 1) if n else 0.0,
+                                    "F4%": round((a["f4"] / n * 100.0), 1) if n else 0.0,
+                                    "F4Q%": round((a["f4q"] / n * 100.0), 1) if n else 0.0,
+                                    "B5W%": round((a["b5w"] / n * 100.0), 1) if n else 0.0,
+                                    "B5P%": round((a["b5p"] / n * 100.0), 1) if n else 0.0,
+                                }
+                            )
+                        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
         active_name = st.session_state.get("selected_preset_name", "（手動調整）")
-        st.markdown(f"### 🏆 專業排名表（目前權重：{active_name}）")
-        
-        # 定義顯示列與格式化
-        display_cols = ["排名", "馬號", "馬名", "總分", "預估勝率", "建議"]
-        
-        # 根據總分與勝率給出建議
-        def get_recommendation(row):
-            if row["排名"] == 1: return "🔥 首選 (Top Pick)"
-            if row["排名"] == 2: return "🥈 次選 (Second)"
-            if row["排名"] == 3: return "🥉 穩健 (Solid)"
-            if float(row["預估勝率"].strip('%')) > 15: return "💰 價值 (Value)"
-            return "-"
-        
-        df["建議"] = df.apply(get_recommendation, axis=1)
-        
-        # 顏色標記與樣式
-        def style_ranking(row):
-            if row["排名"] == 1: return ['background-color: #ffeb3b'] * len(row)
-            return [''] * len(row)
+        with st.expander(f"🏆 專業排名表（目前權重：{active_name}）", expanded=True):
+            display_cols = ["排名", "馬號", "馬名", "總分", "預估勝率", "建議"]
 
-        res_rows = (
-            session.query(RaceEntry.horse_no, RaceResult.rank)
-            .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
-            .filter(RaceEntry.race_id == selected_race_id)
-            .filter(RaceResult.rank != None)
-            .all()
-        )
-        rank_map = {int(h): int(r) for h, r in res_rows if h is not None and r is not None}
-        df_display = df[display_cols + ["騎師", "練馬師", "檔位", "負磅", "評分"]].copy()
-        df_display.insert(0, "賽果", df_display["馬號"].apply(lambda x: rank_map.get(int(x), "")))
+            def get_recommendation(row):
+                if row["排名"] == 1:
+                    return "🔥 首選 (Top Pick)"
+                if row["排名"] == 2:
+                    return "🥈 次選 (Second)"
+                if row["排名"] == 3:
+                    return "🥉 穩健 (Solid)"
+                if float(row["預估勝率"].strip("%")) > 15:
+                    return "💰 價值 (Value)"
+                return "-"
 
-        st.dataframe(df_display, use_container_width=True, hide_index=True)
+            df["建議"] = df.apply(get_recommendation, axis=1)
 
-        with st.expander("ℹ️ 專業排名表計算邏輯", expanded=False):
-            st.markdown("""
-            - 每個計分條件會先在同一場內獨立標準化成 0–10 分（分數越高越有利）。
-            - 總分 = Σ（條件分數 × 權重）。
-            - 預估勝率：以總分做 softmax 正規化，只作相對參考。
-            """)
-
-        with st.expander("📚 各條件功能說明", expanded=False):
-            weights_list = (
-                session.query(ScoringWeight)
-                .filter(ScoringWeight.is_active == True)
-                .filter(~ScoringWeight.factor_name.in_(DISABLED_FACTORS))
+            res_rows = (
+                session.query(RaceEntry.horse_no, RaceResult.rank)
+                .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
+                .filter(RaceEntry.race_id == selected_race_id)
+                .filter(RaceResult.rank != None)
                 .all()
             )
-            logic = {
-                "jockey_trainer_bond": "計算騎師×練馬師的歷史合作勝/上名率（全庫＋本駒），按可調權重合併，得到原始分後同場標準化。",
-                "horse_time_perf": "以同路程歷史最佳完成時間作速度指標（track_type→草/泥→同程 fallback）；時間越短越好，加入樣本/可信度降權後同場標準化。",
-                "venue_dist_specialty": "以同跑道資訊＋同路程的勝/上名率計分，可選半衰期時間衰減，並加入樣本可信度降權後同場標準化。",
-                "draw_stats": "用當日官方檔位統計（勝率/上名率）計算相對強度後同場標準化。",
-                "weight_rating_perf": "以同程勝仗可贏評分差＋同程上名率（可衰減）合成 raw，再同場標準化。",
-                "class_performance": "現階段以降班訊號為主（例如 3→4/4→5），再同場標準化。",
-                "recent_form": "取最近 6 仗有效名次，按時間權重加權平均後轉為 raw，再同場標準化。",
-                "debut_long_rest": "本場若屬長休復出（可調門檻），回看歷史長休復出賽的勝/入位並疊加加分，再同場標準化。",
-                "morning_trial_perf": "暫以 placeholder 顯示（待晨操/試閘數據入庫後實作）。",
-            }
-            for w in weights_list:
-                st.markdown(f"**{w.description}**")
-                st.markdown(f"- {logic.get(w.factor_name, '（待補充）')}")
+            rank_map = {int(h): int(r) for h, r in res_rows if h is not None and r is not None}
+            df_display = df[display_cols + ["騎師", "練馬師", "檔位", "負磅", "評分"]].copy()
+            df_display.insert(0, "賽果", df_display["馬號"].apply(lambda x: rank_map.get(int(x), "")))
+            st.dataframe(df_display, use_container_width=True, hide_index=True)
+
+            with st.expander("ℹ️ 專業排名表計算邏輯", expanded=False):
+                st.markdown("""
+                - 每個計分條件會先在同一場內獨立標準化成 0–10 分（分數越高越有利）。
+                - 總分 = Σ（條件分數 × 權重）。
+                - 預估勝率：以總分做 softmax 正規化，只作相對參考。
+                """)
+
+            with st.expander("🧠 演算法說明", expanded=False):
+                st.markdown("""
+                - 系統會在每場把多個「獨立條件」轉成分數，並按權重合成總分排序。
+                - 獨立條件（factor）：單一條件各自產生 Top5，用於做「條件本身」準確度統計。
+                - 會員組合（preset）：多條件按會員儲存權重加權後產生 Top5，用於做「組合表現」統計。
+                - Top5 會在排位爬取後生成快照；賽果入庫後會結算命中（WIN/P/Q1/PQ/T3E/T3/F4/F4Q/B5W/B5P）。
+                """)
+
+                with st.expander("📚 各條件計算邏輯", expanded=False):
+                    weights_list = (
+                        session.query(ScoringWeight)
+                        .filter(ScoringWeight.is_active == True)
+                        .filter(~ScoringWeight.factor_name.in_(DISABLED_FACTORS))
+                        .all()
+                    )
+                    logic = {
+                        "jockey_trainer_bond": "計算騎師×練馬師的歷史合作勝/上名率（全庫＋本駒），按可調權重合併，得到原始分後同場標準化。",
+                        "horse_time_perf": "以同路程歷史最佳完成時間作速度指標（track_type→草/泥→同程 fallback）；時間越短越好，加入樣本/可信度降權後同場標準化。",
+                        "venue_dist_specialty": "以同跑道資訊＋同路程的勝/上名率計分，可選半衰期時間衰減，並加入樣本可信度降權後同場標準化。",
+                        "draw_stats": "用當日官方檔位統計（勝率/上名率）計算相對強度後同場標準化。",
+                        "weight_rating_perf": "以同程勝仗可贏評分差＋同程上名率（可衰減）合成 raw，再同場標準化。",
+                        "class_performance": "現階段以降班訊號為主（例如 3→4/4→5），再同場標準化。",
+                        "recent_form": "取最近 6 仗有效名次，按時間權重加權平均後轉為 raw，再同場標準化。",
+                        "debut_long_rest": "本場若屬長休復出（可調門檻），回看歷史長休復出賽的勝/入位並疊加加分，再同場標準化。",
+                    }
+                    for w in weights_list:
+                        st.markdown(f"**{w.description}**")
+                        st.markdown(f"- {logic.get(w.factor_name, '（待補充）')}")
 
         div = session.query(RaceDividend).filter_by(race_id=selected_race_id).first()
         has_div = bool(div and isinstance(div.dividends, list) and div.dividends)
         if rank_map or has_div:
-            st.markdown("---")
-            st.markdown("### 🏁 賽果與派彩")
-            if rank_map:
-                top4 = sorted(rank_map.items(), key=lambda kv: kv[1])[:4]
-                top4_str = " / ".join([f"{rk}名: {hn}" for hn, rk in top4])
-                st.markdown(f"**賽果 Top4**：{top4_str}")
+            with st.expander("🏁 賽果與派彩", expanded=False):
+                if rank_map:
+                    top4 = sorted(rank_map.items(), key=lambda kv: kv[1])[:4]
+                    top4_str = " / ".join([f"{rk}名: {hn}" for hn, rk in top4])
+                    st.markdown(f"**賽果 Top4**：{top4_str}")
 
-            if has_div:
-                meta = div.meta if isinstance(div.meta, dict) else {}
-                going = str(meta.get("going") or "").strip()
-                track = str(meta.get("track") or "").strip()
-                race_time = str(meta.get("race_time") or "").strip()
-                sectional = meta.get("sectional_times") if isinstance(meta.get("sectional_times"), list) else []
-                sectional_str = " / ".join([f"{x:.2f}" for x in sectional if isinstance(x, (int, float))]) if sectional else ""
+                if has_div:
+                    meta = div.meta if isinstance(div.meta, dict) else {}
+                    going = str(meta.get("going") or "").strip()
+                    track = str(meta.get("track") or "").strip()
+                    race_time = str(meta.get("race_time") or "").strip()
+                    sectional = meta.get("sectional_times") if isinstance(meta.get("sectional_times"), list) else []
+                    sectional_str = " / ".join([f"{x:.2f}" for x in sectional if isinstance(x, (int, float))]) if sectional else ""
 
-                m1, m2, m3, m4 = st.columns(4)
-                m1.metric("場地狀況", going or "未知")
-                m2.metric("賽道", track or "未知")
-                m3.metric("全場時間", race_time or "未知")
-                m4.metric("分段時間", sectional_str or "未知")
+                    m1, m2, m3, m4 = st.columns(4)
+                    m1.metric("場地狀況", going or "未知")
+                    m2.metric("賽道", track or "未知")
+                    m3.metric("全場時間", race_time or "未知")
+                    m4.metric("分段時間", sectional_str or "未知")
 
-                render_dividends(div.dividends, key=f"div_{selected_race_id}")
-            else:
-                st.info("本場尚未有派彩資料。")
+                    render_dividends(div.dividends, key=f"div_{selected_race_id}")
+                else:
+                    st.info("本場尚未有派彩資料。")
     session.close()
 
 
