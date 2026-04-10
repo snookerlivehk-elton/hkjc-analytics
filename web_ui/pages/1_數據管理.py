@@ -128,6 +128,26 @@ def trigger_race_results_fetch(target_date: str = None):
         st.error(f"❌ 系統錯誤: {e}")
         return False
 
+def trigger_fixture_fetch():
+    st.markdown("### 📅 賽期表更新進度")
+    log_placeholder = st.empty()
+    full_log = ""
+    try:
+        env = os.environ.copy()
+        process = subprocess.Popen(
+            ["python3", "scripts/fetch_fixture.py"],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, env=env, bufsize=1
+        )
+        for line in iter(process.stdout.readline, ""):
+            full_log += line
+            log_placeholder.code(full_log)
+        process.stdout.close()
+        return process.wait() == 0
+    except Exception as e:
+        st.error(f"❌ 系統錯誤: {e}")
+        return False
+
 def cleanup_removed_factor_data(session):
     try:
         from database.models import ScoringFactor, ScoringWeight, SystemConfig
@@ -221,6 +241,11 @@ with tab_ops:
     col1, col2 = st.columns(2)
 
     with col1:
+        st.subheader("📅 賽期表")
+        if st.button("📅 更新賽期表 (本月+下月)", use_container_width=True):
+            if trigger_fixture_fetch():
+                st.success("✅ 賽期表已更新！")
+
         st.subheader("📡 抓取排位表與即時數據")
         
         from datetime import datetime, timedelta
