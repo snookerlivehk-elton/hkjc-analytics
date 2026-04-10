@@ -811,6 +811,75 @@ else:
                                 st.success(f"參數已儲存：{new_cfg}，並已重新計分。")
                                 st.rerun()
 
+                elif selected_factor == "HKJC SpeedPRO 能量分":
+                    st.markdown("---")
+                    st.markdown("### 💡 演算法說明：HKJC SpeedPRO 能量分")
+                    st.markdown("""
+                    這個條件用於根據 HKJC「速勢能量表」評估馬匹在本場的能量匹配與狀態。
+                    
+                    - **資料來源**：`/local/info/speedpro/speedguide?raceno=X`（通常於排位日當晚公佈）。
+                    - **擷取欄位**：
+                      - 能量所需
+                      - 狀態評級
+                      - 速勢能量評估
+                      - 速勢能量評估差值 = 能量所需 - 速勢能量評估
+                    - **排序規則**：依「第1優先 → 第2優先 → 第3優先」進行多重排序（同值再以馬號作 tie-break）。
+                      - 能量所需：越低越好
+                      - 狀態評級：越高越好
+                      - 速勢能量評估：越高越好
+                      - 差值：越低越好（代表評估越高/越有利）
+                    - **最後調整**：排序結果會轉成原始分，再於同場內標準化成 0–10 分。
+                    """)
+
+                    with st.expander("⚙️ 參數調整：3 項排序優先（調整後將即時儲存並重算）", expanded=True):
+                        from database.models import SystemConfig
+
+                        options = {
+                            "能量所需": "energy_required",
+                            "狀態評級": "status_rating",
+                            "速勢能量評估": "energy_assess",
+                            "速勢能量評估差值": "energy_diff",
+                            "（不使用）": "",
+                        }
+                        reverse_options = {v: k for k, v in options.items()}
+
+                        config = session.query(SystemConfig).filter_by(key="speedpro_energy_sort_priority").first()
+                        cur = config.value if config and isinstance(config.value, list) else None
+                        if not isinstance(cur, list) or not cur:
+                            cur = ["energy_required", "status_rating", "energy_assess"]
+                        cur = [str(x) for x in cur][:3]
+                        while len(cur) < 3:
+                            cur.append("")
+
+                        def _idx(v):
+                            lab = reverse_options.get(str(v), "（不使用）")
+                            return list(options.keys()).index(lab)
+
+                        with st.form("speedpro_energy_sort_priority_form"):
+                            c1, c2, c3 = st.columns(3)
+                            p1 = c1.selectbox("第1優先", list(options.keys())[:-1], index=min(_idx(cur[0]), len(list(options.keys())[:-1]) - 1))
+                            p2 = c2.selectbox("第2優先", list(options.keys()), index=_idx(cur[1]))
+                            p3 = c3.selectbox("第3優先", list(options.keys()), index=_idx(cur[2]))
+
+                            submitted = st.form_submit_button("💾 儲存參數並為本場重新計分", type="primary")
+                            if submitted:
+                                vals = [options.get(p1, "energy_required"), options.get(p2, ""), options.get(p3, "")]
+                                vals = [v for v in vals if v]
+                                if len(vals) != len(set(vals)):
+                                    st.error("❌ 排序優先不可重複，請重新選擇。")
+                                else:
+                                    if not config:
+                                        config = SystemConfig(key="speedpro_energy_sort_priority", description="SpeedPRO 能量分：排序優先 (最多 3 項)")
+                                        session.add(config)
+                                    config.value = vals
+                                    session.commit()
+
+                                    from scoring_engine.core import ScoringEngine
+                                    engine = ScoringEngine(session)
+                                    engine.score_race(selected_race_id)
+                                    st.success(f"參數已儲存：{vals}，並已重新計分。")
+                                    st.rerun()
+
                 elif selected_factor == "檔位偏差 (官方 Draw Statistics)":
                     st.markdown("---")
                     st.markdown("### 💡 演算法說明：檔位偏差 (官方 Draw Statistics)")
