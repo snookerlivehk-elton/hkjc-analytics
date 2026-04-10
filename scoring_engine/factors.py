@@ -1007,7 +1007,7 @@ class FactorCalculator:
                 elif p == "energy_assess":
                     out.append(desc(ea))
                 elif p == "energy_diff":
-                    out.append(asc(ed))
+                    out.append(desc(ed))
             out.append(int(hn))
             return tuple(out)
 

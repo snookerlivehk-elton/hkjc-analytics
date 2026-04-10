@@ -13,6 +13,7 @@ from database.connection import get_session, init_db
 from database.models import PredictionTop5, RaceEntry, RaceResult, ScoringWeight
 from scoring_engine.constants import DISABLED_FACTORS
 from scoring_engine.prediction_snapshots import finalize_prediction_top5_hits_for_race_date
+from web_ui.auth import require_superadmin
 
 st.set_page_config(page_title="命中統計 - HKJC Analytics", layout="wide")
 
@@ -37,16 +38,7 @@ st.markdown(
 
 init_db()
 
-if not st.session_state.get("is_superadmin", False):
-    st.title("📈 命中統計總覽")
-    st.error("❌ 此頁面目前僅限 Superadmin 使用。請先到「數據管理後台」登入。")
-    st.stop()
-
-if st.button("➡️ 返回數據管理後台", use_container_width=False):
-    try:
-        st.switch_page("pages/1_數據管理.py")
-    except Exception:
-        st.markdown("[➡️ 返回數據管理後台](/%E6%95%B8%E6%93%9A%E7%AE%A1%E7%90%86)")
+require_superadmin("📈 命中統計總覽")
 
 st.title("📈 命中統計總覽")
 
