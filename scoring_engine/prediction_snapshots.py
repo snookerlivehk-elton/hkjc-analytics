@@ -176,16 +176,7 @@ def generate_prediction_top5_for_race_date(session: Session, target_date_str: st
                 row.race_date = race.race_date
                 row.race_no = int(race.race_no or 0)
                 row.top5 = top5
-                old = row.meta if isinstance(row.meta, dict) else {}
-                keep = {}
-                if isinstance(old, dict):
-                    if isinstance(old.get("hits"), dict):
-                        keep["hits"] = old.get("hits")
-                    if isinstance(old.get("actual_top5"), list):
-                        keep["actual_top5"] = old.get("actual_top5")
-                    if isinstance(old.get("results_at"), str):
-                        keep["results_at"] = old.get("results_at")
-                row.meta = {**keep, **meta}
+                row.meta = meta
 
         for email, preset_name, weights in presets:
             top5 = _topk_by_weights(entry_ids, entry_id_to_no, score_map, weights, 5)
@@ -212,16 +203,7 @@ def generate_prediction_top5_for_race_date(session: Session, target_date_str: st
                 row.race_no = int(race.race_no or 0)
                 row.member_email = email_k
                 row.top5 = top5
-                old = row.meta if isinstance(row.meta, dict) else {}
-                keep = {}
-                if isinstance(old, dict):
-                    if isinstance(old.get("hits"), dict):
-                        keep["hits"] = old.get("hits")
-                    if isinstance(old.get("actual_top5"), list):
-                        keep["actual_top5"] = old.get("actual_top5")
-                    if isinstance(old.get("results_at"), str):
-                        keep["results_at"] = old.get("results_at")
-                row.meta = {**keep, **meta}
+                row.meta = meta
 
     session.commit()
     return {"races": len(race_ids), "factor_rows": factor_rows, "preset_rows": preset_rows}
