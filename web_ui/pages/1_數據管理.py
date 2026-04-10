@@ -270,6 +270,7 @@ with tab_ops:
 
     with col1:
         st.subheader("📅 賽期表")
+        st.caption("用途：更新「本月＋下月」有賽事的日期清單，供系統決定下一賽日與排程目標。若已設定 fixture cron（每日 HK 06:00），通常不需手動按。")
         if st.button("📅 更新賽期表 (本月+下月)", use_container_width=True):
             if trigger_fixture_fetch():
                 st.success("✅ 賽期表已更新！")
@@ -280,8 +281,31 @@ with tab_ops:
         default_date = datetime.now()
         selected_date = st.date_input("選擇要抓取的賽事日期", value=default_date)
         st.session_state["admin_selected_date"] = selected_date
+
+        session_meta = get_session()
+        try:
+            from database.models import SystemConfig
+
+            fx_updated = session_meta.query(SystemConfig).filter_by(key="fixture_dates_updated_at").first()
+            fx_next = session_meta.query(SystemConfig).filter_by(key="fixture_next_raceday").first()
+            rr_last = session_meta.query(SystemConfig).filter(SystemConfig.key.like("auto_results_fetched:%")).order_by(SystemConfig.key.desc()).first()
+            fx_updated_s = str(fx_updated.value) if fx_updated else ""
+            fx_next_s = str(fx_next.value) if fx_next else ""
+            rr_last_s = rr_last.key.split(":", 1)[1] if rr_last and ":" in rr_last.key else ""
+            meta_lines = []
+            if fx_next_s:
+                meta_lines.append(f"下一賽日：{fx_next_s}")
+            if fx_updated_s:
+                meta_lines.append(f"賽期表最後更新：{fx_updated_s}")
+            if rr_last_s:
+                meta_lines.append(f"賽果 cron 最後自動抓取：{rr_last_s}")
+            if meta_lines:
+                st.caption("｜".join(meta_lines))
+        finally:
+            session_meta.close()
         
         st.subheader("⚡ 一鍵完整更新（建議）")
+        st.caption("會依序完成：抓排位 → 回填該日涉及馬匹往績 → 重算該日所有場次 → 生成 Top5 快照（factor + preset）。每一步會等待上一個完成。")
         if st.button("⚡ 一鍵：抓排位 → 回填馬匹往績 → 重算當日 → 生成Top5快照", use_container_width=True):
             target_date_str = selected_date.strftime("%Y/%m/%d")
             ok1 = trigger_scraper(target_date=target_date_str)
@@ -328,24 +352,28 @@ with tab_ops:
                     else:
                         st.error("❌ 生成 Top5 預測快照失敗。")
 
+        st.caption("只做「抓排位/即時數據 + 計分（不包含回填往績/重算）」；如要產生更完整的條件結果與 Top5 快照，建議使用上方「一鍵完整更新」。")
         if st.button("🔄 開始抓取該日賽事", use_container_width=True):
             target_date_str = selected_date.strftime("%Y/%m/%d")
             if trigger_scraper(target_date=target_date_str):
                 st.success(f"✅ {target_date_str} 數據更新成功！")
 
         st.subheader("🧾 預測快照 (Top5)")
+        st.caption("只生成 Top5 快照（落庫 PredictionTop5）。需要先完成該日計分/重算，否則快照會反映不完整數據。")
         if st.button("🧾 生成當日 Top5 預測快照", use_container_width=True):
             target_date_str = selected_date.strftime("%Y/%m/%d")
             if trigger_predictions_snapshot(target_date_str):
                 st.success(f"✅ 已生成 {target_date_str} Top5 預測快照！")
 
         st.subheader("🏁 抓取賽果與派彩")
+        st.caption("抓取賽果/派彩入庫後，會自動結算：會員組合命中率 + Top5 快照命中（回寫 hits/actual_top5）。若已設定賽果 cron（每日 HK 23:55）通常不需手動按。")
         if st.button("🏁 抓取該日賽果與派彩", use_container_width=True):
             target_date_str = selected_date.strftime("%Y/%m/%d")
             if trigger_race_results_fetch(target_date=target_date_str):
                 st.success(f"✅ 已完成 {target_date_str} 賽果與派彩同步！")
 
         st.subheader("📚 歷史回填")
+        st.caption("回填馬匹往績（HorseHistory），供部分條件計分使用。更新排位後、重算前先回填，結果較完整。")
         col_h1, col_h2 = st.columns(2)
         with col_h1:
             if st.button("📚 回填所選日期馬匹往績", use_container_width=True):
@@ -360,6 +388,7 @@ with tab_ops:
 
     with col2:
         st.subheader("🚀 批量計分操作")
+        st.caption("只做「重算所選日期」所有場次（不包含回填/快照）。適合你已完成回填但想再重算一次。")
         if st.button("🚀 重算所選日期所有賽事", use_container_width=True):
             session = get_session()
             try:
@@ -396,6 +425,7 @@ with tab_ops:
                 session.close()
 
         st.subheader("🧹 系統清理")
+        st.caption("僅清理已移除因子的舊資料（不影響賽事/馬匹/往績）。一般情況毋須操作。")
         with st.expander("清理已移除因子舊記錄", expanded=False):
             st.markdown("此操作只會刪除已移除因子在資料庫中的舊計分結果與設定，不會影響賽事、馬匹、往績等核心數據。")
             confirm = st.checkbox("我明白此操作會刪除舊因子資料", value=False)
@@ -406,6 +436,7 @@ with tab_ops:
                 st.success(f"✅ 已刪除舊記錄：ScoringFactor {deleted_sf} 筆、ScoringWeight {deleted_sw} 筆、SystemConfig {deleted_cfg} 筆")
 
         st.subheader("🔌 系統測試與升級")
+        st.caption("用於排查連線/結構問題。一般日常不用操作。")
         if st.button("🔌 測試資料庫連線", use_container_width=True):
             session = get_session()
             try:
