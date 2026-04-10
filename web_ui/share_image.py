@@ -25,6 +25,8 @@ async def _html_to_png_bytes_async(html_content: str, width: int = 1080) -> byte
     launch_args = []
     if os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RENDER") or os.getenv("DYNO"):
         launch_args = ["--no-sandbox"]
+        if not os.getenv("PLAYWRIGHT_BROWSERS_PATH"):
+            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "/app/playwright_browsers"
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(args=launch_args)
