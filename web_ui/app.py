@@ -360,14 +360,15 @@ def main():
     if "selected_race_no" not in st.session_state or st.session_state.selected_race_no not in race_no_options:
         st.session_state.selected_race_no = race_no_options[0]
 
-    selected_race_no = st.sidebar.selectbox(
-        "場次",
-        race_no_options,
-        index=race_no_options.index(st.session_state.selected_race_no),
-        label_visibility="collapsed",
-    )
-    st.session_state.selected_race_no = selected_race_no
-    selected_race_id = race_no_to_id[selected_race_no]
+    cols = st.sidebar.columns(min(6, max(1, len(race_no_options))))
+    for i, rn in enumerate(race_no_options):
+        col = cols[i % len(cols)]
+        label = f"{rn}"
+        if col.button(label, key=f"race_btn_{selected_date_str}_{rn}", use_container_width=True):
+            st.session_state.selected_race_no = rn
+            st.rerun()
+
+    selected_race_id = race_no_to_id[st.session_state.selected_race_no]
 
     # Sidebar: 權重動態調整 (可折疊)
     with st.sidebar.expander("⚙️ 權重配置 (動態調整)"):
@@ -563,6 +564,23 @@ def main():
                     )
                 st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
+                with st.expander("📌 命中率統計口徑", expanded=False):
+                    st.markdown(f"""
+                    - 統計起始：{STATS_START_DATE.date().isoformat()}（之前忽略）
+                    - 統計窗口：最近 {STATS_WINDOW_DAYS} 天（若起始日更近，則以起始日為準）
+                    - 命中定義：以模型 Top5/Top4/Top3/Top2 預測與賽果名次比較：
+                      - WIN：預測首2位包含冠軍
+                      - P：預測首3位包含三甲中任意一隻
+                      - Q1：預測首2位包含冠軍 且 預測首3位包含亞軍
+                      - PQ：預測首3位命中三甲其中兩隻或以上
+                      - T3E：預測首2位包含冠軍 且 預測首4位包含亞軍+季軍
+                      - T3：預測首4位包含三甲全部馬匹
+                      - F4：預測首2位包含冠軍 且 預測首5位包含2-4名
+                      - F4Q：預測首5位包含四甲全部馬匹
+                      - B5W：預測首5位包含冠軍
+                      - B5P：預測首5位包含三甲中任意一隻
+                    """)
+
                 with st.expander("🔖 本場各組合 Top5 預測", expanded=False):
                     pr = []
                     active_name = st.session_state.get("selected_preset_name", "（手動調整）")
@@ -591,52 +609,6 @@ def main():
                             }
                         )
                     st.dataframe(pd.DataFrame(pr), use_container_width=True, hide_index=True)
-
-        with st.expander("ℹ️ 專業排名表計算邏輯", expanded=False):
-            st.markdown("""
-            - 每個計分條件會先在同一場內獨立標準化成 0–10 分（分數越高越有利）。
-            - 總分 = Σ（條件分數 × 權重）。
-            - 預估勝率：以總分做 softmax 正規化，只作相對參考。
-            """)
-
-        with st.expander("📚 各條件功能說明", expanded=False):
-            weights_list = (
-                session.query(ScoringWeight)
-                .filter(ScoringWeight.is_active == True)
-                .filter(~ScoringWeight.factor_name.in_(DISABLED_FACTORS))
-                .all()
-            )
-            logic = {
-                "jockey_trainer_bond": "計算騎師×練馬師的歷史合作勝/上名率（全庫＋本駒），按可調權重合併，得到原始分後同場標準化。",
-                "horse_time_perf": "以同路程歷史最佳完成時間作速度指標（track_type→草/泥→同程 fallback）；時間越短越好，加入樣本/可信度降權後同場標準化。",
-                "venue_dist_specialty": "以同跑道資訊＋同路程的勝/上名率計分，可選半衰期時間衰減，並加入樣本可信度降權後同場標準化。",
-                "draw_stats": "用當日官方檔位統計（勝率/上名率）計算相對強度後同場標準化。",
-                "weight_rating_perf": "以同程勝仗可贏評分差＋同程上名率（可衰減）合成 raw，再同場標準化。",
-                "class_performance": "現階段以降班訊號為主（例如 3→4/4→5），再同場標準化。",
-                "recent_form": "取最近 6 仗有效名次，按時間權重加權平均後轉為 raw，再同場標準化。",
-                "debut_long_rest": "本場若屬長休復出（可調門檻），回看歷史長休復出賽的勝/入位並疊加加分，再同場標準化。",
-                "morning_trial_perf": "暫以 placeholder 顯示（待晨操/試閘數據入庫後實作）。",
-            }
-            for w in weights_list:
-                st.markdown(f"**{w.description}**")
-                st.markdown(f"- {logic.get(w.factor_name, '（待補充）')}")
-
-        with st.expander("📌 命中率統計口徑", expanded=False):
-            st.markdown(f"""
-            - 統計起始：{STATS_START_DATE.date().isoformat()}（之前忽略）
-            - 統計窗口：最近 {STATS_WINDOW_DAYS} 天（若起始日更近，則以起始日為準）
-            - 命中定義：以模型 Top5/Top4/Top3/Top2 預測與賽果名次比較：
-              - WIN：預測首2位包含冠軍
-              - P：預測首3位包含三甲中任意一隻
-              - Q1：預測首2位包含冠軍 且 預測首3位包含亞軍
-              - PQ：預測首3位命中三甲其中兩隻或以上
-              - T3E：預測首2位包含冠軍 且 預測首4位包含亞軍+季軍
-              - T3：預測首4位包含三甲全部馬匹
-              - F4：預測首2位包含冠軍 且 預測首5位包含2-4名
-              - F4Q：預測首5位包含四甲全部馬匹
-              - B5W：預測首5位包含冠軍
-              - B5P：預測首5位包含三甲中任意一隻
-            """)
 
         # 專業排名表格
         active_name = st.session_state.get("selected_preset_name", "（手動調整）")
@@ -672,6 +644,35 @@ def main():
         df_display.insert(0, "賽果", df_display["馬號"].apply(lambda x: rank_map.get(int(x), "")))
 
         st.dataframe(df_display, use_container_width=True, hide_index=True)
+
+        with st.expander("ℹ️ 專業排名表計算邏輯", expanded=False):
+            st.markdown("""
+            - 每個計分條件會先在同一場內獨立標準化成 0–10 分（分數越高越有利）。
+            - 總分 = Σ（條件分數 × 權重）。
+            - 預估勝率：以總分做 softmax 正規化，只作相對參考。
+            """)
+
+        with st.expander("📚 各條件功能說明", expanded=False):
+            weights_list = (
+                session.query(ScoringWeight)
+                .filter(ScoringWeight.is_active == True)
+                .filter(~ScoringWeight.factor_name.in_(DISABLED_FACTORS))
+                .all()
+            )
+            logic = {
+                "jockey_trainer_bond": "計算騎師×練馬師的歷史合作勝/上名率（全庫＋本駒），按可調權重合併，得到原始分後同場標準化。",
+                "horse_time_perf": "以同路程歷史最佳完成時間作速度指標（track_type→草/泥→同程 fallback）；時間越短越好，加入樣本/可信度降權後同場標準化。",
+                "venue_dist_specialty": "以同跑道資訊＋同路程的勝/上名率計分，可選半衰期時間衰減，並加入樣本可信度降權後同場標準化。",
+                "draw_stats": "用當日官方檔位統計（勝率/上名率）計算相對強度後同場標準化。",
+                "weight_rating_perf": "以同程勝仗可贏評分差＋同程上名率（可衰減）合成 raw，再同場標準化。",
+                "class_performance": "現階段以降班訊號為主（例如 3→4/4→5），再同場標準化。",
+                "recent_form": "取最近 6 仗有效名次，按時間權重加權平均後轉為 raw，再同場標準化。",
+                "debut_long_rest": "本場若屬長休復出（可調門檻），回看歷史長休復出賽的勝/入位並疊加加分，再同場標準化。",
+                "morning_trial_perf": "暫以 placeholder 顯示（待晨操/試閘數據入庫後實作）。",
+            }
+            for w in weights_list:
+                st.markdown(f"**{w.description}**")
+                st.markdown(f"- {logic.get(w.factor_name, '（待補充）')}")
 
         div = session.query(RaceDividend).filter_by(race_id=selected_race_id).first()
         has_div = bool(div and isinstance(div.dividends, list) and div.dividends)
