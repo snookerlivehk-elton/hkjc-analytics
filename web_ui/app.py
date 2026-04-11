@@ -585,6 +585,107 @@ def main():
                           - B5P：預測首5位包含三甲中任意一隻
                         """)
 
+                    st.markdown("### 🧾 分享字段（會員組合 Top5）")
+                    from sqlalchemy import func
+                    from database.models import PredictionTop5
+                    import json
+
+                    drows = (
+                        session.query(func.date(PredictionTop5.race_date))
+                        .filter(PredictionTop5.predictor_type == "preset")
+                        .filter(PredictionTop5.member_email == str(member_email).strip().lower())
+                        .distinct()
+                        .order_by(func.date(PredictionTop5.race_date).desc())
+                        .limit(180)
+                        .all()
+                    )
+                    available_dates = [r[0] for r in drows if r and r[0]]
+                    preset_names = [str(p.get("name", "")).strip() for p in (presets or []) if str(p.get("name", "")).strip()]
+
+                    if not available_dates:
+                        st.info("目前未有任何會員組合 Top5 快照可供分享。")
+                    elif not preset_names:
+                        st.info("未找到任何已儲存權重組合。")
+                    else:
+                        c1, c2, c3 = st.columns([2, 4, 2])
+                        share_date = c1.selectbox(
+                            "賽日",
+                            available_dates,
+                            index=0,
+                            format_func=lambda x: x.isoformat() if hasattr(x, "isoformat") else str(x),
+                            key="member_preset_share_date",
+                        )
+                        share_preset = c2.selectbox(
+                            "組合名稱",
+                            preset_names,
+                            index=0,
+                            key="member_preset_share_name",
+                        )
+
+                        if c3.button("生成分享字段", use_container_width=True, key="member_preset_share_btn"):
+                            rows2 = (
+                                session.query(PredictionTop5.race_no, PredictionTop5.top5)
+                                .filter(PredictionTop5.predictor_type == "preset")
+                                .filter(PredictionTop5.member_email == str(member_email).strip().lower())
+                                .filter(PredictionTop5.predictor_key == str(share_preset))
+                                .filter(func.date(PredictionTop5.race_date) == share_date.isoformat())
+                                .order_by(PredictionTop5.race_no.asc())
+                                .all()
+                            )
+                            races = []
+                            for rn, top5 in rows2:
+                                races.append(
+                                    {
+                                        "race_no": int(rn or 0),
+                                        "top5": [int(x) for x in (top5 or []) if str(x).strip().isdigit()],
+                                    }
+                                )
+                            races.sort(key=lambda x: x["race_no"])
+
+                            if not races:
+                                st.info("該賽日未找到此會員組合的 Top5 快照。")
+                            else:
+                                preset_weights = None
+                                for p in presets:
+                                    if str(p.get("name", "")).strip() == str(share_preset):
+                                        preset_weights = p.get("weights")
+                                        break
+
+                                payload = {
+                                    "race_date": share_date.isoformat(),
+                                    "member_email": str(member_email).strip().lower(),
+                                    "preset_name": str(share_preset),
+                                    "preset_weights": preset_weights,
+                                    "races": races,
+                                }
+                                txt_lines = [
+                                    f"會員：{str(member_email).strip().lower()}",
+                                    f"組合：{share_preset}",
+                                    f"賽日：{share_date.isoformat()}",
+                                ]
+                                for r in races:
+                                    top5_s = ",".join(str(x) for x in (r.get("top5") or [])[:5])
+                                    txt_lines.append(f"第{int(r.get('race_no') or 0)}場：{top5_s}")
+                                txt = "\n".join(txt_lines) + "\n"
+
+                                st.code(txt, language="text")
+                                st.download_button(
+                                    "下載 TXT",
+                                    data=txt.encode("utf-8"),
+                                    file_name=f"preset_top5_{str(member_email).strip().lower()}_{share_preset}_{share_date.isoformat()}.txt",
+                                    mime="text/plain",
+                                    use_container_width=False,
+                                    key="member_preset_share_txt",
+                                )
+                                st.download_button(
+                                    "下載 JSON",
+                                    data=json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"),
+                                    file_name=f"preset_top5_{str(member_email).strip().lower()}_{share_preset}_{share_date.isoformat()}.json",
+                                    mime="application/json",
+                                    use_container_width=False,
+                                    key="member_preset_share_json",
+                                )
+
                 with st.expander("🔖 本場各組合 Top5 預測", expanded=False):
                     pr = []
                     active_name = st.session_state.get("selected_preset_name", "（手動調整）")
