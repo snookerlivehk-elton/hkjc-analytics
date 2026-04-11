@@ -14,6 +14,7 @@ from database.models import PredictionTop5, RaceEntry, RaceResult, ScoringWeight
 from scoring_engine.constants import DISABLED_FACTORS
 from scoring_engine.prediction_snapshots import finalize_prediction_top5_hits_for_race_date
 from web_ui.auth import require_superadmin
+from web_ui.nav import render_admin_nav
 
 st.set_page_config(page_title="命中統計 - HKJC Analytics", layout="wide")
 
@@ -41,6 +42,7 @@ init_db()
 require_superadmin("📈 命中統計總覽")
 
 st.title("📈 命中統計總覽")
+render_admin_nav()
 
 
 def _actual_top5(session, race_id: int):
@@ -83,7 +85,7 @@ with tab_factor:
         if not available_dates:
             st.info("目前未有任何獨立條件 Top5 快照。")
         else:
-            st.markdown("### 🖼️ 分享圖片（獨立條件 Top5）")
+            st.markdown("### 🧾 分享字段（獨立條件 Top5）")
             share_c1, share_c2, share_c3 = st.columns([2, 4, 2])
             share_date = share_c1.selectbox(
                 "賽日",
@@ -98,10 +100,7 @@ with tab_factor:
                 format_func=lambda x: f"{factor_desc.get(str(x), str(x))} ({x})",
             )
 
-            btn_img = share_c3.button("生成分享圖片", use_container_width=True, key="share_factor_img")
-            btn_text = share_c3.button("生成分享字段", use_container_width=True, key="share_factor_text")
-
-            if btn_img or btn_text:
+            if share_c3.button("生成分享字段", use_container_width=True, key="share_factor_text_only"):
                 rows = (
                     session.query(PredictionTop5.race_no, PredictionTop5.top5)
                     .filter(PredictionTop5.predictor_type == "factor")
@@ -126,66 +125,40 @@ with tab_factor:
                 else:
                     factor_label = factor_desc.get(str(share_factor), str(share_factor))
 
-                    if btn_text:
-                        import json
+                    import json
 
-                        payload = {
-                            "race_date": share_date.isoformat(),
-                            "factor_code": str(share_factor),
-                            "factor_name": factor_label,
-                            "races": races,
-                        }
-                        txt_lines = [
-                            f"獨立條件：{factor_label} ({share_factor})",
-                            f"賽日：{share_date.isoformat()}",
-                        ]
-                        for r in races:
-                            top5_s = ",".join(str(x) for x in (r.get("top5") or [])[:5])
-                            txt_lines.append(f"第{int(r.get('race_no') or 0)}場：{top5_s}")
-                        txt = "\n".join(txt_lines) + "\n"
+                    payload = {
+                        "race_date": share_date.isoformat(),
+                        "factor_code": str(share_factor),
+                        "factor_name": factor_label,
+                        "races": races,
+                    }
+                    txt_lines = [
+                        f"獨立條件：{factor_label} ({share_factor})",
+                        f"賽日：{share_date.isoformat()}",
+                    ]
+                    for r in races:
+                        top5_s = ",".join(str(x) for x in (r.get("top5") or [])[:5])
+                        txt_lines.append(f"第{int(r.get('race_no') or 0)}場：{top5_s}")
+                    txt = "\n".join(txt_lines) + "\n"
 
-                        st.code(txt, language="text")
-                        st.download_button(
-                            "下載 TXT",
-                            data=txt.encode("utf-8"),
-                            file_name=f"factor_top5_{share_factor}_{share_date.isoformat()}.txt",
-                            mime="text/plain",
-                            use_container_width=False,
-                            key="share_factor_txt_download",
-                        )
-                        st.download_button(
-                            "下載 JSON",
-                            data=json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"),
-                            file_name=f"factor_top5_{share_factor}_{share_date.isoformat()}.json",
-                            mime="application/json",
-                            use_container_width=False,
-                            key="share_factor_json_download",
-                        )
-
-                    if btn_img:
-                        from web_ui.share_image import build_factor_share_html, html_to_png_bytes
-
-                        html_content = build_factor_share_html(
-                            factor_label=factor_label,
-                            factor_code=str(share_factor),
-                            race_day_iso=share_date.isoformat(),
-                            races=races,
-                        )
-                        try:
-                            png = html_to_png_bytes(html_content, width=1080)
-                        except Exception as e:
-                            st.error(f"生成分享圖片失敗：{e}")
-                            png = None
-
-                        if png:
-                            st.image(png, caption=f"{factor_label} | {share_date.isoformat()}", use_container_width=True)
-                            st.download_button(
-                                "下載 PNG",
-                                data=png,
-                                file_name=f"factor_top5_{share_factor}_{share_date.isoformat()}.png",
-                                mime="image/png",
-                                use_container_width=False,
-                            )
+                    st.code(txt, language="text")
+                    st.download_button(
+                        "下載 TXT",
+                        data=txt.encode("utf-8"),
+                        file_name=f"factor_top5_{share_factor}_{share_date.isoformat()}.txt",
+                        mime="text/plain",
+                        use_container_width=False,
+                        key="share_factor_txt_download",
+                    )
+                    st.download_button(
+                        "下載 JSON",
+                        data=json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"),
+                        file_name=f"factor_top5_{share_factor}_{share_date.isoformat()}.json",
+                        mime="application/json",
+                        use_container_width=False,
+                        key="share_factor_json_download",
+                    )
 
             end_default = available_dates[0]
             start_default = max(end_default - timedelta(days=30), min(available_dates))
@@ -311,6 +284,103 @@ with tab_preset:
         if not available_dates:
             st.info("目前未有任何會員組合 Top5 快照。")
         else:
+            st.markdown("### 🧾 分享字段（會員組合 Top5）")
+            s1, s2, s3, s4 = st.columns([2, 3, 3, 2])
+            share_date = s1.selectbox(
+                "賽日",
+                available_dates,
+                index=0,
+                format_func=lambda x: x.isoformat() if hasattr(x, "isoformat") else str(x),
+                key="preset_share_date",
+            )
+
+            opt_rows = (
+                session.query(PredictionTop5.member_email, PredictionTop5.predictor_key)
+                .filter(PredictionTop5.predictor_type == "preset")
+                .filter(func.date(PredictionTop5.race_date) == share_date.isoformat())
+                .distinct()
+                .order_by(PredictionTop5.member_email.asc(), PredictionTop5.predictor_key.asc())
+                .all()
+            )
+            emails = sorted({str(e or "").strip().lower() for e, _ in opt_rows if str(e or "").strip()})
+            presets = sorted({str(p or "").strip() for _, p in opt_rows if str(p or "").strip()})
+
+            if not emails or not presets:
+                st.info("該賽日未找到可分享的會員組合 Top5 快照。")
+            else:
+                share_email = s2.selectbox("會員 Email", emails, index=0, key="preset_share_email")
+                share_preset = s3.selectbox("組合名稱", presets, index=0, key="preset_share_preset")
+
+                if s4.button("生成分享字段", use_container_width=True, key="preset_share_text"):
+                    rows = (
+                        session.query(PredictionTop5.race_no, PredictionTop5.top5)
+                        .filter(PredictionTop5.predictor_type == "preset")
+                        .filter(PredictionTop5.member_email == str(share_email))
+                        .filter(PredictionTop5.predictor_key == str(share_preset))
+                        .filter(func.date(PredictionTop5.race_date) == share_date.isoformat())
+                        .order_by(PredictionTop5.race_no.asc())
+                        .all()
+                    )
+
+                    races = []
+                    for rn, top5 in rows:
+                        races.append(
+                            {
+                                "race_no": int(rn or 0),
+                                "top5": [int(x) for x in (top5 or []) if str(x).strip().isdigit()],
+                            }
+                        )
+                    races.sort(key=lambda x: x["race_no"])
+
+                    if not races:
+                        st.info("該賽日未找到此會員組合的 Top5 快照。")
+                    else:
+                        import json
+                        from database.models import SystemConfig
+
+                        preset_weights = None
+                        cfg = session.query(SystemConfig).filter_by(key=f"member_weight_presets:{str(share_email)}").first()
+                        if cfg and isinstance(cfg.value, list):
+                            for item in cfg.value:
+                                if isinstance(item, dict) and str(item.get("name", "")).strip() == str(share_preset):
+                                    preset_weights = item.get("weights")
+                                    break
+
+                        payload = {
+                            "race_date": share_date.isoformat(),
+                            "member_email": str(share_email),
+                            "preset_name": str(share_preset),
+                            "preset_weights": preset_weights,
+                            "races": races,
+                        }
+                        txt_lines = [
+                            f"會員：{share_email}",
+                            f"組合：{share_preset}",
+                            f"賽日：{share_date.isoformat()}",
+                        ]
+                        for r in races:
+                            top5_s = ",".join(str(x) for x in (r.get("top5") or [])[:5])
+                            txt_lines.append(f"第{int(r.get('race_no') or 0)}場：{top5_s}")
+                        txt = "\n".join(txt_lines) + "\n"
+
+                        st.code(txt, language="text")
+                        st.download_button(
+                            "下載 TXT",
+                            data=txt.encode("utf-8"),
+                            file_name=f"preset_top5_{share_email}_{share_preset}_{share_date.isoformat()}.txt",
+                            mime="text/plain",
+                            use_container_width=False,
+                            key="preset_share_txt_download",
+                        )
+                        st.download_button(
+                            "下載 JSON",
+                            data=json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"),
+                            file_name=f"preset_top5_{share_email}_{share_preset}_{share_date.isoformat()}.json",
+                            mime="application/json",
+                            use_container_width=False,
+                            key="preset_share_json_download",
+                        )
+
             end_default = available_dates[0]
             start_default = max(end_default - timedelta(days=30), min(available_dates))
             d1, d2 = st.date_input("統計日期範圍", value=(start_default, end_default), key="hit_preset_range")

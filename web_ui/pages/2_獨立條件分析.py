@@ -13,6 +13,7 @@ from database.connection import get_session, init_db
 from database.models import Race, RaceEntry, ScoringFactor, ScoringWeight
 from scoring_engine.constants import DISABLED_FACTORS
 from web_ui.auth import require_superadmin
+from web_ui.nav import render_admin_nav
 
 st.set_page_config(page_title="獨立條件分析 - HKJC Analytics", layout="wide")
 
@@ -40,6 +41,8 @@ st.markdown(
 init_db()
 
 require_superadmin("📊 獨立條件分析")
+
+render_admin_nav()
 
 def load_races(session: Session):
     return session.query(Race).order_by(Race.race_date.desc(), Race.race_no.asc()).all()

@@ -186,17 +186,9 @@ def cleanup_removed_factor_data(session):
 st.title("🛠️ 數據管理後台")
 st.markdown("在此頁面執行數據更新、回填與清理操作。")
 
-if st.button("➡️ 前往獨立條件分析", use_container_width=False):
-    try:
-        st.switch_page("pages/2_獨立條件分析.py")
-    except Exception:
-        st.markdown("[➡️ 前往獨立條件分析](/%E7%8D%A8%E7%AB%8B%E6%A2%9D%E4%BB%B6%E5%88%86%E6%9E%90)")
+from web_ui.nav import render_admin_nav
 
-if st.button("➡️ 前往命中統計總覽", use_container_width=False):
-    try:
-        st.switch_page("pages/3_命中統計.py")
-    except Exception:
-        st.markdown("[➡️ 前往命中統計總覽](/%E5%91%BD%E4%B8%AD%E7%B5%B1%E8%A8%88)")
+render_admin_nav()
 
 tab_ops, tab_members, tab_hits = st.tabs(["🛠️ 系統操作", "👥 會員組合", "📈 命中統計"])
 
