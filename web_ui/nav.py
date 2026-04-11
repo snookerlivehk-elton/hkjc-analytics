@@ -2,7 +2,7 @@ import streamlit as st
 
 
 def render_admin_nav():
-    c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
+    c1, c2, c3 = st.columns([1, 1, 1])
 
     if c1.button("🛠️ 數據管理", use_container_width=True):
         try:
@@ -21,10 +21,3 @@ def render_admin_nav():
             st.switch_page("pages/3_命中統計.py")
         except Exception:
             st.markdown("[📈 命中統計](/%E5%91%BD%E4%B8%AD%E7%B5%B1%E8%A8%88)")
-
-    if c4.button("🏠 主頁", use_container_width=True):
-        try:
-            st.switch_page("app.py")
-        except Exception:
-            st.markdown("[🏠 主頁](/)")
-
