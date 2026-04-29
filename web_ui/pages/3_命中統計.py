@@ -619,6 +619,7 @@ with tab_preset:
 
                         st.markdown("### 📉 會員組合反向表現（淘汰準確率）")
                         pct = 35.0
+                        top_k = 4
                         agg2 = {}
                         for email_k, preset_k, w in preset_defs:
                             key = (email_k, preset_k)
@@ -627,8 +628,9 @@ with tab_preset:
                                 a = {"races": 0, "pred": 0, "tn": 0, "fp": 0}
                                 agg2[key] = a
                             for rid in race_ids:
-                                act = actual_by_race.get(int(rid)) or []
-                                if len(act) < 5:
+                                act0 = actual_by_race.get(int(rid)) or []
+                                act = act0[: int(top_k or 0)]
+                                if len(act) < int(top_k or 0):
                                     continue
                                 ranked = _ranked_horses_for_preset(int(rid), w)
                                 if not ranked:
@@ -661,7 +663,7 @@ with tab_preset:
                                     "組合": preset_k,
                                     "樣本(場)": n,
                                     "淘汰(匹)": pred_n,
-                                    "淘汰準確率(不入Top5)": (round(acc * 100.0, 1) if acc is not None else None),
+                                    "淘汰準確率(不入Top4)": (round(acc * 100.0, 1) if acc is not None else None),
                                     "錯殺率": (round(fp_rate * 100.0, 1) if fp_rate is not None else None),
                                     "正確淘汰(匹)": tn,
                                     "錯殺(匹)": fp,
@@ -670,14 +672,14 @@ with tab_preset:
                         if not rows2:
                             st.info("目前未有足夠資料計算淘汰統計（可能尚未抓賽果或未重新計分）。")
                         else:
-                            st.dataframe(pd.DataFrame(rows2).sort_values(["淘汰準確率(不入Top5)", "錯殺率"], ascending=[False, True]), width="stretch", hide_index=True)
+                            st.dataframe(pd.DataFrame(rows2).sort_values(["淘汰準確率(不入Top4)", "錯殺率"], ascending=[False, True]), width="stretch", hide_index=True)
     finally:
         session.close()
 
 
 with tab_range:
     st.markdown("### 📊 反向統計（日期範圍）")
-    st.caption("用 BottomN%（按每場參賽馬數計算 N）評估：你淘汰的馬匹是否真的不入 Top5。")
+    st.caption("用 BottomN%（按每場參賽馬數計算 N）評估：你淘汰的馬匹是否真的不入 Top4。")
 
     session = get_session()
     try:
@@ -741,7 +743,7 @@ with tab_range:
                         continue
                     n_field = field_size(session, rid)
                     elim_n = compute_elim_n(n_field, bottom_pct)
-                    top_k = 5
+                    top_k = 4
                     if elim_n <= 0 or top_k <= 0:
                         continue
 
@@ -884,7 +886,7 @@ with tab_range:
                             "race_no": "場次",
                             "field": "參賽馬數",
                             "elim_n": "淘汰N",
-                            "top_k": "Top5",
+                            "top_k": "Top4",
                             "pred_neg": "淘汰(匹)",
                             "tn": "正確淘汰(匹)",
                             "fp": "錯殺(匹)",
@@ -903,7 +905,7 @@ with tab_range:
                                 "分桶",
                                 "參賽馬數",
                                 "淘汰N",
-                                "Top5",
+                                "Top4",
                                 "淘汰(匹)",
                                 "淘汰準確率",
                                 "錯殺率",

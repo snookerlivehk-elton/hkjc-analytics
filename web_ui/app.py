@@ -943,11 +943,12 @@ def main():
                                 )
 
                     with st.expander("📉 會員組合反向表現（淘汰準確率）", expanded=False):
-                        st.caption("以 Bottom35%（按每場參賽馬數計算 N）評估：你淘汰的馬匹是否真的不入 Top5。")
+                        st.caption("以 Bottom35%（按每場參賽馬數計算 N）評估：你淘汰的馬匹是否真的不入 Top4。")
                         from sqlalchemy import func
                         from scoring_engine.diagnostics import compute_elim_n, reverse_stats_for_race
 
                         bottom_pct = 35.0
+                        top_k = 4
                         end_default = date.today()
                         start_default = end_default - timedelta(days=30)
                         d1, d2 = st.date_input("統計日期範圍", value=(start_default, end_default), key="member_elim_range")
@@ -1019,7 +1020,7 @@ def main():
                             m1, m2, m3, m4 = st.columns(4)
                             m1.metric("樣本(場)", int(total_races or 0))
                             m2.metric("淘汰總匹數", int(total_pred or 0))
-                            m3.metric("淘汰準確率(不入Top5, Bottom35%)", f"{(total_tn / total_pred):.1%}" if total_pred else "-")
+                            m3.metric("淘汰準確率(不入Top4, Bottom35%)", f"{(total_tn / total_pred):.1%}" if total_pred else "-")
                             m4.metric("錯殺率", f"{(total_fp / total_pred):.1%}" if total_pred else "-")
 
                             if not rows_day:
@@ -1049,7 +1050,7 @@ def main():
                                         .filter(func.date(Race.race_date) >= d1.isoformat())
                                         .filter(func.date(Race.race_date) <= d2.isoformat())
                                         .group_by(Race.id, Race.race_date, Race.race_no)
-                                        .having(func.count(RaceResult.id) >= 5)
+                                        .having(func.count(RaceResult.id) >= int(top_k or 0))
                                         .order_by(func.date(Race.race_date).asc(), Race.race_no.asc(), Race.id.asc())
                                         .all()
                                     )
@@ -1089,7 +1090,7 @@ def main():
                                                 continue
                                             if rid_i not in actual_by_race:
                                                 actual_by_race[rid_i] = []
-                                            if len(actual_by_race[rid_i]) >= 5:
+                                            if len(actual_by_race[rid_i]) >= int(top_k or 0):
                                                 continue
                                             try:
                                                 hn_i = int(hn or 0)
@@ -1138,7 +1139,7 @@ def main():
                                             if rid_i <= 0:
                                                 continue
                                             actual_pos = actual_by_race.get(rid_i) or []
-                                            if len(actual_pos) < 5:
+                                            if len(actual_pos) < int(top_k or 0):
                                                 continue
                                             ranked = _ranked_horses(rid_i)
                                             if not ranked:

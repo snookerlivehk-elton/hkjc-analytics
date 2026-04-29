@@ -35,8 +35,8 @@ CURRENT_ELIM_POLICY = {
     "start_date": STATS_START_DATE.date().isoformat(),
     "window_days": int(STATS_WINDOW_DAYS),
     "cmp": "date",
-    "v": 6,
-    "top_k": 5,
+    "v": 7,
+    "top_k": 4,
     "bottom_pcts": ELIM_BOTTOM_PCTS,
     "metrics": ["pred", "tn", "fp"],
     "daily": True,
@@ -187,6 +187,7 @@ def update_member_preset_elim_stats_incremental(
     now = datetime.now().isoformat()
     changed_any = False
     policy = CURRENT_ELIM_POLICY
+    top_k = int(policy.get("top_k") or 0)
 
     for p in (presets or [])[:3]:
         name = str(p.get("name") or "").strip()
@@ -259,14 +260,15 @@ def update_member_preset_elim_stats_incremental(
             last_race_no=(int(last_race_no) if last_race_no is not None else None),
             last_race_id=(int(last_race_id) if last_race_id is not None else None),
             limit=int(per_preset_max_new_races or 0),
+            min_finishers=top_k,
         )
         processed = 0
         for r in races:
             rid = int(getattr(r, "id") or 0)
             if rid <= 0:
                 continue
-            act = _actual_topk_for_race(session, rid, 5)
-            if len(act) < 5:
+            act = _actual_topk_for_race(session, rid, top_k)
+            if len(act) < top_k:
                 continue
             ranked = _ranked_horses_for_race(session, rid, weights)
             if not ranked:
@@ -334,6 +336,7 @@ def rebuild_member_preset_elim_stats(
     if not e:
         return {}
     pcts = bottom_pcts or ELIM_BOTTOM_PCTS
+    top_k = int(CURRENT_ELIM_POLICY.get("top_k") or 0)
     now = datetime.now().isoformat()
 
     out: Dict[str, Any] = {}
@@ -345,7 +348,7 @@ def rebuild_member_preset_elim_stats(
         .filter(func.date(Race.race_date) >= d1.date().isoformat())
         .filter(func.date(Race.race_date) <= d2.date().isoformat())
         .group_by(Race.id)
-        .having(func.count(RaceResult.id) >= 5)
+        .having(func.count(RaceResult.id) >= top_k)
         .order_by(func.date(Race.race_date).asc(), Race.race_no.asc(), Race.id.asc())
     )
     races = q.all()
@@ -371,8 +374,8 @@ def rebuild_member_preset_elim_stats(
             rid = int(getattr(r, "id") or 0)
             if rid <= 0:
                 continue
-            act = _actual_topk_for_race(session, rid, 5)
-            if len(act) < 5:
+            act = _actual_topk_for_race(session, rid, top_k)
+            if len(act) < top_k:
                 continue
             ranked = _ranked_horses_for_race(session, rid, weights)
             if not ranked:
@@ -424,6 +427,7 @@ def _list_completed_races(
     last_race_no: Optional[int],
     last_race_id: Optional[int],
     limit: int,
+    min_finishers: int = 5,
 ) -> List[Race]:
     cutoff_s = cutoff.date().isoformat()
     q = (
@@ -433,7 +437,7 @@ def _list_completed_races(
         .filter(RaceResult.rank != None)
         .filter(func.date(Race.race_date) >= cutoff_s)
         .group_by(Race.id)
-        .having(func.count(RaceResult.id) >= 5)
+        .having(func.count(RaceResult.id) >= int(min_finishers or 0))
         .order_by(func.date(Race.race_date).asc(), Race.race_no.asc(), Race.id.asc())
     )
 
