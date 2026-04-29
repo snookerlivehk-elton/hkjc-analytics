@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from math import ceil
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, or_
 
-from database.models import SystemConfig, Race, RaceEntry, RaceResult, ScoringFactor, PredictionTop5
+from database.models import SystemConfig, Race, RaceEntry, RaceResult, ScoringFactor
 
 
 STATS_START_DATE = datetime(2026, 4, 8)
@@ -24,7 +25,7 @@ CURRENT_ELIM_POLICY = {
     "start_date": STATS_START_DATE.date().isoformat(),
     "window_days": int(STATS_WINDOW_DAYS),
     "cmp": "date",
-    "v": 1,
+    "v": 2,
     "top_k": 5,
     "bottom_pcts": ELIM_BOTTOM_PCTS,
     "metrics": ["pred", "tn", "fp"],
@@ -35,6 +36,56 @@ def _cutoff_date(now: Optional[datetime] = None) -> datetime:
     n = now or datetime.now()
     w = n - timedelta(days=STATS_WINDOW_DAYS)
     return max(STATS_START_DATE, w)
+
+
+def _compute_elim_n(field_size: int, bottom_pct: float) -> int:
+    n = int(field_size or 0)
+    if n <= 0:
+        return 0
+    p = float(bottom_pct or 0.0)
+    if p <= 0:
+        return 0
+    if p >= 100:
+        return n
+    out = int(ceil(n * (p / 100.0)))
+    return max(1, min(out, n))
+
+
+def _ranked_horses_for_race(session: Session, race_id: int, weight_map: Dict[str, float]) -> List[int]:
+    weights = {str(k): float(v) for k, v in (weight_map or {}).items()}
+    if not weights:
+        return []
+
+    entries = session.query(RaceEntry.id, RaceEntry.horse_no).filter_by(race_id=race_id).all()
+    if not entries:
+        return []
+
+    entry_ids = [int(e[0]) for e in entries if int(e[0] or 0) > 0]
+    entry_id_to_no = {int(e[0]): int(e[1] or 0) for e in entries if int(e[0] or 0) > 0 and int(e[1] or 0) > 0}
+    if not entry_ids or not entry_id_to_no:
+        return []
+
+    factor_names = [str(x) for x in weights.keys()]
+    factors = (
+        session.query(ScoringFactor.entry_id, ScoringFactor.factor_name, ScoringFactor.score)
+        .filter(ScoringFactor.entry_id.in_(entry_ids))
+        .filter(ScoringFactor.factor_name.in_(factor_names))
+        .all()
+    )
+
+    totals: Dict[int, float] = {eid: 0.0 for eid in entry_ids}
+    for entry_id, factor_name, score in factors:
+        eid = int(entry_id or 0)
+        if eid in totals:
+            totals[eid] += float(score or 0.0) * float(weights.get(str(factor_name), 0.0))
+
+    ranked = sorted(totals.items(), key=lambda x: (-x[1], x[0]))
+    out = []
+    for eid, _ in ranked:
+        hn = entry_id_to_no.get(int(eid))
+        if hn is not None and int(hn or 0) > 0:
+            out.append(int(hn))
+    return out
 
 
 def load_member_preset_stats(session: Session, email: str) -> Dict[str, Any]:
@@ -128,6 +179,7 @@ def update_member_preset_elim_stats_incremental(
 
     for p in (presets or [])[:3]:
         name = str(p.get("name") or "").strip()
+        weights = p.get("weights") if isinstance(p.get("weights"), dict) else {}
         if not name:
             continue
 
@@ -139,6 +191,8 @@ def update_member_preset_elim_stats_incremental(
                 "last_race_no": None,
                 "last_race_id": None,
                 "updated_at": None,
+                "range_from": None,
+                "range_to": None,
                 "policy": policy,
             }
             changed_any = True
@@ -150,6 +204,8 @@ def update_member_preset_elim_stats_incremental(
                     "last_race_no": None,
                     "last_race_id": None,
                     "updated_at": None,
+                    "range_from": None,
+                    "range_to": None,
                     "policy": policy,
                 }
                 changed_any = True
@@ -173,68 +229,57 @@ def update_member_preset_elim_stats_incremental(
             last_race_id = None
             changed_any = True
 
-        cutoff_s = cutoff.date().isoformat()
-        q = (
-            session.query(PredictionTop5)
-            .filter(PredictionTop5.predictor_type == "preset")
-            .filter(PredictionTop5.member_email == str(email or "").strip().lower())
-            .filter(PredictionTop5.predictor_key == str(name))
-            .filter(func.date(PredictionTop5.race_date) >= cutoff_s)
-            .order_by(func.date(PredictionTop5.race_date).asc(), PredictionTop5.race_no.asc(), PredictionTop5.race_id.asc())
-        )
-
-        if last_date is not None and last_race_no is not None and last_race_id is not None:
-            last_date_s = last_date.date().isoformat() if hasattr(last_date, "date") else str(last_date)
-            q = q.filter(
-                or_(
-                    func.date(PredictionTop5.race_date) > last_date_s,
-                    and_(func.date(PredictionTop5.race_date) == last_date_s, PredictionTop5.race_no > int(last_race_no)),
-                    and_(
-                        func.date(PredictionTop5.race_date) == last_date_s,
-                        PredictionTop5.race_no == int(last_race_no),
-                        PredictionTop5.race_id > int(last_race_id),
-                    ),
-                )
-            )
-
-        rows = q.limit(int(per_preset_max_new_races or 0)).all()
-        processed = 0
-
         pcts_map = st.get("pcts") if isinstance(st.get("pcts"), dict) else {}
         for pct in ELIM_BOTTOM_PCTS:
             k = str(int(pct))
             if k not in pcts_map or not isinstance(pcts_map.get(k), dict):
                 pcts_map[k] = {"races": 0, "pred": 0, "tn": 0, "fp": 0}
 
-        for row in rows:
-            meta = row.meta if isinstance(row.meta, dict) else {}
-            elim_eval = meta.get("elim_eval") if isinstance(meta.get("elim_eval"), dict) else {}
-            if not isinstance(elim_eval, dict) or not elim_eval:
+        races = _list_completed_races(
+            session=session,
+            cutoff=cutoff,
+            last_date=last_date,
+            last_race_no=(int(last_race_no) if last_race_no is not None else None),
+            last_race_id=(int(last_race_id) if last_race_id is not None else None),
+            limit=int(per_preset_max_new_races or 0),
+        )
+        processed = 0
+        for r in races:
+            rid = int(getattr(r, "id") or 0)
+            if rid <= 0:
                 continue
-
+            act = _actual_topk_for_race(session, rid, 5)
+            if len(act) < 5:
+                continue
+            ranked = _ranked_horses_for_race(session, rid, weights)
+            if not ranked:
+                continue
+            n_field = int(session.query(func.count(RaceEntry.id)).filter(RaceEntry.race_id == rid).scalar() or 0)
             used_any = False
             for pct in ELIM_BOTTOM_PCTS:
+                elim_n = _compute_elim_n(n_field, float(pct))
+                if elim_n <= 0:
+                    continue
+                pred_neg = ranked[-elim_n:]
+                pred_set = set(int(x) for x in pred_neg if int(x or 0) > 0)
+                act_set = set(int(x) for x in act if int(x or 0) > 0)
+                if not pred_set:
+                    continue
+                fp = int(len(pred_set & act_set))
+                tn = int(len(pred_set - act_set))
                 kk = str(int(pct))
-                cur = elim_eval.get(kk) if isinstance(elim_eval.get(kk), dict) else None
-                if not isinstance(cur, dict):
-                    continue
-                pred_n = int(cur.get("elim_n") or 0)
-                tn = int(cur.get("tn") or 0)
-                fp = int(cur.get("fp") or 0)
-                if pred_n <= 0:
-                    continue
                 a = pcts_map.get(kk) if isinstance(pcts_map.get(kk), dict) else {"races": 0, "pred": 0, "tn": 0, "fp": 0}
                 a["races"] = int(a.get("races") or 0) + 1
-                a["pred"] = int(a.get("pred") or 0) + pred_n
+                a["pred"] = int(a.get("pred") or 0) + int(elim_n)
                 a["tn"] = int(a.get("tn") or 0) + tn
                 a["fp"] = int(a.get("fp") or 0) + fp
                 pcts_map[kk] = a
                 used_any = True
 
             if used_any:
-                st["last_date"] = row.race_date.date().isoformat() if hasattr(row.race_date, "date") else str(row.race_date)
-                st["last_race_no"] = int(row.race_no or 0)
-                st["last_race_id"] = int(row.race_id or 0)
+                st["last_date"] = r.race_date.date().isoformat() if hasattr(r.race_date, "date") else str(r.race_date)
+                st["last_race_no"] = int(getattr(r, "race_no") or 0)
+                st["last_race_id"] = int(getattr(r, "id") or 0)
                 st["updated_at"] = now
                 processed += 1
 
@@ -246,6 +291,89 @@ def update_member_preset_elim_stats_incremental(
     if changed_any:
         save_member_preset_elim_stats(session, email, stats)
     return stats
+
+
+def rebuild_member_preset_elim_stats(
+    session: Session,
+    email: str,
+    presets: List[Dict[str, Any]],
+    d1: datetime,
+    d2: datetime,
+    bottom_pcts: Optional[List[int]] = None,
+) -> Dict[str, Any]:
+    e = str(email or "").strip().lower()
+    if not e:
+        return {}
+    pcts = bottom_pcts or ELIM_BOTTOM_PCTS
+    now = datetime.now().isoformat()
+
+    out: Dict[str, Any] = {}
+    q = (
+        session.query(Race)
+        .join(RaceEntry, RaceEntry.race_id == Race.id)
+        .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
+        .filter(RaceResult.rank != None)
+        .filter(func.date(Race.race_date) >= d1.date().isoformat())
+        .filter(func.date(Race.race_date) <= d2.date().isoformat())
+        .group_by(Race.id)
+        .having(func.count(RaceResult.id) >= 5)
+        .order_by(func.date(Race.race_date).asc(), Race.race_no.asc(), Race.id.asc())
+    )
+    races = q.all()
+
+    for p in (presets or [])[:3]:
+        name = str(p.get("name") or "").strip()
+        weights = p.get("weights") if isinstance(p.get("weights"), dict) else {}
+        if not name or not weights:
+            continue
+        st = {
+            "pcts": {str(int(x)): {"races": 0, "pred": 0, "tn": 0, "fp": 0} for x in pcts},
+            "last_date": None,
+            "last_race_no": None,
+            "last_race_id": None,
+            "updated_at": now,
+            "range_from": d1.date().isoformat(),
+            "range_to": d2.date().isoformat(),
+            "policy": CURRENT_ELIM_POLICY,
+        }
+
+        for r in races:
+            rid = int(getattr(r, "id") or 0)
+            if rid <= 0:
+                continue
+            act = _actual_topk_for_race(session, rid, 5)
+            if len(act) < 5:
+                continue
+            ranked = _ranked_horses_for_race(session, rid, weights)
+            if not ranked:
+                continue
+            n_field = int(session.query(func.count(RaceEntry.id)).filter(RaceEntry.race_id == rid).scalar() or 0)
+            for pct in pcts:
+                elim_n = _compute_elim_n(n_field, float(pct))
+                if elim_n <= 0:
+                    continue
+                pred_neg = ranked[-elim_n:]
+                pred_set = set(int(x) for x in pred_neg if int(x or 0) > 0)
+                act_set = set(int(x) for x in act if int(x or 0) > 0)
+                if not pred_set:
+                    continue
+                fp = int(len(pred_set & act_set))
+                tn = int(len(pred_set - act_set))
+                kk = str(int(pct))
+                a = st["pcts"].get(kk)
+                a["races"] += 1
+                a["pred"] += int(elim_n)
+                a["tn"] += tn
+                a["fp"] += fp
+
+            st["last_date"] = r.race_date.date().isoformat() if hasattr(r.race_date, "date") else str(r.race_date)
+            st["last_race_no"] = int(getattr(r, "race_no") or 0)
+            st["last_race_id"] = int(getattr(r, "id") or 0)
+
+        out[name] = st
+
+    save_member_preset_elim_stats(session, e, out)
+    return out
 
 
 def _list_completed_races(

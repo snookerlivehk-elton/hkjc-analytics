@@ -261,6 +261,50 @@ with tab_ops:
     finally:
         session_cfg.close()
 
+    st.subheader("📉 會員反向統計總表（回填/重建）")
+    st.caption("用途：補回歷史淘汰準確率/錯殺率統計，並覆寫保存到 SystemConfig（member_weight_preset_elim_stats:<email>）。")
+    session_elim = get_session()
+    try:
+        from database.models import SystemConfig
+        from scoring_engine.member_stats import rebuild_member_preset_elim_stats
+        from datetime import datetime, date, timedelta
+
+        cfg = session_elim.query(SystemConfig).filter_by(key="member_whitelist_emails").first()
+        emails = []
+        if cfg and isinstance(cfg.value, list):
+            emails = [str(x).strip().lower() for x in cfg.value if str(x).strip()]
+        emails = list(dict.fromkeys(emails))
+        if not emails:
+            st.info("未設定會員白名單，無法回填。")
+        else:
+            end_default = date.today()
+            start_default = end_default - timedelta(days=30)
+            d1, d2 = st.date_input("回填日期範圍", value=(start_default, end_default), key="admin_elim_rebuild_range")
+            if isinstance(d1, date) and isinstance(d2, date) and d1 > d2:
+                d1, d2 = d2, d1
+
+            cols = st.columns([2, 3])
+            ok = _confirm_run(cols[0], "admin_elim_rebuild", label="輸入 RUN 以回填/重建")
+            if cols[1].button("📉 回填會員反向統計（覆寫）", width="stretch", disabled=not ok):
+                progress = st.progress(0)
+                done = 0
+                for i, em in enumerate(emails):
+                    cfg2 = session_elim.query(SystemConfig).filter_by(key=f"member_weight_presets:{str(em)}").first()
+                    presets = cfg2.value if cfg2 and isinstance(cfg2.value, list) else []
+                    rebuild_member_preset_elim_stats(
+                        session=session_elim,
+                        email=str(em),
+                        presets=presets,
+                        d1=datetime.combine(d1, datetime.min.time()),
+                        d2=datetime.combine(d2, datetime.min.time()),
+                    )
+                    done += 1
+                    progress.progress((i + 1) / len(emails))
+                st.success(f"✅ 已回填 {done} 位會員。")
+                st.rerun()
+    finally:
+        session_elim.close()
+
     st.subheader("📊 數據取得狀態")
     session_status = get_session()
     try:
@@ -657,6 +701,22 @@ with tab_ops:
             target_date_str = selected_date.strftime("%Y/%m/%d")
             if trigger_race_results_fetch(target_date=target_date_str):
                 st.success(f"✅ 已完成 {target_date_str} 賽果與派彩同步！")
+                session_upd = get_session()
+                try:
+                    from database.models import SystemConfig
+                    from scoring_engine.member_stats import update_member_preset_elim_stats_incremental
+
+                    cfg = session_upd.query(SystemConfig).filter_by(key="member_whitelist_emails").first()
+                    emails = []
+                    if cfg and isinstance(cfg.value, list):
+                        emails = [str(x).strip().lower() for x in cfg.value if str(x).strip()]
+                    emails = list(dict.fromkeys(emails))
+                    for em in emails:
+                        cfg2 = session_upd.query(SystemConfig).filter_by(key=f"member_weight_presets:{str(em)}").first()
+                        presets = cfg2.value if cfg2 and isinstance(cfg2.value, list) else []
+                        update_member_preset_elim_stats_incremental(session_upd, str(em), presets, per_preset_max_new_races=200)
+                finally:
+                    session_upd.close()
 
         st.subheader("⚡ SpeedPRO 能量分（手動備用）")
         st.caption("用途：當 cron 未成功抓到 SpeedPRO（速勢能量評估/狀態評級）時可手動觸發一次。建議先選日期，再選場次。")
