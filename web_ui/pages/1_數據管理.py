@@ -62,6 +62,10 @@ st.title("🛠️ 數據管理後台")
 st.markdown("在此頁面執行數據更新、回填與清理操作。")
 render_admin_nav()
 
+def _confirm_run(container, key: str, label: str = "輸入 RUN 以確認"):
+    token = container.text_input(label, value="", key=f"admin_confirm_{str(key)}")
+    return str(token or "").strip().upper() == "RUN"
+
 def trigger_scraper(target_date: str = None):
     """實時日誌串流輸出"""
     st.markdown("### 🚀 爬蟲執行進度")
@@ -318,7 +322,9 @@ with tab_ops:
     with col1:
         st.subheader("📅 賽期表")
         st.caption("用途：更新「本月＋下月」有賽事的日期清單，供系統決定下一賽日與排程目標。若已設定 fixture cron（每日 HK 06:00），通常不需手動按。")
-        if st.button("📅 更新賽期表 (本月+下月)", use_container_width=True):
+        c_confirm, c_btn = st.columns([2, 3])
+        ok = _confirm_run(c_confirm, "fixture", label="輸入 RUN 以更新賽期表")
+        if c_btn.button("📅 更新賽期表 (本月+下月)", use_container_width=True, disabled=not ok):
             if trigger_fixture_fetch():
                 st.success("✅ 賽期表已更新！")
 
@@ -505,7 +511,8 @@ with tab_ops:
 
                 c1, c2 = st.columns([2, 3])
                 do_rescore = c1.checkbox("同時重算所選範圍", value=False, key="calib_rescore")
-                run = c2.button("訓練並保存 temperature", use_container_width=True, key="calib_train_btn")
+                ok = _confirm_run(c1, "calib_train", label="輸入 RUN 以訓練/保存")
+                run = c2.button("訓練並保存 temperature", use_container_width=True, key="calib_train_btn", disabled=not ok)
 
                 if run:
                     res = fit_winprob_temperature(session_cal, d1=d1, d2=d2)
@@ -534,7 +541,9 @@ with tab_ops:
         
         st.subheader("⚡ 一鍵完整更新（建議）")
         st.caption("會依序完成：抓排位 → 回填該日涉及馬匹往績 → 重算該日所有場次 → 生成 Top5 快照（factor + preset）。每一步會等待上一個完成。")
-        if st.button("⚡ 一鍵：抓排位 → 回填馬匹往績 → 重算當日 → 生成Top5快照", use_container_width=True):
+        c_confirm, c_btn = st.columns([2, 3])
+        ok = _confirm_run(c_confirm, "oneclick_update", label="輸入 RUN 以執行一鍵完整更新")
+        if c_btn.button("⚡ 一鍵：抓排位 → 回填馬匹往績 → 重算當日 → 生成Top5快照", use_container_width=True, disabled=not ok):
             target_date_str = selected_date.strftime("%Y/%m/%d")
             ok1 = trigger_scraper(target_date=target_date_str)
             if not ok1:
@@ -581,21 +590,27 @@ with tab_ops:
                         st.error("❌ 生成 Top5 預測快照失敗。")
 
         st.caption("只做「抓排位/即時數據 + 計分（不包含回填往績/重算）」；如要產生更完整的條件結果與 Top5 快照，建議使用上方「一鍵完整更新」。")
-        if st.button("🔄 開始抓取該日賽事", use_container_width=True):
+        c_confirm, c_btn = st.columns([2, 3])
+        ok = _confirm_run(c_confirm, "scrape_day", label="輸入 RUN 以開始抓取")
+        if c_btn.button("🔄 開始抓取該日賽事", use_container_width=True, disabled=not ok):
             target_date_str = selected_date.strftime("%Y/%m/%d")
             if trigger_scraper(target_date=target_date_str):
                 st.success(f"✅ {target_date_str} 數據更新成功！")
 
         st.subheader("🧾 預測快照 (Top5)")
         st.caption("只生成 Top5 快照（落庫 PredictionTop5）。需要先完成該日計分/重算，否則快照會反映不完整數據。")
-        if st.button("🧾 生成當日 Top5 預測快照", use_container_width=True):
+        c_confirm, c_btn = st.columns([2, 3])
+        ok = _confirm_run(c_confirm, "snapshot_day", label="輸入 RUN 以生成快照")
+        if c_btn.button("🧾 生成當日 Top5 預測快照", use_container_width=True, disabled=not ok):
             target_date_str = selected_date.strftime("%Y/%m/%d")
             if trigger_predictions_snapshot(target_date_str):
                 st.success(f"✅ 已生成 {target_date_str} Top5 預測快照！")
 
         st.subheader("🏁 抓取賽果與派彩")
         st.caption("抓取賽果/派彩入庫後，會自動結算：會員組合命中率 + Top5 快照命中（回寫 hits/actual_top5）。若已設定賽果 cron（每日 HK 23:55）通常不需手動按。")
-        if st.button("🏁 抓取該日賽果與派彩", use_container_width=True):
+        c_confirm, c_btn = st.columns([2, 3])
+        ok = _confirm_run(c_confirm, "fetch_results", label="輸入 RUN 以抓取賽果")
+        if c_btn.button("🏁 抓取該日賽果與派彩", use_container_width=True, disabled=not ok):
             target_date_str = selected_date.strftime("%Y/%m/%d")
             if trigger_race_results_fetch(target_date=target_date_str):
                 st.success(f"✅ 已完成 {target_date_str} 賽果與派彩同步！")
@@ -642,7 +657,9 @@ with tab_ops:
             session_sp.close()
 
         race_nos_str = ",".join([str(int(x)) for x in selected_races if str(x).isdigit()])
-        if st.button("⚡ 立即抓取 SpeedPRO", use_container_width=True):
+        c_confirm, c_btn = st.columns([2, 3])
+        ok = _confirm_run(c_confirm, "speedpro_fetch", label="輸入 RUN 以抓取 SpeedPRO")
+        if c_btn.button("⚡ 立即抓取 SpeedPRO", use_container_width=True, disabled=not ok):
             ok = trigger_speedpro_fetch(target_date=target_date_str, race_nos=race_nos_str, retry_minutes=int(retry_minutes), force=True)
             if ok:
                 st.success("✅ 已觸發 SpeedPRO 抓取（詳情見上方日誌/狀態表）。")
@@ -653,20 +670,24 @@ with tab_ops:
         st.caption("回填馬匹往績（HorseHistory），供部分條件計分使用。更新排位後、重算前先回填，結果較完整。")
         col_h1, col_h2 = st.columns(2)
         with col_h1:
-            if st.button("📚 回填所選日期馬匹往績", use_container_width=True):
+            ok = _confirm_run(col_h1, "backfill_date", label="輸入 RUN 以回填（所選日期）")
+            if st.button("📚 回填所選日期馬匹往績", use_container_width=True, disabled=not ok):
                 target_date_str = selected_date.strftime("%Y/%m/%d")
                 if trigger_history_backfill(target_date=target_date_str, mode="date"):
                     st.success(f"✅ 已完成 {target_date_str} 所需馬匹之歷史往績回填！")
         with col_h2:
             with st.expander("完整回填 (較慢)"):
-                if st.button("📚 回填所有馬匹往績", use_container_width=True):
+                ok = _confirm_run(st, "backfill_all", label="輸入 RUN 以回填（全部）")
+                if st.button("📚 回填所有馬匹往績", use_container_width=True, disabled=not ok):
                     if trigger_history_backfill(mode="all"):
                         st.success("✅ 已完成所有馬匹之歷史往績回填！")
 
     with col2:
         st.subheader("🚀 批量計分操作")
         st.caption("只做「重算所選日期」所有場次（不包含回填/快照）。適合你已完成回填但想再重算一次。")
-        if st.button("🚀 重算所選日期所有賽事", use_container_width=True):
+        c_confirm, c_btn = st.columns([2, 3])
+        ok = _confirm_run(c_confirm, "rescore_date", label="輸入 RUN 以重算所選日期")
+        if c_btn.button("🚀 重算所選日期所有賽事", use_container_width=True, disabled=not ok):
             session = get_session()
             try:
                 from database.models import Race
@@ -724,7 +745,9 @@ with tab_ops:
                 st.error(f"❌ 連線失敗: {e}")
             session.close()
             
-        if st.button("🆙 執行資料庫欄位升級 (新增原始數據欄位)", use_container_width=True):
+        c_confirm, c_btn = st.columns([2, 3])
+        ok = _confirm_run(c_confirm, "db_upgrade", label="輸入 RUN 以執行升級")
+        if c_btn.button("🆙 執行資料庫欄位升級 (新增原始數據欄位)", use_container_width=True, disabled=not ok):
             try:
                 env = os.environ.copy()
                 process = subprocess.Popen(
