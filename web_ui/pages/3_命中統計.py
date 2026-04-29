@@ -10,7 +10,7 @@ if root_path not in sys.path:
     sys.path.append(root_path)
 
 from database.connection import get_session, init_db
-from database.models import PredictionTop5, Race, RaceEntry, RaceResult, ScoringWeight
+from database.models import PredictionTop5, Race, RaceEntry, RaceResult, ScoringWeight, ScoringFactor
 from scoring_engine.constants import DISABLED_FACTORS
 from scoring_engine.diagnostics import (
     actual_ranks_by_horse_no,
