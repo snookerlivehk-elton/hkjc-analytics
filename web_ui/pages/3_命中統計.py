@@ -15,12 +15,13 @@ from scoring_engine.constants import DISABLED_FACTORS
 from scoring_engine.diagnostics import (
     actual_ranks_by_horse_no,
     actual_topk,
+    factor_label_map,
     predicted_bottomk_by_factor,
     predicted_bottomk_by_total,
     predicted_topk_by_factor,
     predicted_topk_by_total,
     reverse_stats_for_race,
-    summarize_entry_reason,
+    summarize_entry_reason_fields,
 )
 from scoring_engine.prediction_snapshots import finalize_prediction_top5_hits_for_race_date
 from web_ui.auth import require_superadmin
@@ -469,9 +470,11 @@ with tab_preset:
 with tab_diag:
     st.markdown("### 🧠 單場診斷（反向統計 + 失準原因）")
     st.caption("選擇賽日/場次後，可檢視：預測Top5 命中/誤推/漏網，以及 BottomN 淘汰是否錯殺。")
+    st.caption("推高原因的 +分值＝該因子對總分的加權貢獻（因子分×權重），數值越大越推高排名。")
 
     session = get_session()
     try:
+        label_map = factor_label_map(session)
         drows = (
             session.query(func.date(PredictionTop5.race_date))
             .distinct()
@@ -590,11 +593,20 @@ with tab_diag:
                                     .filter(RaceEntry.horse_no == int(hn))
                                     .first()
                                 )
+                                reason = summarize_entry_reason_fields(session, int(entry_id[0]), label_map=label_map, top_n=3) if entry_id else {}
+                                tops = reason.get("tops") if isinstance(reason, dict) else []
+                                miss = int(reason.get("missing_count") or 0) if isinstance(reason, dict) else 0
+                                t1 = tops[0] if len(tops) > 0 else {}
+                                t2 = tops[1] if len(tops) > 1 else {}
+                                t3 = tops[2] if len(tops) > 2 else {}
                                 rows2.append(
                                     {
                                         "馬號": int(hn),
                                         "實際名次": actual_rank.get(int(hn)),
-                                        "主要貢獻": summarize_entry_reason(session, int(entry_id[0])) if entry_id else "",
+                                        "推高原因1": (f"{t1.get('name')} +{float(t1.get('contrib') or 0.0):.2f}" if t1 else ""),
+                                        "推高原因2": (f"{t2.get('name')} +{float(t2.get('contrib') or 0.0):.2f}" if t2 else ""),
+                                        "推高原因3": (f"{t3.get('name')} +{float(t3.get('contrib') or 0.0):.2f}" if t3 else ""),
+                                        "缺資料(項)": miss,
                                     }
                                 )
                             st.dataframe(pd.DataFrame(rows2), use_container_width=True, hide_index=True)
@@ -611,11 +623,20 @@ with tab_diag:
                                     .filter(RaceEntry.horse_no == int(hn))
                                     .first()
                                 )
+                                reason = summarize_entry_reason_fields(session, int(entry_id[0]), label_map=label_map, top_n=3) if entry_id else {}
+                                tops = reason.get("tops") if isinstance(reason, dict) else []
+                                miss = int(reason.get("missing_count") or 0) if isinstance(reason, dict) else 0
+                                t1 = tops[0] if len(tops) > 0 else {}
+                                t2 = tops[1] if len(tops) > 1 else {}
+                                t3 = tops[2] if len(tops) > 2 else {}
                                 rows3.append(
                                     {
                                         "馬號": int(hn),
                                         "實際名次": actual_rank.get(int(hn)),
-                                        "主要貢獻": summarize_entry_reason(session, int(entry_id[0])) if entry_id else "",
+                                        "推高原因1": (f"{t1.get('name')} +{float(t1.get('contrib') or 0.0):.2f}" if t1 else ""),
+                                        "推高原因2": (f"{t2.get('name')} +{float(t2.get('contrib') or 0.0):.2f}" if t2 else ""),
+                                        "推高原因3": (f"{t3.get('name')} +{float(t3.get('contrib') or 0.0):.2f}" if t3 else ""),
+                                        "缺資料(項)": miss,
                                     }
                                 )
                             st.dataframe(pd.DataFrame(rows3), use_container_width=True, hide_index=True)

@@ -7,6 +7,22 @@ from scoring_engine.constants import DISABLED_FACTORS
 from scoring_engine.factors import get_available_factors
 
 
+def factor_label_map(session: Session) -> Dict[str, str]:
+    rows = (
+        session.query(ScoringWeight.factor_name, ScoringWeight.description)
+        .order_by(ScoringWeight.factor_name.asc())
+        .all()
+    )
+    out: Dict[str, str] = {}
+    for fn, desc in rows:
+        k = str(fn or "").strip()
+        if not k:
+            continue
+        v = str(desc or "").strip()
+        out[k] = v if v else k
+    return out
+
+
 def actual_ranks_by_horse_no(session: Session, race_id: int) -> Dict[int, int]:
     rows = (
         session.query(RaceEntry.horse_no, RaceResult.rank)
@@ -167,16 +183,48 @@ def factor_contributions_for_entry(session: Session, entry_id: int) -> List[Dict
     return out
 
 
-def summarize_entry_reason(session: Session, entry_id: int, top_n: int = 3) -> str:
+def summarize_entry_reason_fields(
+    session: Session,
+    entry_id: int,
+    label_map: Optional[Dict[str, str]] = None,
+    top_n: int = 3,
+) -> Dict[str, Any]:
+    lm = label_map if isinstance(label_map, dict) else {}
     items = factor_contributions_for_entry(session, entry_id)
     tops = items[: int(top_n or 0)]
-    if not tops:
+    missing_cnt = sum(1 for it in items if it.get("missing") is True)
+
+    top_items: List[Dict[str, Any]] = []
+    for it in tops:
+        code = str(it.get("factor") or "").strip()
+        top_items.append(
+            {
+                "code": code,
+                "name": lm.get(code, code),
+                "contrib": float(it.get("contrib") or 0.0),
+                "missing": bool(it.get("missing") is True),
+            }
+        )
+
+    return {"tops": top_items, "missing_count": int(missing_cnt)}
+
+
+def summarize_entry_reason_text(
+    session: Session,
+    entry_id: int,
+    label_map: Optional[Dict[str, str]] = None,
+    top_n: int = 3,
+) -> str:
+    res = summarize_entry_reason_fields(session, entry_id, label_map=label_map, top_n=top_n)
+    tops = res.get("tops") if isinstance(res, dict) else None
+    if not isinstance(tops, list) or not tops:
         return ""
     parts = []
     for it in tops:
-        parts.append(f"{it.get('factor')}({round(float(it.get('contrib') or 0.0), 2)})")
-    missing_cnt = sum(1 for it in items if it.get("missing") is True)
-    if missing_cnt:
-        parts.append(f"缺{missing_cnt}")
-    return " | ".join(parts)
-
+        name = str(it.get("name") or it.get("code") or "").strip()
+        c = float(it.get("contrib") or 0.0)
+        parts.append(f"{name} +{c:.2f}")
+    miss = int(res.get("missing_count") or 0)
+    if miss:
+        parts.append(f"缺資料{miss}")
+    return "；".join(parts)
