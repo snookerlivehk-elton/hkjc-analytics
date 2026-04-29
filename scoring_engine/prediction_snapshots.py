@@ -96,6 +96,18 @@ def _topk_by_factor(entry_ids: List[int], entry_id_to_no: Dict[int, int], score_
     return [hn for hn, _ in items[:k]]
 
 
+def _ranked_by_factor(entry_ids: List[int], entry_id_to_no: Dict[int, int], score_map: Dict[int, Dict[str, float]], factor_name: str):
+    items = []
+    for eid in entry_ids:
+        hn = entry_id_to_no.get(int(eid))
+        if hn is None:
+            continue
+        s = float(score_map.get(int(eid), {}).get(factor_name, 0.0))
+        items.append((hn, s))
+    items.sort(key=lambda x: (-x[1], x[0]))
+    return [hn for hn, _ in items]
+
+
 def _topk_by_weights(entry_ids: List[int], entry_id_to_no: Dict[int, int], score_map: Dict[int, Dict[str, float]], weights: Dict[str, float], k: int = 5):
     items = []
     for eid in entry_ids:
@@ -109,6 +121,21 @@ def _topk_by_weights(entry_ids: List[int], entry_id_to_no: Dict[int, int], score
         items.append((hn, total))
     items.sort(key=lambda x: (-x[1], x[0]))
     return [hn for hn, _ in items[:k]]
+
+
+def _ranked_by_weights(entry_ids: List[int], entry_id_to_no: Dict[int, int], score_map: Dict[int, Dict[str, float]], weights: Dict[str, float]):
+    items = []
+    for eid in entry_ids:
+        hn = entry_id_to_no.get(int(eid))
+        if hn is None:
+            continue
+        m = score_map.get(int(eid), {})
+        total = 0.0
+        for fn, w in weights.items():
+            total += float(m.get(fn, 0.0)) * float(w)
+        items.append((hn, total))
+    items.sort(key=lambda x: (-x[1], x[0]))
+    return [hn for hn, _ in items]
 
 
 def generate_prediction_top5_for_race_date(session: Session, target_date_str: str) -> Dict[str, int]:
@@ -140,6 +167,7 @@ def generate_prediction_top5_for_race_date(session: Session, target_date_str: st
 
     factor_rows = 0
     preset_rows = 0
+    now = datetime.now().isoformat()
 
     races = session.query(Race).filter(Race.id.in_(race_ids)).all()
     race_by_id = {int(r.id): r for r in races}
@@ -154,9 +182,16 @@ def generate_prediction_top5_for_race_date(session: Session, target_date_str: st
             continue
 
         for factor_name, factor_desc in factors:
-            top5 = _topk_by_factor(entry_ids, entry_id_to_no, score_map, factor_name, 5)
+            ranked = _ranked_by_factor(entry_ids, entry_id_to_no, score_map, factor_name)
+            top5 = ranked[:5]
             key = (int(rid), "factor", factor_name, None)
-            meta = {"desc": factor_desc, "generated_at": datetime.now().isoformat(), "target_date": str(target_date_str), "source": "draw"}
+            meta = {
+                "desc": factor_desc,
+                "generated_at": now,
+                "target_date": str(target_date_str),
+                "source": "draw",
+                "ranked_horses": ranked,
+            }
             row = existing_map.get(key)
             if row is None:
                 row = PredictionTop5(
@@ -179,10 +214,11 @@ def generate_prediction_top5_for_race_date(session: Session, target_date_str: st
                 row.meta = meta
 
         for email, preset_name, weights in presets:
-            top5 = _topk_by_weights(entry_ids, entry_id_to_no, score_map, weights, 5)
+            ranked = _ranked_by_weights(entry_ids, entry_id_to_no, score_map, weights)
+            top5 = ranked[:5]
             email_k = str(email or "").strip().lower()
             key = (int(rid), "preset", preset_name, email_k)
-            meta = {"generated_at": datetime.now().isoformat(), "target_date": str(target_date_str), "source": "draw"}
+            meta = {"generated_at": now, "target_date": str(target_date_str), "source": "draw", "ranked_horses": ranked}
             row = existing_map.get(key)
             if row is None:
                 row = PredictionTop5(
@@ -241,6 +277,8 @@ def finalize_prediction_top5_hits_for_race_date(session: Session, target_date_st
     updated = 0
     skipped = 0
     now = datetime.now().isoformat()
+    bottom_pcts = [10, 15, 20, 25, 30]
+    from scoring_engine.diagnostics import compute_elim_n, reverse_stats_for_race
     for s in snaps:
         act = actual.get(int(s.race_id)) or []
         pred = s.top5 if isinstance(s.top5, list) else []
@@ -252,7 +290,36 @@ def finalize_prediction_top5_hits_for_race_date(session: Session, target_date_st
             skipped += 1
             continue
         meta_old = s.meta if isinstance(s.meta, dict) else {}
-        s.meta = {**meta_old, "actual_top5": act, "hits": hits, "results_at": now}
+        meta_new = {**meta_old, "actual_top5": act, "hits": hits, "results_at": now}
+
+        ranked = meta_old.get("ranked_horses") if isinstance(meta_old.get("ranked_horses"), list) else None
+        if ranked and isinstance(ranked, list):
+            try:
+                n_field = int(session.query(RaceEntry.id).filter(RaceEntry.race_id == int(s.race_id)).count() or 0)
+            except Exception:
+                n_field = 0
+
+            eval_map = {}
+            for pct in bottom_pcts:
+                elim_n = compute_elim_n(n_field, float(pct))
+                if elim_n <= 0:
+                    continue
+                pred_neg = [int(x) for x in ranked[-elim_n:] if str(x).strip().isdigit()]
+                stats = reverse_stats_for_race(actual_positive=act, predicted_negative=pred_neg)
+                eval_map[str(int(pct))] = {
+                    "bottom_pct": float(pct),
+                    "field_size": int(n_field),
+                    "elim_n": int(elim_n),
+                    "pred_neg": pred_neg,
+                    "tn": stats.get("tn"),
+                    "fp": stats.get("fp"),
+                    "neg_accuracy": stats.get("neg_accuracy"),
+                    "false_elim_rate": stats.get("false_elim_rate"),
+                }
+            if eval_map:
+                meta_new["elim_eval"] = eval_map
+
+        s.meta = meta_new
         updated += 1
 
     session.commit()

@@ -921,6 +921,93 @@ def main():
                                     key="member_preset_share_json",
                                 )
 
+                    with st.expander("📉 會員組合反向表現（淘汰準確率）", expanded=False):
+                        st.caption("以 BottomN%（按每場參賽馬數計算 N）評估：你淘汰的馬匹是否真的不入 Top5。")
+                        from sqlalchemy import func
+                        from database.models import PredictionTop5
+
+                        bottom_pct = float(st.selectbox("淘汰 BottomN%", [10, 15, 20, 25, 30], index=4, key="member_elim_bottom_pct"))
+                        end_default = date.today()
+                        start_default = end_default - timedelta(days=30)
+                        d1, d2 = st.date_input("統計日期範圍", value=(start_default, end_default), key="member_elim_range")
+                        if isinstance(d1, date) and isinstance(d2, date) and d1 > d2:
+                            d1, d2 = d2, d1
+
+                        active_name = st.session_state.get("selected_preset_name", "（手動調整）")
+                        preset_options = [p.get("name") for p in (presets or []) if isinstance(p, dict) and p.get("name")]
+                        if active_name != "（手動調整）" and active_name in preset_options:
+                            preset_default = active_name
+                        elif preset_options:
+                            preset_default = str(preset_options[0])
+                        else:
+                            preset_default = ""
+
+                        preset_sel = st.selectbox("組合", preset_options, index=(preset_options.index(preset_default) if preset_default in preset_options else 0), key="member_elim_preset")
+                        if not preset_sel:
+                            st.info("未找到任何已儲存權重組合。")
+                        else:
+                            rows = (
+                                session.query(PredictionTop5.race_date, PredictionTop5.race_no, PredictionTop5.meta)
+                                .filter(PredictionTop5.predictor_type == "preset")
+                                .filter(PredictionTop5.member_email == str(member_email).strip().lower())
+                                .filter(PredictionTop5.predictor_key == str(preset_sel))
+                                .filter(func.date(PredictionTop5.race_date) >= d1.isoformat())
+                                .filter(func.date(PredictionTop5.race_date) <= d2.isoformat())
+                                .order_by(PredictionTop5.race_date.asc(), PredictionTop5.race_no.asc())
+                                .all()
+                            )
+
+                            total_pred = 0
+                            total_tn = 0
+                            total_fp = 0
+                            out = []
+                            pct_key = str(int(bottom_pct))
+                            for rd, rno, meta in rows:
+                                if not isinstance(meta, dict):
+                                    continue
+                                ev = meta.get("elim_eval") if isinstance(meta.get("elim_eval"), dict) else {}
+                                cur = ev.get(pct_key) if isinstance(ev.get(pct_key), dict) else None
+                                if not isinstance(cur, dict):
+                                    continue
+                                pred_neg = cur.get("pred_neg") if isinstance(cur.get("pred_neg"), list) else []
+                                tn = int(cur.get("tn") or 0)
+                                fp = int(cur.get("fp") or 0)
+                                pred_n = int(cur.get("elim_n") or len(pred_neg) or 0)
+                                total_pred += pred_n
+                                total_tn += tn
+                                total_fp += fp
+                                date_s = ""
+                                try:
+                                    if rd is not None and hasattr(rd, "date"):
+                                        date_s = rd.date().isoformat()
+                                except Exception:
+                                    date_s = ""
+                                out.append(
+                                    {
+                                        "賽日": date_s,
+                                        "場次": int(rno or 0),
+                                        "淘汰N": pred_n,
+                                        "正確淘汰": tn,
+                                        "錯殺": fp,
+                                        "淘汰準確率": (tn / pred_n) if pred_n else None,
+                                        "錯殺率": (fp / pred_n) if pred_n else None,
+                                    }
+                                )
+
+                            m1, m2, m3, m4 = st.columns(4)
+                            m1.metric("樣本(場)", len(out))
+                            m2.metric("淘汰總匹數", total_pred)
+                            m3.metric("淘汰準確率(不入Top5)", f"{(total_tn / total_pred):.1%}" if total_pred else "-")
+                            m4.metric("錯殺率", f"{(total_fp / total_pred):.1%}" if total_pred else "-")
+
+                            if not out:
+                                st.info("目前未找到可用的淘汰統計資料。請先在後台生成/結算快照（命中統計結算）後再查看。")
+                            else:
+                                df_out = pd.DataFrame(out)
+                                df_out["淘汰準確率"] = df_out["淘汰準確率"].map(lambda x: f"{float(x):.1%}" if x is not None else "-")
+                                df_out["錯殺率"] = df_out["錯殺率"].map(lambda x: f"{float(x):.1%}" if x is not None else "-")
+                                st.dataframe(df_out.sort_values(["賽日", "場次"], ascending=[False, False]), width="stretch", hide_index=True)
+
                 with st.expander("🔖 本場各組合 Top5 預測", expanded=False):
                     pr = []
                     active_name = st.session_state.get("selected_preset_name", "（手動調整）")
