@@ -223,31 +223,6 @@ def cleanup_removed_factor_data(session):
         st.error(f"❌ 清理失敗: {e}")
         return 0, 0, 0
 
-with st.expander("🗺️ 優化排程（Roadmap）", expanded=False):
-    st.markdown(
-        "\n".join(
-            [
-                "### 第一階段（已完成）",
-                "- ✅ 因子啟用校驗（避免誤開未實作/不穩定因子）",
-                "- ✅ 賽日日期一致性（HK）與 HorseHistory 去重修正",
-                "- ✅ raw_value 落庫（支援追因）",
-                "- ✅ baseline 診斷腳本（命中率/分桶/覆蓋率）",
-                "",
-                "### 第二階段（進行中）",
-                "- ✅ 單場診斷：反向統計（BottomN 淘汰）＋誤推/漏網主要因子貢獻",
-                "- ⏳ 範圍統計：按賽日範圍聚合 BottomN 淘汰準確率／錯殺率（分場地/距離/班次）",
-                "- ⏳ 原因剖析：缺資料標籤／低覆蓋警示（更精準指出不足）",
-                "",
-                "### 第三階段（待開始）",
-                "- ⏳ 因子治理：factor catalog（描述/依賴/方向/狀態/版本）",
-                "- ⏳ 管理介面：模型診斷頁（Overall/分桶/因子健康度/場次 drilldown）",
-                "",
-                "### 第四階段（可選）",
-                "- ⏳ 自動調權重：walk-forward 回測＋權重版本化回寫",
-            ]
-        )
-    )
-
 tab_ops, tab_members, tab_hits = st.tabs(["🛠️ 系統操作", "👥 會員組合", "📈 命中統計"])
 
 with tab_ops:

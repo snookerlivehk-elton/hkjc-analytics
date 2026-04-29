@@ -29,14 +29,6 @@ hkjc_analytics/
 └── .env                   # 環境變數 (資料庫連線字串等)
 ```
 
-## 專案進度
-
-- [x] **階段 1：資料庫 Schema 設計 + 初始化腳本**
-- [x] **階段 2：數據抓取模組 (History + Real-time Entry Table + Morning Track + Odds)**
-- [x] **階段 3：計分引擎核心 (`score_horse_in_race()` 函數，每條件獨立)**
-- [x] **階段 4：每場排名計算 + Streamlit 介面**
-- [ ] **階段 5：回測模組 + 權重優化工具**
-
 ## 第四階段功能說明 (Streamlit UI)
 
 1. **互動式 Dashboard (web_ui/app.py)**：
@@ -49,6 +41,7 @@ hkjc_analytics/
    - 抓取賽果/派彩後會自動結算：會員組合命中率 + Top5 快照命中（回寫 hits/actual_top5）。
 3. **命中統計總覽 (web_ui/pages/3_命中統計.py)**：
    - 查看「獨立條件」與「會員組合」的命中率彙總（可按日期範圍）。
+   - 反向統計（淘汰 BottomN%）：支援按地點（沙田/跑馬地）、草/泥、距離、班次等分桶，並可用作篩選條件輸出個別表現。
 
 ## 如何使用 (Updated)
 

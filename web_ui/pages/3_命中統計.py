@@ -602,9 +602,11 @@ with tab_range:
                             "date": rd_s,
                             "race_no": int(getattr(r, "race_no", 0) or 0),
                             "venue": venue,
+                            "loc": loc,
                             "distance": int(distance or 0) if distance is not None else None,
                             "class": race_class,
                             "track": track_type,
+                            "surface": surf,
                             "field": int(n_field or 0),
                             "elim_n": int(elim_n or 0),
                             "top_k": int(top_k or 0),
@@ -620,6 +622,29 @@ with tab_range:
                     df = pd.DataFrame(rows)
                     df["neg_accuracy"] = df["tn"] / df["pred_neg"]
                     df["false_elim_rate"] = df["fp"] / df["pred_neg"]
+
+                    st.markdown("### 篩選")
+                    fcols = st.columns([2, 2, 6])
+                    df_f = df
+                    if "地點" in segs:
+                        loc_opts = sorted([x for x in df_f["loc"].dropna().unique().tolist() if str(x).strip()])
+                        loc_sel = fcols[0].multiselect("地點", options=loc_opts, default=loc_opts, key="rev_range_filter_loc")
+                        if loc_sel:
+                            df_f = df_f[df_f["loc"].isin(loc_sel)]
+                        else:
+                            df_f = df_f.iloc[0:0]
+                    if "草/泥" in segs:
+                        surf_opts = sorted([x for x in df_f["surface"].dropna().unique().tolist() if str(x).strip()])
+                        surf_sel = fcols[1].multiselect("草/泥", options=surf_opts, default=surf_opts, key="rev_range_filter_surf")
+                        if surf_sel:
+                            df_f = df_f[df_f["surface"].isin(surf_sel)]
+                        else:
+                            df_f = df_f.iloc[0:0]
+
+                    if df_f.empty:
+                        st.info("篩選條件下沒有資料。")
+                    else:
+                        df = df_f
 
                     total_pred = int(df["pred_neg"].sum() or 0)
                     total_tn = int(df["tn"].sum() or 0)
