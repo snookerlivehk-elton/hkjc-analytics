@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func
 
 from database.connection import init_db, get_session
-from database.models import PredictionTop5, SystemConfig
+from database.models import PredictionTop5
 
 
 def _parse_date(s: str) -> Optional[date]:
@@ -124,43 +124,6 @@ def top5(
             )
 
         return {"code": 0, "message": "ok", "data": {"rows": rows}, "count": len(rows)}
-    finally:
-        session.close()
-
-
-@app.get("/api/v1/windtracker")
-def windtracker(
-    date_: str = Query(..., alias="date"),
-    race_no: Optional[int] = Query(default=None, alias="race_no", ge=1, le=99),
-) -> Dict[str, Any]:
-    d = _parse_date(date_)
-    if not d:
-        return {"code": 1, "message": "date format must be YYYY-MM-DD", "data": None, "count": 0}
-
-    date_str = d.strftime("%Y/%m/%d")
-    session = get_session()
-    try:
-        if race_no:
-            key = f"windtracker_t10:{date_str}:{int(race_no)}"
-            cfg = session.query(SystemConfig).filter_by(key=key).first()
-            return {"code": 0, "message": "ok", "data": (cfg.value if cfg else None), "count": 1 if cfg else 0}
-
-        prefix = f"windtracker_t10:{date_str}:"
-        q = (
-            session.query(SystemConfig.key, SystemConfig.value, SystemConfig.updated_at)
-            .filter(SystemConfig.key.like(prefix + "%"))
-            .order_by(SystemConfig.key.asc())
-        )
-        rows: List[Dict[str, Any]] = []
-        for key, value, updated_at in q.all():
-            rows.append(
-                {
-                    "key": key,
-                    "value": value,
-                    "updated_at": (updated_at.isoformat() if updated_at else None),
-                }
-            )
-        return {"code": 0, "message": "ok", "data": {"date": date_str, "rows": rows}, "count": len(rows)}
     finally:
         session.close()
 
