@@ -959,6 +959,60 @@ with tab_hits:
                                 use_container_width=True,
                                 hide_index=True,
                             )
+                            st.markdown("---")
+                            st.markdown("**缺失原因分類（按場次 factor_quality 匯總）**")
+                            st.caption("只統計已重新計分過、且已寫入 factor_quality 的場次；舊場次如未重算可能無法顯示原因分類。")
+                            from database.models import SystemConfig
+
+                            if factor_names:
+                                selected_factor = st.selectbox(
+                                    "選擇因子",
+                                    options=factor_names,
+                                    format_func=lambda x: f"{factor_desc.get(x, x)} ({x})",
+                                    key="missing_reason_factor",
+                                )
+                                race_ids = [
+                                    int(r[0])
+                                    for r in (
+                                        session_hit.query(Race.id)
+                                        .filter(func.date(Race.race_date) >= d1.isoformat())
+                                        .filter(func.date(Race.race_date) <= d2.isoformat())
+                                        .all()
+                                    )
+                                    if r and r[0]
+                                ]
+                                keys = [f"factor_quality:{rid}" for rid in race_ids]
+                                cfgs = []
+                                if keys:
+                                    cfgs = session_hit.query(SystemConfig.key, SystemConfig.value).filter(SystemConfig.key.in_(keys)).all()
+                                agg_reason = {}
+                                total_missing = 0
+                                for _, v in cfgs:
+                                    if not isinstance(v, dict):
+                                        continue
+                                    fs = v.get("factors") if isinstance(v.get("factors"), dict) else {}
+                                    fv = fs.get(selected_factor) if isinstance(fs, dict) else None
+                                    if not isinstance(fv, dict):
+                                        continue
+                                    reasons = fv.get("reasons") if isinstance(fv.get("reasons"), dict) else {}
+                                    for rk, rv in reasons.items():
+                                        n = int(rv or 0)
+                                        agg_reason[str(rk)] = int(agg_reason.get(str(rk)) or 0) + n
+                                        total_missing += n
+
+                                if not agg_reason:
+                                    st.info("所選範圍內暫無缺失原因分類資料（可先對該範圍場次重新計分）。")
+                                else:
+                                    rr = []
+                                    for rk, n in sorted(agg_reason.items(), key=lambda x: (-(int(x[1] or 0)), str(x[0]))):
+                                        rr.append(
+                                            {
+                                                "原因": rk,
+                                                "缺失(匹)": int(n or 0),
+                                                "佔缺失(%)": round((int(n or 0) / total_missing * 100.0), 1) if total_missing else 0.0,
+                                            }
+                                        )
+                                    st.dataframe(pd.DataFrame(rr), use_container_width=True, hide_index=True)
         finally:
             session_hit.close()
 

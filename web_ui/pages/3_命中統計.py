@@ -596,12 +596,20 @@ with tab_diag:
                         for k, v in qf.items():
                             if not isinstance(v, dict):
                                 continue
+                            reasons = v.get("reasons") if isinstance(v.get("reasons"), dict) else {}
+                            top_reasons = []
+                            if isinstance(reasons, dict) and reasons:
+                                for rk, rv in sorted(reasons.items(), key=lambda x: (-(int(x[1] or 0)), str(x[0]))):
+                                    if len(top_reasons) >= 2:
+                                        break
+                                    top_reasons.append(f"{rk}({int(rv or 0)})")
                             qrows.append(
                                 {
                                     "因子": k,
                                     "名稱": label_map.get(k, k),
                                     "覆蓋率": round(float(v.get("coverage") or 0.0) * 100.0, 1),
                                     "缺失(匹)": int(v.get("missing") or 0),
+                                    "缺失原因": "；".join(top_reasons),
                                     "門檻(%)": round(float(v.get("min_coverage") or 0.0) * 100.0, 0),
                                     "策略": "自動忽略" if str(v.get("action") or "") == "ignore" else "只提示",
                                     "已忽略": bool(v.get("ignored") is True),

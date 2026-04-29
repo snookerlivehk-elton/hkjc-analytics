@@ -2,7 +2,8 @@ import pandas as pd
 import numpy as np
 from typing import List, Dict, Any
 from sqlalchemy.orm import Session
-from database.models import RaceEntry, ScoringFactor, ScoringWeight, SystemConfig
+from sqlalchemy import func
+from database.models import RaceEntry, ScoringFactor, ScoringWeight, SystemConfig, Race, HorseHistory
 from utils.logger import logger
 
 from scoring_engine.utils import calculate_relative_percentile, estimate_win_probability
@@ -50,6 +51,49 @@ class ScoringEngine:
             cfg = SystemConfig(key=key, description=str(description or "").strip() or None)
             self.session.add(cfg)
         cfg.value = value
+
+    def _missing_reason(
+        self,
+        factor_name: str,
+        display: str,
+        row: Dict[str, Any],
+        speedpro_state: Dict[str, Any],
+        horse_has_history: Dict[int, bool],
+    ) -> str:
+        fn = str(factor_name or "").strip()
+        d = str(display or "").strip()
+        if fn == "speedpro_energy":
+            if not speedpro_state.get("has_data"):
+                if speedpro_state.get("had_retry"):
+                    return "SpeedPRO未追到"
+                return "SpeedPRO未抓取/未公佈"
+            if speedpro_state.get("last_error"):
+                return "SpeedPRO抓取失敗"
+            return "SpeedPRO缺馬/缺欄位"
+
+        draw = row.get("draw")
+        rating = row.get("rating")
+        weight = row.get("weight")
+        if draw is None or rating is None or weight is None:
+            return "排位/基本資料缺失"
+
+        horse_id = row.get("horse_id")
+        try:
+            hid = int(horse_id) if horse_id is not None else 0
+        except Exception:
+            hid = 0
+        if hid and horse_has_history.get(hid) is False:
+            return "往績未回填"
+
+        if "樣本不足" in d or "不足" in d:
+            return "樣本不足"
+        if "未公佈" in d or "更新中" in d:
+            return "未公佈/待更新"
+        if "不適用" in d:
+            return "不適用"
+        if d in {"", "無數據"}:
+            return "無數據"
+        return "其他/未知"
 
     def score_race(self, race_id: int):
         """核心函數：對單場賽事的所有出賽馬匹進行獨立計分、相對排名"""
@@ -103,6 +147,47 @@ class ScoringEngine:
         weights_at_time = dict(self.weights)
         factor_quality: Dict[str, Any] = {}
         n_field = int(len(scored_df))
+        race = self.session.get(Race, int(race_id)) if race_id else None
+        date_str = None
+        race_no = int(getattr(race, "race_no", 0) or 0) if race else 0
+        try:
+            rd = getattr(race, "race_date", None)
+            if rd is not None and hasattr(rd, "date"):
+                date_str = rd.date().strftime("%Y/%m/%d")
+        except Exception:
+            date_str = None
+
+        speedpro_state: Dict[str, Any] = {"has_data": False, "had_retry": False, "last_error": None}
+        if date_str and race_no:
+            sp = self.session.query(SystemConfig).filter_by(key=f"speedpro_energy:{date_str}:{race_no}").first()
+            if sp and isinstance(sp.value, dict) and sp.value:
+                speedpro_state["has_data"] = True
+            rr = self.session.query(SystemConfig).filter_by(key=f"speedpro_retry:{date_str}:{race_no}").first()
+            rv = rr.value if rr and isinstance(rr.value, dict) else {}
+            if rv:
+                speedpro_state["had_retry"] = True
+                speedpro_state["last_error"] = rv.get("last_error")
+
+        horse_ids = []
+        try:
+            horse_ids = [int(x) for x in scored_df["horse_id"].tolist() if x is not None]
+        except Exception:
+            horse_ids = []
+        horse_ids = sorted(set([x for x in horse_ids if x > 0]))
+        horse_has_history: Dict[int, bool] = {hid: False for hid in horse_ids}
+        if horse_ids:
+            rows_h = (
+                self.session.query(HorseHistory.horse_id, func.count(HorseHistory.id))
+                .filter(HorseHistory.horse_id.in_(horse_ids))
+                .group_by(HorseHistory.horse_id)
+                .all()
+            )
+            for hid, cnt in rows_h:
+                try:
+                    horse_has_history[int(hid)] = int(cnt or 0) > 0
+                except Exception:
+                    continue
+
         for factor_name in list(self.weights.keys()):
             disp = scored_df.get(f"{factor_name}_display")
             if disp is None:
@@ -135,6 +220,24 @@ class ScoringEngine:
             elif action == "warn" and coverage < min_cov:
                 logger.warning(f"因子資料覆蓋不足：{factor_name} 覆蓋率 {coverage:.1%} (< {min_cov:.0%})")
 
+            reason_counts: Dict[str, int] = {}
+            if disp is None:
+                reason_counts["無數據"] = int(n_field or 0)
+            else:
+                dd = disp.fillna("").astype(str).str.strip()
+                for i in range(len(dd)):
+                    if str(dd.iloc[i] or "").strip() not in {"", "無數據"}:
+                        continue
+                    row = scored_df.iloc[i].to_dict()
+                    r = self._missing_reason(
+                        factor_name=factor_name,
+                        display=str(dd.iloc[i] or ""),
+                        row=row,
+                        speedpro_state=speedpro_state,
+                        horse_has_history=horse_has_history,
+                    )
+                    reason_counts[r] = int(reason_counts.get(r) or 0) + 1
+
             factor_quality[factor_name] = {
                 "field_size": n_field,
                 "missing": missing_cnt,
@@ -144,6 +247,7 @@ class ScoringEngine:
                 "weight": float(self.weights.get(factor_name) or 0.0),
                 "effective_weight": float(weights_at_time.get(factor_name) or 0.0),
                 "ignored": bool(ignored),
+                "reasons": reason_counts,
             }
 
         total_score = np.zeros(len(scored_df))
