@@ -1139,6 +1139,20 @@ with tab_hits:
 
                     with st.expander("🤖 權重建議（Top5 模型）", expanded=False):
                         st.caption("用所選日期範圍的歷史賽果（Top5=正例）自動估計各因子重要性，輸出建議權重（後台只作分析與下載）。")
+                        st.markdown(
+                            """
+**方法說明（自動估計因子重要性）**
+- **資料來源**：使用所選日期範圍內、已結算賽果的場次；每匹馬取資料庫 `ScoringFactor` 的各因子分數與 `raw_data_display`。
+- **目標定義**：把「實際名次 ≤ Top5」視為正例（y=1），其他為負例（y=0）。
+- **特徵**：每個因子會產生 2 個特徵：
+  - `分數`：該因子在該場的相對分數（0–10）。
+  - `缺失`：若 `raw_data_display` 為空白/無數據 → 1，否則 0。
+- **缺失處理**：若某因子分數缺失，分數以 5.0（中間值）補上；同時 `缺失=1` 讓模型學到「缺資料時應該如何調整」。
+- **模型**：Logistic Regression（二分類），並用 `class_weight=balanced` 減少正負例比例不均造成的偏差。
+- **建議權重**：只取 `係數(分數)` 的正值，然後按「最大值」比例縮放到你選的「建議權重上限」。
+- **指標**：AUC / LogLoss 為同一批資料的擬合表現（in-sample），用作方向參考；建議以不同日期範圍反覆驗證。
+                            """.strip()
+                        )
                         from scoring_engine.weight_tuning import tune_weights_topk
                         import json
 
