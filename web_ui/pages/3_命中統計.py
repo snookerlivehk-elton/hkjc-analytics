@@ -72,6 +72,29 @@ def _actual_top5(session, race_id: int):
     return [int(r[0]) for r in rows]
 
 
+def _venue_label(venue: str, track_type: str) -> str:
+    v = str(venue or "").strip().upper()
+    t = str(track_type or "").strip()
+    if v == "HV" or ("跑馬地" in t):
+        return "跑馬地"
+    if v == "ST" or ("沙田" in t):
+        return "沙田"
+    return str(venue or "").strip() or "-"
+
+
+def _surface_label(track_type: str) -> str:
+    t = str(track_type or "").strip()
+    if any(x in t for x in ["全天候", "ALL WEATHER", "A/W", "AW"]):
+        return "泥"
+    if any(x in t for x in ["草地", "TURF"]):
+        return "草"
+    if "泥" in t:
+        return "泥"
+    if "草" in t:
+        return "草"
+    return "-"
+
+
 tab_factor, tab_preset, tab_range, tab_diag = st.tabs(["📈 獨立條件", "👥 會員儲存組合", "📊 反向統計", "🧠 診斷"])
 
 with tab_factor:
@@ -503,8 +526,8 @@ with tab_range:
             mode = c2.selectbox("模式", ["總分(組合/整體)", "單一因子"], index=0, key="rev_range_mode")
             bottom_pct = float(c3.selectbox("淘汰 BottomN%", [10, 15, 20, 25, 30], index=2, key="rev_range_bottom_pct"))
 
-            seg_opts = ["場地", "距離", "班次", "草/泥"]
-            segs = c4.multiselect("分桶維度", options=seg_opts, default=["場地", "距離"], key="rev_range_segs")
+            seg_opts = ["地點", "草/泥", "距離", "班次"]
+            segs = c4.multiselect("分桶維度", options=seg_opts, default=["地點", "距離"], key="rev_range_segs")
 
             factor_name = None
             if mode == "單一因子":
@@ -556,16 +579,18 @@ with tab_range:
                     distance = getattr(r, "distance", None)
                     race_class = str(getattr(r, "race_class", "") or "").strip()
                     track_type = str(getattr(r, "track_type", "") or "").strip()
+                    loc = _venue_label(venue=venue, track_type=track_type)
+                    surf = _surface_label(track_type=track_type)
 
                     seg_vals = []
-                    if "場地" in segs:
-                        seg_vals.append(f"場地:{venue or '-'}")
+                    if "地點" in segs:
+                        seg_vals.append(f"地點:{loc}")
+                    if "草/泥" in segs:
+                        seg_vals.append(f"草泥:{surf}")
                     if "距離" in segs:
                         seg_vals.append(f"距離:{int(distance or 0) or '-'}")
                     if "班次" in segs:
                         seg_vals.append(f"班次:{race_class or '-'}")
-                    if "草/泥" in segs:
-                        seg_vals.append(f"草泥:{track_type or '-'}")
                     seg_key = "｜".join(seg_vals) if seg_vals else "全部"
 
                     rd = getattr(r, "race_date", None)

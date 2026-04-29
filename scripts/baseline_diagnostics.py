@@ -53,6 +53,15 @@ def _distance_bucket(m: int) -> str:
     return "2001+"
 
 
+def _venue_label(venue: str) -> str:
+    v = str(venue or "").strip().upper()
+    if v == "HV":
+        return "跑馬地"
+    if v == "ST":
+        return "沙田"
+    return str(venue or "").strip() or "-"
+
+
 def _actual_topk(session, race_id: int, k: int = 5) -> List[int]:
     rows = (
         session.query(RaceEntry.horse_no)
@@ -143,7 +152,7 @@ def main():
             totals["f4"] += int(h.get("f4") or 0)
             totals["b5w"] += int(h.get("b5w") or 0)
 
-            key = f"{str(venue or '').upper()}|{_distance_bucket(int(dist or 0))}"
+            key = f"{_venue_label(str(venue or ''))}|{_distance_bucket(int(dist or 0))}"
             g = seg.get(key)
             if g is None:
                 g = {"races": 0, "win": 0, "t3": 0, "f4": 0, "b5w": 0}
