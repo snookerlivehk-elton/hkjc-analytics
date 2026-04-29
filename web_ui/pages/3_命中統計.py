@@ -16,7 +16,6 @@ from scoring_engine.diagnostics import (
     actual_ranks_by_horse_no,
     actual_topk,
     compute_elim_n,
-    compute_top_n,
     factor_label_map,
     field_size,
     active_factor_names,
@@ -473,7 +472,7 @@ with tab_preset:
 
 with tab_range:
     st.markdown("### 📊 反向統計（日期範圍）")
-    st.caption("用 BottomN%（按每場參賽馬數計算 N）評估：你淘汰的馬匹是否真的不入 TopK（K=參賽馬數-N）。")
+    st.caption("用 BottomN%（按每場參賽馬數計算 N）評估：你淘汰的馬匹是否真的不入 Top5。")
 
     session = get_session()
     try:
@@ -537,12 +536,12 @@ with tab_range:
                         continue
                     n_field = field_size(session, rid)
                     elim_n = compute_elim_n(n_field, bottom_pct)
-                    top_n = compute_top_n(n_field, bottom_pct)
-                    if elim_n <= 0 or top_n <= 0:
+                    top_k = 5
+                    if elim_n <= 0 or top_k <= 0:
                         continue
 
-                    actual_pos = actual_topk(session, rid, top_n)
-                    if len(actual_pos) < top_n:
+                    actual_pos = actual_topk(session, rid, top_k)
+                    if len(actual_pos) < top_k:
                         continue
 
                     if mode == "單一因子" and factor_name:
@@ -583,7 +582,7 @@ with tab_range:
                             "track": track_type,
                             "field": int(n_field or 0),
                             "elim_n": int(elim_n or 0),
-                            "top_n": int(top_n or 0),
+                            "top_k": int(top_k or 0),
                             "pred_neg": int(rs.get("pred_neg") or 0),
                             "tn": int(rs.get("tn") or 0),
                             "fp": int(rs.get("fp") or 0),
@@ -653,7 +652,7 @@ with tab_range:
                             "race_no": "場次",
                             "field": "參賽馬數",
                             "elim_n": "淘汰N",
-                            "top_n": "TopK",
+                            "top_k": "Top5",
                             "pred_neg": "淘汰(匹)",
                             "tn": "正確淘汰(匹)",
                             "fp": "錯殺(匹)",
@@ -672,7 +671,7 @@ with tab_range:
                                 "分桶",
                                 "參賽馬數",
                                 "淘汰N",
-                                "TopK",
+                                "Top5",
                                 "淘汰(匹)",
                                 "淘汰準確率",
                                 "錯殺率",
@@ -762,11 +761,11 @@ with tab_diag:
                     rid = int(race_id_row[0])
                     n_field = field_size(session, rid)
                     elim_n = compute_elim_n(n_field, bottom_pct)
-                    top_n = compute_top_n(n_field, bottom_pct)
                     actual_rank = actual_ranks_by_horse_no(session, rid)
                     actual_t5 = actual_topk(session, rid, 5)
                     actual_t5_set = set(actual_t5)
-                    actual_pos = actual_topk(session, rid, top_n)
+                    top_k = 5
+                    actual_pos = actual_topk(session, rid, top_k)
 
                     if mode == "單一因子" and factor_name:
                         pred_t5 = predicted_topk_by_factor(session, rid, factor_name, 5)
@@ -781,7 +780,7 @@ with tab_diag:
                     m2.metric("預測Top5", len(pred_t5))
                     m3.metric("淘汰N", f"{int(rs.get('pred_neg') or 0)} ({int(bottom_pct)}%)")
                     m4.metric(
-                        f"淘汰準確率(不入Top{int(top_n or 0)})",
+                        "淘汰準確率(不入Top5)",
                         f"{(rs.get('neg_accuracy') or 0.0):.1%}" if rs.get("neg_accuracy") is not None else "-",
                     )
 
