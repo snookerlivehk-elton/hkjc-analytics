@@ -1,3 +1,4 @@
+import math
 from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
@@ -21,6 +22,38 @@ def factor_label_map(session: Session) -> Dict[str, str]:
         v = str(desc or "").strip()
         out[k] = v if v else k
     return out
+
+
+def field_size(session: Session, race_id: int) -> int:
+    return int(session.query(RaceEntry.id).filter(RaceEntry.race_id == int(race_id)).count() or 0)
+
+
+def compute_elim_n(field_size_value: int, bottom_pct: float) -> int:
+    n = int(field_size_value or 0)
+    if n <= 0:
+        return 0
+    p = float(bottom_pct or 0.0)
+    if p <= 0:
+        return 0
+    k = int(math.ceil(n * (p / 100.0)))
+    if k < 1:
+        k = 1
+    if k >= n:
+        k = n - 1
+    return max(0, k)
+
+
+def compute_top_n(field_size_value: int, bottom_pct: float) -> int:
+    n = int(field_size_value or 0)
+    k = compute_elim_n(n, bottom_pct)
+    if n <= 0:
+        return 0
+    top_n = n - k
+    if top_n < 1:
+        top_n = 1
+    if top_n > n:
+        top_n = n
+    return top_n
 
 
 def actual_ranks_by_horse_no(session: Session, race_id: int) -> Dict[int, int]:

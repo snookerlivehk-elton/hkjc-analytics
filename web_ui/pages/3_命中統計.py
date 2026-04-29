@@ -15,7 +15,10 @@ from scoring_engine.constants import DISABLED_FACTORS
 from scoring_engine.diagnostics import (
     actual_ranks_by_horse_no,
     actual_topk,
+    compute_elim_n,
+    compute_top_n,
     factor_label_map,
+    field_size,
     predicted_bottomk_by_factor,
     predicted_bottomk_by_total,
     predicted_topk_by_factor,
@@ -508,7 +511,7 @@ with tab_diag:
             else:
                 sel_race_no = c2.selectbox("場次", race_nos, index=0, key="diag_race_no")
                 mode = c3.selectbox("診斷模式", ["總分(組合/整體)", "單一因子"], index=0, key="diag_mode")
-                bottom_n = int(c4.selectbox("淘汰 BottomN", [3, 5, 7], index=1, key="diag_bottom_n"))
+                bottom_pct = float(c4.selectbox("淘汰 BottomN%", [10, 15, 20, 25, 30], index=2, key="diag_bottom_pct"))
 
                 factor_name = None
                 if mode == "單一因子":
@@ -540,22 +543,28 @@ with tab_diag:
                     st.warning("⚠️ 找不到該場次的 race_id。")
                 else:
                     rid = int(race_id_row[0])
+                    n_field = field_size(session, rid)
+                    elim_n = compute_elim_n(n_field, bottom_pct)
+                    top_n = compute_top_n(n_field, bottom_pct)
                     actual_rank = actual_ranks_by_horse_no(session, rid)
-                    actual_t5 = actual_topk(session, rid, 5)
+                    actual_pos = actual_topk(session, rid, top_n)
 
                     if mode == "單一因子" and factor_name:
                         pred_t5 = predicted_topk_by_factor(session, rid, factor_name, 5)
-                        pred_b = predicted_bottomk_by_factor(session, rid, factor_name, bottom_n)
+                        pred_b = predicted_bottomk_by_factor(session, rid, factor_name, elim_n)
                     else:
                         pred_t5 = predicted_topk_by_total(session, rid, 5)
-                        pred_b = predicted_bottomk_by_total(session, rid, bottom_n)
+                        pred_b = predicted_bottomk_by_total(session, rid, elim_n)
 
-                    rs = reverse_stats_for_race(actual_positive=actual_t5, predicted_negative=pred_b)
+                    rs = reverse_stats_for_race(actual_positive=actual_pos, predicted_negative=pred_b)
                     m1, m2, m3, m4 = st.columns(4)
-                    m1.metric("實際Top5", len(actual_t5))
+                    m1.metric("參賽馬數", int(n_field or 0))
                     m2.metric("預測Top5", len(pred_t5))
-                    m3.metric("淘汰BottomN", int(rs.get("pred_neg") or 0))
-                    m4.metric("淘汰準確率(不入Top5)", f"{(rs.get('neg_accuracy') or 0.0):.1%}" if rs.get("neg_accuracy") is not None else "-")
+                    m3.metric("淘汰N", f"{int(rs.get('pred_neg') or 0)} ({int(bottom_pct)}%)")
+                    m4.metric(
+                        f"淘汰準確率(不入Top{int(top_n or 0)})",
+                        f"{(rs.get('neg_accuracy') or 0.0):.1%}" if rs.get("neg_accuracy") is not None else "-",
+                    )
 
                     all_hns = sorted({int(x) for x in list(actual_rank.keys()) + pred_t5 + pred_b if int(x or 0) > 0})
                     rows = []
@@ -575,6 +584,8 @@ with tab_diag:
                         )
                     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
+                    actual_t5 = actual_topk(session, rid, 5)
+                    actual_t5_set = set(actual_t5)
                     fp = [x for x in pred_t5 if x not in actual_t5_set]
                     fn = [x for x in actual_t5 if x not in pred_t5_set]
 
