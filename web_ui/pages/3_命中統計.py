@@ -467,7 +467,7 @@ with tab_preset:
                     st.info("目前未找到任何會員已儲存組合。")
                 else:
                     race_rows = (
-                        session.query(Race.id)
+                        session.query(Race.id, Race.race_date, Race.race_no)
                         .join(RaceEntry, RaceEntry.race_id == Race.id)
                         .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
                         .filter(RaceResult.rank != None)
