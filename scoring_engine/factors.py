@@ -995,6 +995,7 @@ def get_available_factors():
 
     # 14. HKJC SpeedPRO 能量分 (SpeedPRO)
     def _calculate_speedpro_energy(self):
+        from datetime import datetime
         from database.models import Race, SystemConfig
 
         race_id = self.df.iloc[0].get("race_id") if "race_id" in self.df.columns else None
