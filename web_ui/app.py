@@ -23,7 +23,7 @@ import subprocess
 from datetime import datetime
 
 # 設定頁面配置
-st.set_page_config(page_title="HKJC 每場賽事獨立計分排名系統", layout="wide")
+st.set_page_config(page_title="HKJC 每場賽事獨立計分排名系統", page_icon="🏇", layout="wide")
 
 # 全站列表文字靠左
 st.markdown(

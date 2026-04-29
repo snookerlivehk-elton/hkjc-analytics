@@ -31,7 +31,7 @@ from scoring_engine.prediction_snapshots import finalize_prediction_top5_hits_fo
 from web_ui.auth import require_superadmin
 from web_ui.nav import render_admin_nav
 
-st.set_page_config(page_title="命中統計 - HKJC Analytics", layout="wide")
+st.set_page_config(page_title="命中統計 - HKJC Analytics", page_icon="📈", layout="wide")
 
 st.markdown(
     """

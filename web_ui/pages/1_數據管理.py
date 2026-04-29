@@ -13,7 +13,7 @@ if root_path not in sys.path:
 from database.connection import get_session, init_db
 from scoring_engine.core import ScoringEngine
 
-st.set_page_config(page_title="數據管理 - HKJC Analytics", layout="wide")
+st.set_page_config(page_title="數據管理 - HKJC Analytics", page_icon="🛠️", layout="wide")
 
 # 全站列表文字靠左
 st.markdown(
@@ -962,7 +962,8 @@ with tab_hits:
                             st.markdown("---")
                             st.markdown("**缺失原因分類（按場次 factor_quality 匯總）**")
                             st.caption("只統計已重新計分過、且已寫入 factor_quality 的場次；舊場次如未重算可能無法顯示原因分類。")
-                            from database.models import SystemConfig
+                            from database.models import SystemConfig, HorseHistory
+                            from scoring_engine.core import ScoringEngine as _SE
 
                             if factor_names:
                                 selected_factor = st.selectbox(
@@ -987,18 +988,136 @@ with tab_hits:
                                     cfgs = session_hit.query(SystemConfig.key, SystemConfig.value).filter(SystemConfig.key.in_(keys)).all()
                                 agg_reason = {}
                                 total_missing = 0
-                                for _, v in cfgs:
+                                cfg_key_set = set()
+                                race_ids_with_reason = set()
+                                for k, v in cfgs:
+                                    ks = None
+                                    try:
+                                        ks = str(k)
+                                        cfg_key_set.add(ks)
+                                    except Exception:
+                                        ks = None
+                                    rid = None
+                                    try:
+                                        if ks and ks.startswith("factor_quality:"):
+                                            rid = int(ks.split(":", 1)[1])
+                                    except Exception:
+                                        rid = None
                                     if not isinstance(v, dict):
                                         continue
                                     fs = v.get("factors") if isinstance(v.get("factors"), dict) else {}
                                     fv = fs.get(selected_factor) if isinstance(fs, dict) else None
                                     if not isinstance(fv, dict):
                                         continue
+                                    if rid is not None:
+                                        race_ids_with_reason.add(int(rid))
                                     reasons = fv.get("reasons") if isinstance(fv.get("reasons"), dict) else {}
                                     for rk, rv in reasons.items():
                                         n = int(rv or 0)
                                         agg_reason[str(rk)] = int(agg_reason.get(str(rk)) or 0) + n
                                         total_missing += n
+
+                                missing_race_ids = [rid for rid in race_ids if int(rid) not in race_ids_with_reason]
+                                if missing_race_ids:
+                                    engine = _SE(session_hit)
+                                    miss_rows = (
+                                        session_hit.query(
+                                            ScoringFactor.raw_data_display,
+                                            RaceEntry.draw,
+                                            RaceEntry.rating,
+                                            RaceEntry.actual_weight,
+                                            RaceEntry.horse_id,
+                                            Race.race_date,
+                                            Race.race_no,
+                                        )
+                                        .join(RaceEntry, RaceEntry.id == ScoringFactor.entry_id)
+                                        .join(Race, Race.id == RaceEntry.race_id)
+                                        .filter(RaceEntry.race_id.in_(missing_race_ids))
+                                        .filter(ScoringFactor.factor_name == selected_factor)
+                                        .all()
+                                    )
+
+                                    horse_ids = []
+                                    race_keys = []
+                                    for disp, draw, rating, wt, hid, rd, rno in miss_rows:
+                                        dd = str(disp or "").strip()
+                                        if dd not in {"", "無數據"}:
+                                            continue
+                                        try:
+                                            if hid is not None:
+                                                horse_ids.append(int(hid))
+                                        except Exception:
+                                            pass
+                                        try:
+                                            if rd is not None and hasattr(rd, "date") and int(rno or 0) > 0:
+                                                date_str = rd.date().strftime("%Y/%m/%d")
+                                                race_keys.append((date_str, int(rno or 0)))
+                                        except Exception:
+                                            pass
+
+                                    horse_ids = sorted(set([x for x in horse_ids if x > 0]))
+                                    horse_has_history = {hid: False for hid in horse_ids}
+                                    if horse_ids:
+                                        rows_h = (
+                                            session_hit.query(HorseHistory.horse_id, func.count(HorseHistory.id))
+                                            .filter(HorseHistory.horse_id.in_(horse_ids))
+                                            .group_by(HorseHistory.horse_id)
+                                            .all()
+                                        )
+                                        for hid, cnt in rows_h:
+                                            try:
+                                                horse_has_history[int(hid)] = int(cnt or 0) > 0
+                                            except Exception:
+                                                continue
+
+                                    race_keys = sorted(set([rk for rk in race_keys if rk and rk[0] and rk[1]]))
+                                    sp_key_list = []
+                                    for ds, rno in race_keys:
+                                        sp_key_list.append(f"speedpro_energy:{ds}:{rno}")
+                                        sp_key_list.append(f"speedpro_retry:{ds}:{rno}")
+                                    sp_cfg = {}
+                                    if sp_key_list:
+                                        sp_rows = session_hit.query(SystemConfig.key, SystemConfig.value).filter(SystemConfig.key.in_(sp_key_list)).all()
+                                        for kk, vv in sp_rows:
+                                            try:
+                                                sp_cfg[str(kk)] = vv
+                                            except Exception:
+                                                continue
+
+                                    speedpro_state_by_race = {}
+                                    for ds, rno in race_keys:
+                                        sp = sp_cfg.get(f"speedpro_energy:{ds}:{rno}")
+                                        rr = sp_cfg.get(f"speedpro_retry:{ds}:{rno}")
+                                        rv = rr if isinstance(rr, dict) else {}
+                                        speedpro_state_by_race[(ds, rno)] = {
+                                            "has_data": bool(isinstance(sp, dict) and sp),
+                                            "had_retry": bool(isinstance(rv, dict) and rv),
+                                            "last_error": (rv.get("last_error") if isinstance(rv, dict) else None),
+                                        }
+
+                                    for disp, draw, rating, wt, hid, rd, rno in miss_rows:
+                                        dd = str(disp or "").strip()
+                                        if dd not in {"", "無數據"}:
+                                            continue
+                                        date_str = None
+                                        try:
+                                            if rd is not None and hasattr(rd, "date"):
+                                                date_str = rd.date().strftime("%Y/%m/%d")
+                                        except Exception:
+                                            date_str = None
+                                        sp_state = speedpro_state_by_race.get((date_str, int(rno or 0))) if date_str else None
+                                        if not isinstance(sp_state, dict):
+                                            sp_state = {"has_data": False, "had_retry": False, "last_error": None}
+                                        row = {"draw": draw, "rating": rating, "weight": wt, "horse_id": hid}
+                                        r = engine._missing_reason(
+                                            factor_name=selected_factor,
+                                            display=dd,
+                                            row=row,
+                                            speedpro_state=sp_state,
+                                            horse_has_history=horse_has_history,
+                                        )
+                                        agg_reason[str(r)] = int(agg_reason.get(str(r)) or 0) + 1
+                                        total_missing += 1
 
                                 if not agg_reason:
                                     st.info("所選範圍內暫無缺失原因分類資料（可先對該範圍場次重新計分）。")

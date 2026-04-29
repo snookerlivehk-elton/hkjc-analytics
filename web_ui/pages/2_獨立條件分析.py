@@ -15,7 +15,7 @@ from scoring_engine.constants import DISABLED_FACTORS
 from web_ui.auth import require_superadmin
 from web_ui.nav import render_admin_nav
 
-st.set_page_config(page_title="獨立條件分析 - HKJC Analytics", layout="wide")
+st.set_page_config(page_title="獨立條件分析 - HKJC Analytics", page_icon="📊", layout="wide")
 
 # 全站列表文字靠左
 st.markdown(
