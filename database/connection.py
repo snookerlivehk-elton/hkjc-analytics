@@ -34,6 +34,38 @@ def init_db():
 
     try:
         inspector = inspect(engine)
+        try:
+            if "postgresql" in DATABASE_URL:
+                cols = {c["name"]: c for c in inspector.get_columns("system_configs")}
+                key_col = cols.get("key")
+                val_col = cols.get("value")
+                with engine.begin() as conn:
+                    if key_col is not None:
+                        kt = key_col.get("type")
+                        if getattr(kt, "length", None) is not None and int(getattr(kt, "length") or 0) < 120:
+                            conn.execute(text("ALTER TABLE system_configs ALTER COLUMN key TYPE VARCHAR(255)"))
+
+                    if val_col is not None:
+                        vt = val_col.get("type")
+                        if getattr(vt, "length", None) is not None and int(getattr(vt, "length") or 0) > 0:
+                            conn.execute(
+                                text(
+                                    """
+                                    ALTER TABLE system_configs
+                                    ALTER COLUMN value TYPE JSONB
+                                    USING (
+                                      CASE
+                                        WHEN value IS NULL OR btrim(value) = '' THEN '{}'::jsonb
+                                        WHEN value ~ '^\\s*[\\{\\[]' THEN value::jsonb
+                                        ELSE to_jsonb(value)
+                                      END
+                                    )
+                                    """
+                                )
+                            )
+        except Exception:
+            pass
+
         cols = {c["name"] for c in inspector.get_columns("horse_histories")}
         if "surface" not in cols:
             with engine.begin() as conn:
