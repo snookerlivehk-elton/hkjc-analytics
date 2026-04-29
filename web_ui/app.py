@@ -945,7 +945,6 @@ def main():
                     with st.expander("📉 會員組合反向表現（淘汰準確率）", expanded=False):
                         st.caption("以 BottomN%（按每場參賽馬數計算 N）評估：你淘汰的馬匹是否真的不入 Top5。")
                         from sqlalchemy import func
-                        from database.models import Race, RaceEntry, RaceResult, ScoringFactor
                         from scoring_engine.diagnostics import compute_elim_n, reverse_stats_for_race
 
                         bottom_pct = float(st.selectbox("淘汰 BottomN%", [10, 15, 20, 25, 30], index=4, key="member_elim_bottom_pct"))
