@@ -170,6 +170,37 @@ def trigger_predictions_snapshot(target_date: str):
         st.error(f"❌ 系統錯誤: {e}")
         return False
 
+
+def trigger_speedpro_fetch(target_date: str, race_nos: str = "", retry_minutes: int = 120, force: bool = True):
+    st.markdown("### ⚡ SpeedPRO 能量分抓取進度")
+    log_placeholder = st.empty()
+    full_log = ""
+    try:
+        env = os.environ.copy()
+        if target_date:
+            env["TARGET_DATE"] = target_date
+        if race_nos:
+            env["RACE_NOS"] = race_nos
+        env["SPEEDPRO_RETRY_MINUTES"] = str(int(retry_minutes or 120))
+        if force:
+            env["FORCE_SPEEDPRO_FETCH"] = "1"
+        process = subprocess.Popen(
+            ["python3", "scripts/cron_speedpro_fetch.py"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=env,
+            bufsize=1,
+        )
+        for line in iter(process.stdout.readline, ""):
+            full_log += line
+            log_placeholder.code(full_log)
+        process.stdout.close()
+        return process.wait() == 0
+    except Exception as e:
+        st.error(f"❌ 系統錯誤: {e}")
+        return False
+
 def cleanup_removed_factor_data(session):
     try:
         from database.models import ScoringFactor, ScoringWeight, SystemConfig
@@ -364,6 +395,55 @@ with tab_ops:
             target_date_str = selected_date.strftime("%Y/%m/%d")
             if trigger_race_results_fetch(target_date=target_date_str):
                 st.success(f"✅ 已完成 {target_date_str} 賽果與派彩同步！")
+
+        st.subheader("⚡ SpeedPRO 能量分（手動備用）")
+        st.caption("用途：當 cron 未成功抓到 SpeedPRO（速勢能量評估/狀態評級）時可手動觸發一次。建議先選日期，再選場次。")
+        target_date_str = selected_date.strftime("%Y/%m/%d")
+        sp_cols = st.columns(2)
+        with sp_cols[0]:
+            race_opts = [str(i) for i in range(1, 10)]
+            selected_races = st.multiselect("選擇場次（留空＝全部）", options=race_opts, default=[])
+        with sp_cols[1]:
+            retry_minutes = st.selectbox("失敗後重試間距（分鐘）", options=[30, 60, 120], index=2)
+
+        session_sp = get_session()
+        try:
+            from database.models import SystemConfig
+
+            rows = []
+            for rn in range(1, 10):
+                retry_key = f"speedpro_retry:{target_date_str}:{rn}"
+                info_key = f"speedpro_energy_info:{target_date_str}:{rn}"
+                r_cfg = session_sp.query(SystemConfig).filter_by(key=retry_key).first()
+                i_cfg = session_sp.query(SystemConfig).filter_by(key=info_key).first()
+                r_val = r_cfg.value if r_cfg and isinstance(r_cfg.value, dict) else {}
+                i_val = i_cfg.value if i_cfg and isinstance(i_cfg.value, dict) else {}
+                if not r_val and not i_val:
+                    continue
+                rows.append(
+                    {
+                        "race_no": rn,
+                        "done": bool(r_val.get("done") is True),
+                        "attempts": int(r_val.get("attempt_count") or 0),
+                        "last_attempt_at": r_val.get("last_attempt_at"),
+                        "next_retry_at": r_val.get("next_retry_at"),
+                        "last_error": r_val.get("last_error"),
+                        "rows": i_val.get("rows"),
+                        "captured_at": i_val.get("captured_at"),
+                    }
+                )
+            if rows:
+                st.dataframe(pd.DataFrame(rows).sort_values(["race_no"]), use_container_width=True, hide_index=True)
+        finally:
+            session_sp.close()
+
+        race_nos_str = ",".join([str(int(x)) for x in selected_races if str(x).isdigit()])
+        if st.button("⚡ 立即抓取 SpeedPRO", use_container_width=True):
+            ok = trigger_speedpro_fetch(target_date=target_date_str, race_nos=race_nos_str, retry_minutes=int(retry_minutes), force=True)
+            if ok:
+                st.success("✅ 已觸發 SpeedPRO 抓取（詳情見上方日誌/狀態表）。")
+            else:
+                st.error("❌ SpeedPRO 抓取失敗，請查看日誌。")
 
         st.subheader("📚 歷史回填")
         st.caption("回填馬匹往績（HorseHistory），供部分條件計分使用。更新排位後、重算前先回填，結果較完整。")

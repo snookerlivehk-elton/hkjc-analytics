@@ -187,12 +187,13 @@ def main():
             return
 
         now_hk = datetime.now(HK_TZ)
+        force = str(os.environ.get("FORCE_SPEEDPRO_FETCH") or "").strip().lower() in ("1", "true", "yes")
         racedate_str = _target_racedate_str(session)
         window_start, window_end = _window(session, racedate_str)
-        if window_start and now_hk < window_start:
+        if (not force) and window_start and now_hk < window_start:
             print(f"too early racedate={racedate_str} window_start={window_start.isoformat()}")
             return
-        if window_end and now_hk > window_end:
+        if (not force) and window_end and now_hk > window_end:
             race_nos = _race_nos(session, racedate_str)
             for rn in race_nos:
                 retry_key = f"speedpro_retry:{racedate_str}:{int(rn)}"
@@ -211,6 +212,18 @@ def main():
             print(f"expired racedate={racedate_str} window_end={window_end.isoformat()}")
             return
         race_nos = _race_nos(session, racedate_str)
+        only_nos = str(os.environ.get("RACE_NOS") or "").strip()
+        only_no = str(os.environ.get("RACE_NO") or "").strip()
+        wanted = set()
+        if only_nos:
+            for part in only_nos.split(","):
+                part = part.strip()
+                if part.isdigit():
+                    wanted.add(int(part))
+        elif only_no.isdigit():
+            wanted.add(int(only_no))
+        if wanted:
+            race_nos = [rn for rn in race_nos if int(rn) in wanted]
 
         scraper = SpeedProEnergyScraper()
         any_work = False
