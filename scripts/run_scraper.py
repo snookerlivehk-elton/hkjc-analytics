@@ -127,6 +127,17 @@ async def run_daily_scraper():
                         cfg = SystemConfig(key=key, description=f"SpeedPRO 能量分（race_id={int(race.id)}）")
                         session.add(cfg)
                     cfg.value = sp
+                    try:
+                        date_str = (race.race_date.date().strftime("%Y/%m/%d") if race.race_date else None)
+                    except Exception:
+                        date_str = None
+                    if date_str and race.race_no:
+                        key2 = f"speedpro_energy:{date_str}:{int(race.race_no)}"
+                        cfg2 = session.query(SystemConfig).filter_by(key=key2).first()
+                        if not cfg2:
+                            cfg2 = SystemConfig(key=key2, description=f"SpeedPRO 能量分（racedate={date_str} R{int(race.race_no)}）")
+                            session.add(cfg2)
+                        cfg2.value = {str(int(k)): v for k, v in sp.items()}
                     session.commit()
                     print(f">>> 已同步 SpeedPRO 能量分：race_no={race.race_no} entries={len(sp)}")
             except Exception as e:

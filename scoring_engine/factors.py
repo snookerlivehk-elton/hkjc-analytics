@@ -1002,8 +1002,24 @@ def get_available_factors():
         if not race_id:
             return pd.Series(0.0, index=self.df.index), pd.Series("無數據", index=self.df.index)
 
-        cfg = self.session.query(SystemConfig).filter_by(key=f"speedpro_energy:{race_id}").first()
-        data_map = cfg.value if cfg and isinstance(cfg.value, dict) else {}
+        race = self.session.get(Race, race_id) if race_id else None
+        race_no = int(getattr(race, "race_no", 0) or 0) if race else 0
+        date_str = None
+        try:
+            rd = getattr(race, "race_date", None)
+            if isinstance(rd, datetime):
+                date_str = rd.date().strftime("%Y/%m/%d")
+        except Exception:
+            date_str = None
+
+        data_map = {}
+        if date_str and race_no:
+            cfg2 = self.session.query(SystemConfig).filter_by(key=f"speedpro_energy:{date_str}:{race_no}").first()
+            if cfg2 and isinstance(cfg2.value, dict):
+                data_map = cfg2.value
+        if not data_map:
+            cfg = self.session.query(SystemConfig).filter_by(key=f"speedpro_energy:{race_id}").first()
+            data_map = cfg.value if cfg and isinstance(cfg.value, dict) else {}
         if not isinstance(data_map, dict) or not data_map:
             return pd.Series(0.0, index=self.df.index), pd.Series("無數據", index=self.df.index)
 
