@@ -547,6 +547,8 @@ with tab_diag:
                     elim_n = compute_elim_n(n_field, bottom_pct)
                     top_n = compute_top_n(n_field, bottom_pct)
                     actual_rank = actual_ranks_by_horse_no(session, rid)
+                    actual_t5 = actual_topk(session, rid, 5)
+                    actual_t5_set = set(actual_t5)
                     actual_pos = actual_topk(session, rid, top_n)
 
                     if mode == "單一因子" and factor_name:
@@ -570,7 +572,6 @@ with tab_diag:
                     rows = []
                     pred_t5_set = set(pred_t5)
                     pred_b_set = set(pred_b)
-                    actual_t5_set = set(actual_t5)
                     for hn in all_hns:
                         rk = actual_rank.get(int(hn))
                         rows.append(
@@ -584,8 +585,6 @@ with tab_diag:
                         )
                     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-                    actual_t5 = actual_topk(session, rid, 5)
-                    actual_t5_set = set(actual_t5)
                     fp = [x for x in pred_t5 if x not in actual_t5_set]
                     fn = [x for x in actual_t5 if x not in pred_t5_set]
 
