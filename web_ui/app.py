@@ -1120,9 +1120,27 @@ def main():
                                 st.info("目前未找到可用的淘汰統計資料（需要該日期範圍內有賽果 + 計分因子分數）。")
                             else:
                                 df_out = pd.DataFrame(out)
-                                df_out["淘汰準確率"] = df_out["淘汰準確率"].map(lambda x: f"{float(x):.1%}" if x is not None else "-")
-                                df_out["錯殺率"] = df_out["錯殺率"].map(lambda x: f"{float(x):.1%}" if x is not None else "-")
-                                st.dataframe(df_out.sort_values(["賽日", "場次"], ascending=[False, False]), width="stretch", hide_index=True)
+                                view_mode = st.selectbox("列表顯示", ["按賽日匯總", "逐場明細"], index=0, key="member_elim_view_mode")
+                                if view_mode == "按賽日匯總":
+                                    g = (
+                                        df_out.groupby("賽日", dropna=False)
+                                        .agg(
+                                            場數=("場次", "count"),
+                                            淘汰N=("淘汰N", "sum"),
+                                            正確淘汰=("正確淘汰", "sum"),
+                                            錯殺=("錯殺", "sum"),
+                                        )
+                                        .reset_index()
+                                    )
+                                    g["淘汰準確率"] = g["正確淘汰"] / g["淘汰N"]
+                                    g["錯殺率"] = g["錯殺"] / g["淘汰N"]
+                                    g["淘汰準確率"] = g["淘汰準確率"].map(lambda x: f"{float(x):.1%}" if x is not None else "-")
+                                    g["錯殺率"] = g["錯殺率"].map(lambda x: f"{float(x):.1%}" if x is not None else "-")
+                                    st.dataframe(g.sort_values(["賽日"], ascending=[False]), width="stretch", hide_index=True)
+                                else:
+                                    df_out["淘汰準確率"] = df_out["淘汰準確率"].map(lambda x: f"{float(x):.1%}" if x is not None else "-")
+                                    df_out["錯殺率"] = df_out["錯殺率"].map(lambda x: f"{float(x):.1%}" if x is not None else "-")
+                                    st.dataframe(df_out.sort_values(["賽日", "場次"], ascending=[False, False]), width="stretch", hide_index=True)
 
                 with st.expander("🔖 本場各組合 Top5 預測", expanded=False):
                     pr = []
