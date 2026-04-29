@@ -29,6 +29,7 @@ class ScoringEngine:
         )
         # 確保資料庫中已有預設權重，否則初始化失敗
         out: Dict[str, float] = {}
+        rows_by_name: Dict[str, ScoringWeight] = {}
         for w in weights:
             name = str(w.factor_name or "").strip()
             if not name:
@@ -36,7 +37,44 @@ class ScoringEngine:
             if name not in available:
                 logger.warning(f"已啟用但未實作的因子將被略過：{name}")
                 continue
+            rows_by_name[name] = w
             out[name] = float(w.weight or 0.0)
+
+        if out:
+            s = 0.0
+            for v in out.values():
+                try:
+                    s += abs(float(v or 0.0))
+                except Exception:
+                    continue
+            if s < 1e-9:
+                defaults = {
+                    "jockey_trainer_bond": 1.0,
+                    "horse_time_perf": 1.5,
+                    "venue_dist_specialty": 1.0,
+                    "draw_stats": 0.8,
+                    "weight_rating_perf": 0.7,
+                    "gear_change": 0.6,
+                    "class_performance": 1.0,
+                    "going_specialty": 0.8,
+                    "speedpro_energy": 1.2,
+                    "recent_form": 1.4,
+                    "vet_rest_days": 0.5,
+                    "debut_long_rest": 0.7,
+                    "morning_trial_perf": 0.0,
+                }
+                for name in list(out.keys()):
+                    w = rows_by_name.get(name)
+                    if not w:
+                        continue
+                    new_w = float(defaults.get(name, 1.0))
+                    w.weight = new_w
+                    out[name] = new_w
+                try:
+                    self.session.commit()
+                    logger.warning("偵測到全局權重合計為 0，已自動回復預設權重。")
+                except Exception:
+                    self.session.rollback()
         return out
 
     def _load_factor_quality_policy(self) -> Dict[str, Any]:
@@ -250,6 +288,28 @@ class ScoringEngine:
                 "reasons": reason_counts,
             }
 
+        factor_quality_meta: Dict[str, Any] = {}
+        eff_sum = 0.0
+        base_sum = 0.0
+        for v in weights_at_time.values():
+            try:
+                eff_sum += abs(float(v or 0.0))
+            except Exception:
+                continue
+        for v in self.weights.values():
+            try:
+                base_sum += abs(float(v or 0.0))
+            except Exception:
+                continue
+        if base_sum > 0.0 and eff_sum < 1e-9 and factor_quality:
+            weights_at_time = dict(self.weights)
+            for fn, info in factor_quality.items():
+                if isinstance(info, dict):
+                    info["effective_weight"] = float(weights_at_time.get(fn) or 0.0)
+                    info["ignored"] = False
+            factor_quality_meta = {"fallback": "all_factors_ignored"}
+            logger.warning("本場因子資料不足策略導致全因子被忽略，已自動回退為只提示（避免 total_score 全為 0）。")
+
         total_score = np.zeros(len(scored_df))
         for factor_name, weight in weights_at_time.items():
             total_score += scored_df[f"{factor_name}_score"] * float(weight or 0.0)
@@ -272,7 +332,7 @@ class ScoringEngine:
         try:
             self._upsert_system_config(
                 key=f"factor_quality:{int(race_id)}",
-                value={"race_id": int(race_id), "field_size": n_field, "factors": factor_quality},
+                value={"race_id": int(race_id), "field_size": n_field, "factors": factor_quality, "meta": factor_quality_meta},
                 description="因子資料完整度（按場次）",
             )
             self.session.commit()

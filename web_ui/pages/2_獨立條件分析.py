@@ -68,7 +68,7 @@ def load_factor_data(session: Session, race_id: int):
             "檔位": entry.draw,
             "負磅": entry.actual_weight,
             "評分": entry.rating,
-            "總分": round(entry.total_score, 2) if entry.total_score else 0,
+            "總分": round(float(entry.total_score), 2) if entry.total_score is not None else None,
         }
         
         factors = (
