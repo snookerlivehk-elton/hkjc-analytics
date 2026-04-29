@@ -59,16 +59,18 @@ def load_factor_data(session: Session, race_id: int):
         .all()
     )
     factor_desc_map = {w.factor_name: w.description for w in weights}
+    factor_weight_map = {w.factor_name: float(w.weight) if w.weight is not None else 0.0 for w in weights}
     
     data = []
     for entry in entries:
+        total_calc = 0.0
         row = {
             "馬號": entry.horse_no,
             "馬名": entry.horse.name_ch if entry.horse else "未知",
             "檔位": entry.draw,
             "負磅": entry.actual_weight,
             "評分": entry.rating,
-            "總分": round(float(entry.total_score), 2) if entry.total_score is not None else None,
+            "總分(落庫)": round(float(entry.total_score), 2) if entry.total_score is not None else None,
         }
         
         factors = (
@@ -82,7 +84,9 @@ def load_factor_data(session: Session, race_id: int):
             desc = factor_desc_map.get(f.factor_name, f.factor_name)
             row[desc] = round(f.score, 2)
             row[f"{desc}_raw"] = f.raw_data_display if f.raw_data_display else "無數據"
+            total_calc += float(f.score or 0.0) * float(factor_weight_map.get(f.factor_name, 0.0))
             
+        row["總分(全局權重)"] = round(float(total_calc), 2)
         data.append(row)
         
     return pd.DataFrame(data), list(factor_desc_map.values())

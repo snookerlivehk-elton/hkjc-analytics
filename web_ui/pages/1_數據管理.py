@@ -473,6 +473,74 @@ with tab_ops:
         finally:
             session_q.close()
 
+        st.subheader("⚖️ 全局權重設定（ScoringWeight）")
+        st.caption("此處係「全局」權重（會影響後台按總分排序、以及以全局權重生成的 Top5/淘汰診斷）。用戶端會員組合係另一套 preset 權重。")
+        session_w = get_session()
+        try:
+            from database.models import ScoringWeight
+            from scoring_engine.constants import DISABLED_FACTORS
+
+            rows = (
+                session_w.query(ScoringWeight)
+                .filter(~ScoringWeight.factor_name.in_(DISABLED_FACTORS))
+                .order_by(ScoringWeight.factor_name.asc())
+                .all()
+            )
+            items = []
+            for w in rows:
+                fn = str(getattr(w, "factor_name", "") or "").strip()
+                if not fn:
+                    continue
+                items.append(
+                    {
+                        "因子代號": fn,
+                        "因子名稱": str(getattr(w, "description", "") or fn),
+                        "權重": (float(w.weight) if getattr(w, "weight", None) is not None else None),
+                        "啟用": bool(getattr(w, "is_active", False)),
+                    }
+                )
+
+            if not items:
+                st.info("目前未找到任何全局權重設定。")
+            else:
+                dfw = pd.DataFrame(items)
+                edited_w = st.data_editor(
+                    dfw,
+                    width="stretch",
+                    hide_index=True,
+                    column_config={
+                        "權重": st.column_config.NumberColumn("權重", step=0.1, help="留空會視作 0；建議一般保持 >0"),
+                        "啟用": st.column_config.CheckboxColumn("啟用"),
+                    },
+                    disabled=["因子代號", "因子名稱"],
+                    key="global_weight_editor",
+                )
+                c_save, c_hint = st.columns([2, 3])
+                save_w = c_save.button("💾 儲存全局權重", width="stretch", key="save_global_weights")
+                c_hint.caption("儲存後需重算相關場次，才會寫回 RaceEntry.total_score。")
+
+                if save_w and isinstance(edited_w, pd.DataFrame):
+                    w_by_name = {str(x.factor_name): x for x in rows if getattr(x, "factor_name", None)}
+                    for _, r in edited_w.iterrows():
+                        code = str(r.get("因子代號") or "").strip()
+                        if not code or code not in w_by_name:
+                            continue
+                        obj = w_by_name[code]
+                        v = r.get("權重")
+                        try:
+                            obj.weight = float(v) if v is not None and str(v) != "nan" else 0.0
+                        except Exception:
+                            obj.weight = 0.0
+                        obj.is_active = bool(r.get("啟用") is True)
+                    session_w.commit()
+                    st.success("✅ 已儲存全局權重。")
+                    st.rerun()
+        except Exception as e:
+            session_w.rollback()
+            st.error(f"❌ 全局權重讀寫失敗: {e}")
+        finally:
+            session_w.close()
+
         st.subheader("🎯 勝率校準（Temperature）")
         st.caption("用途：把「總分→預估勝率」的 softmax 溫度做校準，讓勝率分佈更貼近歷史賽果（只影響顯示/勝率欄位，不改排名）。")
         session_cal = get_session()
