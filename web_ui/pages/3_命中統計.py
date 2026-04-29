@@ -418,132 +418,259 @@ with tab_preset:
                             key="preset_share_json_download",
                         )
 
-            end_default = available_dates[0]
-            start_default = max(end_default - timedelta(days=30), min(available_dates))
-            d1, d2 = st.date_input("統計日期範圍", value=(start_default, end_default), key="hit_preset_range")
-            if isinstance(d1, date) and isinstance(d2, date) and d1 > d2:
-                d1, d2 = d2, d1
-
-            if st.button(f"🧾 結算 Top5 命中（{d2.isoformat()}）", width="content", key="settle_preset"):
-                res = finalize_prediction_top5_hits_for_race_date(session, d2.strftime("%Y/%m/%d"))
-                st.success(f"完成：updated={res.get('updated')} skipped={res.get('skipped')}")
-                st.rerun()
-
-            preds = (
-                session.query(
-                    PredictionTop5.member_email,
-                    PredictionTop5.predictor_key,
-                    PredictionTop5.meta,
-                )
-                .filter(PredictionTop5.predictor_type == "preset")
-                .filter(func.date(PredictionTop5.race_date) >= d1.isoformat())
-                .filter(func.date(PredictionTop5.race_date) <= d2.isoformat())
+            drows2 = (
+                session.query(func.date(Race.race_date))
+                .join(RaceEntry, RaceEntry.race_id == Race.id)
+                .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
+                .filter(RaceResult.rank != None)
+                .distinct()
+                .order_by(func.date(Race.race_date).desc())
+                .limit(365)
                 .all()
             )
-            if not preds:
-                st.info("選定範圍內沒有任何會員組合 Top5 快照。")
+            available_dates2 = [r[0] for r in drows2 if r and r[0]]
+            if not available_dates2:
+                st.info("目前未有任何已抓取賽果的場次可供統計。")
             else:
-                agg = {}
-                for email, preset_name, meta in preds:
-                    email_k = str(email or "").strip().lower()
-                    preset_k = str(preset_name or "").strip()
-                    if not email_k or not preset_k:
-                        continue
-                    h = None
-                    if isinstance(meta, dict):
-                        h = meta.get("hits")
-                    if not isinstance(h, dict):
-                        continue
-                    key = (email_k, preset_k)
-                    a = agg.get(key)
-                    if a is None:
-                        a = {"races": 0, "win": 0, "p": 0, "q1": 0, "pq": 0, "t3e": 0, "t3": 0, "f4": 0, "f4q": 0, "b5w": 0, "b5p": 0}
-                        agg[key] = a
-                    a["races"] += 1
-                    for mk, mv in h.items():
-                        kk = str(mk).lower()
-                        if kk in a:
-                            a[kk] += int(mv or 0)
+                end_default = available_dates2[0]
+                start_default = max(end_default - timedelta(days=30), min(available_dates2))
+                d1, d2 = st.date_input("統計日期範圍", value=(start_default, end_default), key="hit_preset_range")
+                if isinstance(d1, date) and isinstance(d2, date) and d1 > d2:
+                    d1, d2 = d2, d1
 
-                rows = []
-                for (email_k, preset_k), a in agg.items():
-                    n = int(a["races"] or 0)
-                    rows.append(
-                        {
-                            "Email": email_k,
-                            "組合": preset_k,
-                            "樣本(場)": n,
-                            "WIN%": round((a["win"] / n * 100.0), 1) if n else 0.0,
-                            "P%": round((a["p"] / n * 100.0), 1) if n else 0.0,
-                            "Q1%": round((a["q1"] / n * 100.0), 1) if n else 0.0,
-                            "PQ%": round((a["pq"] / n * 100.0), 1) if n else 0.0,
-                            "T3E%": round((a["t3e"] / n * 100.0), 1) if n else 0.0,
-                            "T3%": round((a["t3"] / n * 100.0), 1) if n else 0.0,
-                            "F4%": round((a["f4"] / n * 100.0), 1) if n else 0.0,
-                            "F4Q%": round((a["f4q"] / n * 100.0), 1) if n else 0.0,
-                            "B5W%": round((a["b5w"] / n * 100.0), 1) if n else 0.0,
-                            "B5P%": round((a["b5p"] / n * 100.0), 1) if n else 0.0,
-                        }
-                    )
-                if not rows:
-                    st.info("目前未有任何已結算（已抓賽果）的會員組合命中資料。")
+                st.caption("本區塊以「會員已儲存組合」+「已結算賽果」即時計算，不依賴 Top5 快照是否已結算。")
+
+                from scoring_engine.member_stats import _calc_hits
+                from database.models import SystemConfig
+
+                cfg_rows = session.query(SystemConfig.key, SystemConfig.value).filter(SystemConfig.key.like("member_weight_presets:%")).all()
+                preset_defs = []
+                for k, v in cfg_rows:
+                    key_s = str(k or "")
+                    if ":" not in key_s:
+                        continue
+                    email_k = key_s.split(":", 1)[1].strip().lower()
+                    if not email_k:
+                        continue
+                    if not isinstance(v, list):
+                        continue
+                    for item in v[:3]:
+                        if not isinstance(item, dict):
+                            continue
+                        name = str(item.get("name") or "").strip()
+                        weights = item.get("weights") if isinstance(item.get("weights"), dict) else {}
+                        if not name or not weights:
+                            continue
+                        preset_defs.append((email_k, name, {str(fn): float(w or 0.0) for fn, w in weights.items()}))
+
+                if not preset_defs:
+                    st.info("目前未找到任何會員已儲存組合。")
                 else:
-                    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
-
-                st.markdown("### 📉 會員組合反向表現（淘汰準確率）")
-                pct = float(st.selectbox("淘汰 BottomN%", [10, 15, 20, 25, 30], index=4, key="hit_preset_elim_bottom_pct"))
-                pct_key = str(int(pct))
-                agg2 = {}
-                for email, preset_name, meta in preds:
-                    email_k = str(email or "").strip().lower()
-                    preset_k = str(preset_name or "").strip()
-                    if not email_k or not preset_k:
-                        continue
-                    if not isinstance(meta, dict):
-                        continue
-                    ev = meta.get("elim_eval") if isinstance(meta.get("elim_eval"), dict) else {}
-                    cur = ev.get(pct_key) if isinstance(ev.get(pct_key), dict) else None
-                    if not isinstance(cur, dict):
-                        continue
-                    pred_n = int(cur.get("elim_n") or 0)
-                    tn = int(cur.get("tn") or 0)
-                    fp = int(cur.get("fp") or 0)
-                    if pred_n <= 0:
-                        continue
-                    key = (email_k, preset_k)
-                    a = agg2.get(key)
-                    if a is None:
-                        a = {"races": 0, "pred": 0, "tn": 0, "fp": 0}
-                        agg2[key] = a
-                    a["races"] += 1
-                    a["pred"] += pred_n
-                    a["tn"] += tn
-                    a["fp"] += fp
-
-                rows2 = []
-                for (email_k, preset_k), a in agg2.items():
-                    n = int(a["races"] or 0)
-                    pred_n = int(a["pred"] or 0)
-                    tn = int(a["tn"] or 0)
-                    fp = int(a["fp"] or 0)
-                    acc = (tn / pred_n) if pred_n else None
-                    fp_rate = (fp / pred_n) if pred_n else None
-                    rows2.append(
-                        {
-                            "Email": email_k,
-                            "組合": preset_k,
-                            "樣本(場)": n,
-                            "淘汰(匹)": pred_n,
-                            "淘汰準確率(不入Top5)": (round(acc * 100.0, 1) if acc is not None else None),
-                            "錯殺率": (round(fp_rate * 100.0, 1) if fp_rate is not None else None),
-                            "正確淘汰(匹)": tn,
-                            "錯殺(匹)": fp,
-                        }
+                    race_rows = (
+                        session.query(Race.id)
+                        .join(RaceEntry, RaceEntry.race_id == Race.id)
+                        .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
+                        .filter(RaceResult.rank != None)
+                        .filter(func.date(Race.race_date) >= d1.isoformat())
+                        .filter(func.date(Race.race_date) <= d2.isoformat())
+                        .distinct()
+                        .order_by(Race.race_date.asc(), Race.race_no.asc(), Race.id.asc())
+                        .all()
                     )
-                if not rows2:
-                    st.info("目前未有任何已結算（已抓賽果）的會員組合淘汰統計資料。請先按上方「結算 Top5 命中」再查看。")
-                else:
-                    st.dataframe(pd.DataFrame(rows2).sort_values(["淘汰準確率(不入Top5)", "錯殺率"], ascending=[False, True]), width="stretch", hide_index=True)
+                    race_ids = [int(r[0]) for r in race_rows if r and int(r[0] or 0) > 0]
+                    if not race_ids:
+                        st.info("選定範圍內沒有任何已抓取賽果的場次。")
+                    else:
+                        used_factors = set()
+                        for _, _, w in preset_defs:
+                            for fn, ww in (w or {}).items():
+                                if abs(float(ww or 0.0)) > 1e-12:
+                                    used_factors.add(str(fn))
+                        used_factors = sorted(used_factors)
+
+                        horses_by_race = {}
+                        for rid, hn in session.query(RaceEntry.race_id, RaceEntry.horse_no).filter(RaceEntry.race_id.in_(race_ids)).all():
+                            rr = horses_by_race.get(int(rid))
+                            if rr is None:
+                                rr = []
+                                horses_by_race[int(rid)] = rr
+                            try:
+                                rr.append(int(hn or 0))
+                            except Exception:
+                                rr.append(0)
+                        for rid in list(horses_by_race.keys()):
+                            horses_by_race[rid] = [x for x in horses_by_race[rid] if int(x or 0) > 0]
+
+                        actual_by_race = {}
+                        rr_rows = (
+                            session.query(RaceEntry.race_id, RaceEntry.horse_no, RaceResult.rank)
+                            .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
+                            .filter(RaceEntry.race_id.in_(race_ids))
+                            .filter(RaceResult.rank != None)
+                            .order_by(RaceEntry.race_id.asc(), RaceResult.rank.asc())
+                            .all()
+                        )
+                        for rid, hn, rk in rr_rows:
+                            rid_i = int(rid or 0)
+                            if rid_i <= 0:
+                                continue
+                            a = actual_by_race.get(rid_i)
+                            if a is None:
+                                a = []
+                                actual_by_race[rid_i] = a
+                            if len(a) >= 5:
+                                continue
+                            try:
+                                a.append(int(hn or 0))
+                            except Exception:
+                                a.append(0)
+                        for rid in list(actual_by_race.keys()):
+                            actual_by_race[rid] = [x for x in actual_by_race[rid] if int(x or 0) > 0][:5]
+
+                        score_map = {}
+                        if used_factors:
+                            sf_rows = (
+                                session.query(RaceEntry.race_id, RaceEntry.horse_no, ScoringFactor.factor_name, ScoringFactor.score)
+                                .join(ScoringFactor, ScoringFactor.entry_id == RaceEntry.id)
+                                .filter(RaceEntry.race_id.in_(race_ids))
+                                .filter(ScoringFactor.factor_name.in_(used_factors))
+                                .all()
+                            )
+                            for rid, hn, fn, sc in sf_rows:
+                                rid_i = int(rid or 0)
+                                if rid_i <= 0:
+                                    continue
+                                hn_i = int(hn or 0)
+                                if hn_i <= 0:
+                                    continue
+                                rmap = score_map.get(rid_i)
+                                if rmap is None:
+                                    rmap = {}
+                                    score_map[rid_i] = rmap
+                                hmap = rmap.get(hn_i)
+                                if hmap is None:
+                                    hmap = {}
+                                    rmap[hn_i] = hmap
+                                hmap[str(fn)] = float(sc or 0.0)
+
+                        def _ranked_horses_for_preset(rid: int, weights: dict):
+                            horses = horses_by_race.get(int(rid)) or []
+                            rmap = score_map.get(int(rid)) or {}
+                            items = []
+                            for hn in horses:
+                                m = rmap.get(int(hn)) or {}
+                                total = 0.0
+                                for fn, ww in (weights or {}).items():
+                                    total += float(m.get(str(fn), 0.0)) * float(ww or 0.0)
+                                items.append((int(hn), float(total)))
+                            items.sort(key=lambda x: (-x[1], x[0]))
+                            return [hn for hn, _ in items]
+
+                        st.markdown("### 📊 會員組合命中率（Top5）")
+                        agg = {}
+                        for email_k, preset_k, w in preset_defs:
+                            key = (email_k, preset_k)
+                            a = agg.get(key)
+                            if a is None:
+                                a = {"races": 0, "win": 0, "p": 0, "q1": 0, "pq": 0, "t3e": 0, "t3": 0, "f4": 0, "f4q": 0, "b5w": 0, "b5p": 0}
+                                agg[key] = a
+                            for rid in race_ids:
+                                act = actual_by_race.get(int(rid)) or []
+                                if len(act) < 5:
+                                    continue
+                                ranked = _ranked_horses_for_preset(int(rid), w)
+                                if len(ranked) < 5:
+                                    continue
+                                pred = ranked[:5]
+                                hits = _calc_hits(pred, act)
+                                if not hits:
+                                    continue
+                                a["races"] += 1
+                                for mk, mv in hits.items():
+                                    kk = str(mk).lower()
+                                    if kk in a:
+                                        a[kk] += int(mv or 0)
+
+                        rows = []
+                        for (email_k, preset_k), a in agg.items():
+                            n = int(a["races"] or 0)
+                            rows.append(
+                                {
+                                    "Email": email_k,
+                                    "組合": preset_k,
+                                    "樣本(場)": n,
+                                    "WIN%": round((a["win"] / n * 100.0), 1) if n else 0.0,
+                                    "P%": round((a["p"] / n * 100.0), 1) if n else 0.0,
+                                    "Q1%": round((a["q1"] / n * 100.0), 1) if n else 0.0,
+                                    "PQ%": round((a["pq"] / n * 100.0), 1) if n else 0.0,
+                                    "T3E%": round((a["t3e"] / n * 100.0), 1) if n else 0.0,
+                                    "T3%": round((a["t3"] / n * 100.0), 1) if n else 0.0,
+                                    "F4%": round((a["f4"] / n * 100.0), 1) if n else 0.0,
+                                    "F4Q%": round((a["f4q"] / n * 100.0), 1) if n else 0.0,
+                                    "B5W%": round((a["b5w"] / n * 100.0), 1) if n else 0.0,
+                                    "B5P%": round((a["b5p"] / n * 100.0), 1) if n else 0.0,
+                                }
+                            )
+                        rows = [r for r in rows if int(r.get("樣本(場)") or 0) > 0]
+                        if not rows:
+                            st.info("目前未有足夠資料計算命中率（可能尚未抓賽果或未重新計分）。")
+                        else:
+                            st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+
+                        st.markdown("### 📉 會員組合反向表現（淘汰準確率）")
+                        pct = float(st.selectbox("淘汰 BottomN%", [10, 15, 20, 25, 30], index=4, key="hit_preset_elim_bottom_pct"))
+                        agg2 = {}
+                        for email_k, preset_k, w in preset_defs:
+                            key = (email_k, preset_k)
+                            a = agg2.get(key)
+                            if a is None:
+                                a = {"races": 0, "pred": 0, "tn": 0, "fp": 0}
+                                agg2[key] = a
+                            for rid in race_ids:
+                                act = actual_by_race.get(int(rid)) or []
+                                if len(act) < 5:
+                                    continue
+                                ranked = _ranked_horses_for_preset(int(rid), w)
+                                if not ranked:
+                                    continue
+                                elim_n = compute_elim_n(len(horses_by_race.get(int(rid)) or []), float(pct))
+                                if int(elim_n or 0) <= 0:
+                                    continue
+                                pred_neg = ranked[-int(elim_n):]
+                                rs = reverse_stats_for_race(actual_positive=act, predicted_negative=pred_neg)
+                                if rs.get("pred_neg") is None:
+                                    continue
+                                a["races"] += 1
+                                a["pred"] += int(rs.get("pred_neg") or 0)
+                                a["tn"] += int(rs.get("tn") or 0)
+                                a["fp"] += int(rs.get("fp") or 0)
+
+                        rows2 = []
+                        for (email_k, preset_k), a in agg2.items():
+                            n = int(a["races"] or 0)
+                            pred_n = int(a["pred"] or 0)
+                            tn = int(a["tn"] or 0)
+                            fp = int(a["fp"] or 0)
+                            if n <= 0 or pred_n <= 0:
+                                continue
+                            acc = (tn / pred_n) if pred_n else None
+                            fp_rate = (fp / pred_n) if pred_n else None
+                            rows2.append(
+                                {
+                                    "Email": email_k,
+                                    "組合": preset_k,
+                                    "樣本(場)": n,
+                                    "淘汰(匹)": pred_n,
+                                    "淘汰準確率(不入Top5)": (round(acc * 100.0, 1) if acc is not None else None),
+                                    "錯殺率": (round(fp_rate * 100.0, 1) if fp_rate is not None else None),
+                                    "正確淘汰(匹)": tn,
+                                    "錯殺(匹)": fp,
+                                }
+                            )
+                        if not rows2:
+                            st.info("目前未有足夠資料計算淘汰統計（可能尚未抓賽果或未重新計分）。")
+                        else:
+                            st.dataframe(pd.DataFrame(rows2).sort_values(["淘汰準確率(不入Top5)", "錯殺率"], ascending=[False, True]), width="stretch", hide_index=True)
     finally:
         session.close()
 
