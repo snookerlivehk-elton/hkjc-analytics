@@ -12,6 +12,7 @@ if root_path not in sys.path:
 
 from database.connection import get_session, init_db
 from scoring_engine.core import ScoringEngine
+from web_ui.nav import render_admin_nav
 
 st.set_page_config(page_title="數據管理 - HKJC Analytics", page_icon="🛠️", layout="wide")
 
@@ -56,6 +57,9 @@ if not st.session_state.get("is_superadmin", False):
             else:
                 st.error("❌ 密碼錯誤")
     st.stop()
+
+st.title("🛠️ 數據管理後台")
+render_admin_nav()
 
 def trigger_scraper(target_date: str = None):
     """實時日誌串流輸出"""
