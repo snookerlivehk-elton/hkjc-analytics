@@ -20,15 +20,26 @@ CURRENT_POLICY = {
     "metrics": ["WIN", "P", "Q1", "PQ", "T3E", "T3", "F4", "F4Q", "B5W", "B5P"],
 }
 
-ELIM_BOTTOM_PCTS = [10, 15, 20, 25, 30]
-CURRENT_ELIM_POLICY = {
+LEGACY_ELIM_BOTTOM_PCTS = [10, 15, 20, 25, 30, 35, 40, 50]
+ELIM_BOTTOM_PCTS = [35]
+LEGACY_ELIM_POLICY = {
     "start_date": STATS_START_DATE.date().isoformat(),
     "window_days": int(STATS_WINDOW_DAYS),
     "cmp": "date",
     "v": 2,
     "top_k": 5,
+    "bottom_pcts": LEGACY_ELIM_BOTTOM_PCTS,
+    "metrics": ["pred", "tn", "fp"],
+}
+CURRENT_ELIM_POLICY = {
+    "start_date": STATS_START_DATE.date().isoformat(),
+    "window_days": int(STATS_WINDOW_DAYS),
+    "cmp": "date",
+    "v": 6,
+    "top_k": 5,
     "bottom_pcts": ELIM_BOTTOM_PCTS,
     "metrics": ["pred", "tn", "fp"],
+    "daily": True,
 }
 
 
@@ -135,7 +146,7 @@ def load_member_preset_elim_stats(session: Session, email: str) -> Dict[str, Any
     if cfg and isinstance(cfg.value, dict):
         out = {}
         for k, v in cfg.value.items():
-            if isinstance(v, dict) and v.get("policy") == CURRENT_ELIM_POLICY:
+            if isinstance(v, dict) and v.get("policy") in (CURRENT_ELIM_POLICY, LEGACY_ELIM_POLICY):
                 out[k] = v
         return out
     return {}
@@ -187,6 +198,7 @@ def update_member_preset_elim_stats_incremental(
         if not isinstance(st, dict):
             st = {
                 "pcts": {str(int(x)): {"races": 0, "pred": 0, "tn": 0, "fp": 0} for x in ELIM_BOTTOM_PCTS},
+                "days": {},
                 "last_date": None,
                 "last_race_no": None,
                 "last_race_id": None,
@@ -200,6 +212,7 @@ def update_member_preset_elim_stats_incremental(
             if st.get("policy") != policy:
                 st = {
                     "pcts": {str(int(x)): {"races": 0, "pred": 0, "tn": 0, "fp": 0} for x in ELIM_BOTTOM_PCTS},
+                    "days": {},
                     "last_date": None,
                     "last_race_no": None,
                     "last_race_id": None,
@@ -208,6 +221,9 @@ def update_member_preset_elim_stats_incremental(
                     "range_to": None,
                     "policy": policy,
                 }
+                changed_any = True
+            if not isinstance(st.get("days"), dict):
+                st["days"] = {}
                 changed_any = True
 
         last_date = None
@@ -230,6 +246,7 @@ def update_member_preset_elim_stats_incremental(
             changed_any = True
 
         pcts_map = st.get("pcts") if isinstance(st.get("pcts"), dict) else {}
+        days_map = st.get("days") if isinstance(st.get("days"), dict) else {}
         for pct in ELIM_BOTTOM_PCTS:
             k = str(int(pct))
             if k not in pcts_map or not isinstance(pcts_map.get(k), dict):
@@ -256,6 +273,9 @@ def update_member_preset_elim_stats_incremental(
                 continue
             n_field = int(session.query(func.count(RaceEntry.id)).filter(RaceEntry.race_id == rid).scalar() or 0)
             used_any = False
+            day_key = r.race_date.date().isoformat() if hasattr(r.race_date, "date") else str(r.race_date or "")
+            if day_key and day_key not in days_map:
+                days_map[day_key] = {str(int(x)): {"races": 0, "pred": 0, "tn": 0, "fp": 0} for x in ELIM_BOTTOM_PCTS}
             for pct in ELIM_BOTTOM_PCTS:
                 elim_n = _compute_elim_n(n_field, float(pct))
                 if elim_n <= 0:
@@ -274,6 +294,14 @@ def update_member_preset_elim_stats_incremental(
                 a["tn"] = int(a.get("tn") or 0) + tn
                 a["fp"] = int(a.get("fp") or 0) + fp
                 pcts_map[kk] = a
+                if day_key and isinstance(days_map.get(day_key), dict):
+                    da = days_map[day_key].get(kk)
+                    if isinstance(da, dict):
+                        da["races"] = int(da.get("races") or 0) + 1
+                        da["pred"] = int(da.get("pred") or 0) + int(elim_n)
+                        da["tn"] = int(da.get("tn") or 0) + tn
+                        da["fp"] = int(da.get("fp") or 0) + fp
+                        days_map[day_key][kk] = da
                 used_any = True
 
             if used_any:
@@ -284,6 +312,7 @@ def update_member_preset_elim_stats_incremental(
                 processed += 1
 
         st["pcts"] = pcts_map
+        st["days"] = days_map
         stats[name] = st
         if processed > 0:
             changed_any = True
@@ -328,6 +357,7 @@ def rebuild_member_preset_elim_stats(
             continue
         st = {
             "pcts": {str(int(x)): {"races": 0, "pred": 0, "tn": 0, "fp": 0} for x in pcts},
+            "days": {},
             "last_date": None,
             "last_race_no": None,
             "last_race_id": None,
@@ -348,6 +378,9 @@ def rebuild_member_preset_elim_stats(
             if not ranked:
                 continue
             n_field = int(session.query(func.count(RaceEntry.id)).filter(RaceEntry.race_id == rid).scalar() or 0)
+            day_key = r.race_date.date().isoformat() if hasattr(r.race_date, "date") else str(r.race_date or "")
+            if day_key and day_key not in st["days"]:
+                st["days"][day_key] = {str(int(x)): {"races": 0, "pred": 0, "tn": 0, "fp": 0} for x in pcts}
             for pct in pcts:
                 elim_n = _compute_elim_n(n_field, float(pct))
                 if elim_n <= 0:
@@ -365,6 +398,14 @@ def rebuild_member_preset_elim_stats(
                 a["pred"] += int(elim_n)
                 a["tn"] += tn
                 a["fp"] += fp
+                if day_key and isinstance(st["days"].get(day_key), dict):
+                    da = st["days"][day_key].get(kk)
+                    if isinstance(da, dict):
+                        da["races"] = int(da.get("races") or 0) + 1
+                        da["pred"] = int(da.get("pred") or 0) + int(elim_n)
+                        da["tn"] = int(da.get("tn") or 0) + tn
+                        da["fp"] = int(da.get("fp") or 0) + fp
+                        st["days"][day_key][kk] = da
 
             st["last_date"] = r.race_date.date().isoformat() if hasattr(r.race_date, "date") else str(r.race_date)
             st["last_race_no"] = int(getattr(r, "race_no") or 0)

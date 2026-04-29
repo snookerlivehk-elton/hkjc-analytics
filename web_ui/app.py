@@ -943,11 +943,11 @@ def main():
                                 )
 
                     with st.expander("📉 會員組合反向表現（淘汰準確率）", expanded=False):
-                        st.caption("以 BottomN%（按每場參賽馬數計算 N）評估：你淘汰的馬匹是否真的不入 Top5。")
+                        st.caption("以 Bottom35%（按每場參賽馬數計算 N）評估：你淘汰的馬匹是否真的不入 Top5。")
                         from sqlalchemy import func
                         from scoring_engine.diagnostics import compute_elim_n, reverse_stats_for_race
 
-                        bottom_pct = float(st.selectbox("淘汰 BottomN%", [10, 15, 20, 25, 30], index=4, key="member_elim_bottom_pct"))
+                        bottom_pct = 35.0
                         end_default = date.today()
                         start_default = end_default - timedelta(days=30)
                         d1, d2 = st.date_input("統計日期範圍", value=(start_default, end_default), key="member_elim_range")
@@ -973,135 +973,41 @@ def main():
                                     preset_weights = p.get("weights")
                                     break
                             weight_map = preset_weights if isinstance(preset_weights, dict) else {}
-                            used_factors = [str(k) for k, v in weight_map.items() if abs(float(v or 0.0)) > 1e-12]
-
-                            if not used_factors:
-                                st.info("此組合沒有任何有效權重，無法計算反向表現。")
-                                used_factors = []
-
-                            race_rows = (
-                                session.query(Race.id, Race.race_date, Race.race_no)
-                                .join(RaceEntry, RaceEntry.race_id == Race.id)
-                                .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
-                                .filter(RaceResult.rank != None)
-                                .filter(func.date(Race.race_date) >= d1.isoformat())
-                                .filter(func.date(Race.race_date) <= d2.isoformat())
-                                .group_by(Race.id, Race.race_date, Race.race_no)
-                                .having(func.count(RaceResult.id) >= 5)
-                                .order_by(func.date(Race.race_date).asc(), Race.race_no.asc(), Race.id.asc())
-                                .all()
-                            )
-                            race_ids = [int(r[0]) for r in (race_rows or []) if r and int(r[0] or 0) > 0]
+                            pct_key = str(int(bottom_pct))
+                            elim_stats_map = load_member_preset_elim_stats(session, str(member_email).strip().lower())
+                            st_elim = elim_stats_map.get(str(preset_sel), {}) if isinstance(elim_stats_map, dict) else {}
+                            days = st_elim.get("days") if isinstance(st_elim.get("days"), dict) else {}
 
                             total_pred = 0
                             total_tn = 0
                             total_fp = 0
-                            out = []
-                            if race_ids and used_factors:
-                                entries = (
-                                    session.query(RaceEntry.race_id, RaceEntry.horse_no)
-                                    .filter(RaceEntry.race_id.in_(race_ids))
-                                    .all()
-                                )
-                                horses_by_race = {}
-                                for rid, hn in entries:
-                                    rid_i = int(rid or 0)
-                                    if rid_i <= 0:
-                                        continue
-                                    try:
-                                        hn_i = int(hn or 0)
-                                    except Exception:
-                                        hn_i = 0
-                                    if hn_i <= 0:
-                                        continue
-                                    horses_by_race.setdefault(rid_i, []).append(hn_i)
+                            total_races = 0
+                            rows_day = []
 
-                                rr_rows = (
-                                    session.query(RaceEntry.race_id, RaceEntry.horse_no, RaceResult.rank)
-                                    .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
-                                    .filter(RaceEntry.race_id.in_(race_ids))
-                                    .filter(RaceResult.rank != None)
-                                    .order_by(RaceEntry.race_id.asc(), RaceResult.rank.asc())
-                                    .all()
-                                )
-                                actual_by_race = {}
-                                for rid, hn, _rk in rr_rows:
-                                    rid_i = int(rid or 0)
-                                    if rid_i <= 0:
+                            if days:
+                                for day_s in sorted(days.keys(), reverse=True):
+                                    if not day_s or not isinstance(day_s, str):
                                         continue
-                                    if rid_i not in actual_by_race:
-                                        actual_by_race[rid_i] = []
-                                    if len(actual_by_race[rid_i]) >= 5:
+                                    if day_s < d1.isoformat() or day_s > d2.isoformat():
                                         continue
-                                    try:
-                                        hn_i = int(hn or 0)
-                                    except Exception:
-                                        hn_i = 0
-                                    if hn_i > 0:
-                                        actual_by_race[rid_i].append(hn_i)
-
-                                sf_rows = (
-                                    session.query(RaceEntry.race_id, RaceEntry.horse_no, ScoringFactor.factor_name, ScoringFactor.score)
-                                    .join(ScoringFactor, ScoringFactor.entry_id == RaceEntry.id)
-                                    .filter(RaceEntry.race_id.in_(race_ids))
-                                    .filter(ScoringFactor.factor_name.in_(used_factors))
-                                    .all()
-                                )
-                                score_map = {}
-                                for rid, hn, fn, sc in sf_rows:
-                                    rid_i = int(rid or 0)
-                                    if rid_i <= 0:
+                                    dv = days.get(day_s)
+                                    if not isinstance(dv, dict):
                                         continue
-                                    try:
-                                        hn_i = int(hn or 0)
-                                    except Exception:
-                                        hn_i = 0
-                                    if hn_i <= 0:
+                                    cur = dv.get(pct_key) if isinstance(dv.get(pct_key), dict) else {}
+                                    pred_n = int(cur.get("pred") or 0)
+                                    tn = int(cur.get("tn") or 0)
+                                    fp = int(cur.get("fp") or 0)
+                                    races_n = int(cur.get("races") or 0)
+                                    if pred_n <= 0:
                                         continue
-                                    rmap = score_map.setdefault(rid_i, {})
-                                    hmap = rmap.setdefault(hn_i, {})
-                                    hmap[str(fn)] = float(sc or 0.0)
-
-                                def _ranked_horses(rid: int):
-                                    horses = horses_by_race.get(int(rid)) or []
-                                    rmap = score_map.get(int(rid)) or {}
-                                    items = []
-                                    for hn in horses:
-                                        m = rmap.get(int(hn)) or {}
-                                        total = 0.0
-                                        for fn, ww in (weight_map or {}).items():
-                                            total += float(m.get(str(fn), 0.0)) * float(ww or 0.0)
-                                        items.append((int(hn), float(total)))
-                                    items.sort(key=lambda x: (-x[1], x[0]))
-                                    return [hn for hn, _ in items]
-
-                                for rid, rd, rno in race_rows:
-                                    rid_i = int(rid or 0)
-                                    if rid_i <= 0:
-                                        continue
-                                    actual_pos = actual_by_race.get(rid_i) or []
-                                    if len(actual_pos) < 5:
-                                        continue
-                                    ranked = _ranked_horses(rid_i)
-                                    if not ranked:
-                                        continue
-                                    n_field = len(horses_by_race.get(rid_i) or [])
-                                    elim_n = compute_elim_n(int(n_field or 0), float(bottom_pct))
-                                    if elim_n <= 0:
-                                        continue
-                                    pred_neg = ranked[-int(elim_n):]
-                                    rs = reverse_stats_for_race(actual_positive=actual_pos, predicted_negative=pred_neg)
-                                    pred_n = int(rs.get("pred_neg") or 0)
-                                    tn = int(rs.get("tn") or 0)
-                                    fp = int(rs.get("fp") or 0)
                                     total_pred += pred_n
                                     total_tn += tn
                                     total_fp += fp
-                                    date_s = rd.date().isoformat() if hasattr(rd, "date") else str(rd or "")
-                                    out.append(
+                                    total_races += races_n
+                                    rows_day.append(
                                         {
-                                            "賽日": date_s,
-                                            "場次": int(rno or 0),
+                                            "賽日": day_s,
+                                            "場數": races_n,
                                             "淘汰N": pred_n,
                                             "正確淘汰": tn,
                                             "錯殺": fp,
@@ -1111,36 +1017,165 @@ def main():
                                     )
 
                             m1, m2, m3, m4 = st.columns(4)
-                            m1.metric("樣本(場)", len(out))
-                            m2.metric("淘汰總匹數", total_pred)
-                            m3.metric("淘汰準確率(不入Top5)", f"{(total_tn / total_pred):.1%}" if total_pred else "-")
+                            m1.metric("樣本(場)", int(total_races or 0))
+                            m2.metric("淘汰總匹數", int(total_pred or 0))
+                            m3.metric("淘汰準確率(不入Top5, Bottom35%)", f"{(total_tn / total_pred):.1%}" if total_pred else "-")
                             m4.metric("錯殺率", f"{(total_fp / total_pred):.1%}" if total_pred else "-")
 
-                            if not out:
-                                st.info("目前未找到可用的淘汰統計資料（需要該日期範圍內有賽果 + 計分因子分數）。")
+                            if not rows_day:
+                                st.info("落庫統計未包含此日期範圍資料。可到後台「會員反向統計總表（回填/重建）」回填該範圍，或用下方即時計算核對。")
                             else:
-                                df_out = pd.DataFrame(out)
-                                view_mode = st.selectbox("列表顯示", ["按賽日匯總", "逐場明細"], index=0, key="member_elim_view_mode")
-                                if view_mode == "按賽日匯總":
-                                    g = (
-                                        df_out.groupby("賽日", dropna=False)
-                                        .agg(
-                                            場數=("場次", "count"),
-                                            淘汰N=("淘汰N", "sum"),
-                                            正確淘汰=("正確淘汰", "sum"),
-                                            錯殺=("錯殺", "sum"),
-                                        )
-                                        .reset_index()
-                                    )
-                                    g["淘汰準確率"] = g["正確淘汰"] / g["淘汰N"]
-                                    g["錯殺率"] = g["錯殺"] / g["淘汰N"]
-                                    g["淘汰準確率"] = g["淘汰準確率"].map(lambda x: f"{float(x):.1%}" if x is not None else "-")
-                                    g["錯殺率"] = g["錯殺率"].map(lambda x: f"{float(x):.1%}" if x is not None else "-")
-                                    st.dataframe(g.sort_values(["賽日"], ascending=[False]), width="stretch", hide_index=True)
+                                df_day = pd.DataFrame(rows_day)
+                                df_day["淘汰準確率"] = df_day["淘汰準確率"].map(lambda x: f"{float(x):.1%}" if x is not None else "-")
+                                df_day["錯殺率"] = df_day["錯殺率"].map(lambda x: f"{float(x):.1%}" if x is not None else "-")
+                                st.dataframe(df_day.sort_values(["賽日"], ascending=[False]), width="stretch", hide_index=True)
+
+                            run_verify = st.button("🔎 即時計算核對", width="stretch", key="member_elim_verify_btn")
+                            sig = (str(preset_sel), str(pct_key), d1.isoformat(), d2.isoformat())
+                            if run_verify:
+                                st.session_state["member_elim_verify_sig"] = sig
+                                st.session_state["member_elim_verify_res"] = None
+
+                            if st.session_state.get("member_elim_verify_sig") == sig and st.session_state.get("member_elim_verify_res") is None and run_verify:
+                                used_factors = [str(k) for k, v in weight_map.items() if abs(float(v or 0.0)) > 1e-12]
+                                if not used_factors:
+                                    st.session_state["member_elim_verify_res"] = {"rows": [], "totals": {"pred": 0, "tn": 0, "fp": 0, "races": 0}}
                                 else:
-                                    df_out["淘汰準確率"] = df_out["淘汰準確率"].map(lambda x: f"{float(x):.1%}" if x is not None else "-")
-                                    df_out["錯殺率"] = df_out["錯殺率"].map(lambda x: f"{float(x):.1%}" if x is not None else "-")
-                                    st.dataframe(df_out.sort_values(["賽日", "場次"], ascending=[False, False]), width="stretch", hide_index=True)
+                                    race_rows = (
+                                        session.query(Race.id, Race.race_date, Race.race_no)
+                                        .join(RaceEntry, RaceEntry.race_id == Race.id)
+                                        .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
+                                        .filter(RaceResult.rank != None)
+                                        .filter(func.date(Race.race_date) >= d1.isoformat())
+                                        .filter(func.date(Race.race_date) <= d2.isoformat())
+                                        .group_by(Race.id, Race.race_date, Race.race_no)
+                                        .having(func.count(RaceResult.id) >= 5)
+                                        .order_by(func.date(Race.race_date).asc(), Race.race_no.asc(), Race.id.asc())
+                                        .all()
+                                    )
+                                    race_ids = [int(r[0]) for r in (race_rows or []) if r and int(r[0] or 0) > 0]
+                                    rows_calc = []
+                                    tot_pred = 0
+                                    tot_tn = 0
+                                    tot_fp = 0
+                                    tot_r = 0
+                                    if race_ids:
+                                        entries = session.query(RaceEntry.race_id, RaceEntry.horse_no).filter(RaceEntry.race_id.in_(race_ids)).all()
+                                        horses_by_race = {}
+                                        for rid, hn in entries:
+                                            rid_i = int(rid or 0)
+                                            if rid_i <= 0:
+                                                continue
+                                            try:
+                                                hn_i = int(hn or 0)
+                                            except Exception:
+                                                hn_i = 0
+                                            if hn_i <= 0:
+                                                continue
+                                            horses_by_race.setdefault(rid_i, []).append(hn_i)
+
+                                        rr_rows = (
+                                            session.query(RaceEntry.race_id, RaceEntry.horse_no, RaceResult.rank)
+                                            .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
+                                            .filter(RaceEntry.race_id.in_(race_ids))
+                                            .filter(RaceResult.rank != None)
+                                            .order_by(RaceEntry.race_id.asc(), RaceResult.rank.asc())
+                                            .all()
+                                        )
+                                        actual_by_race = {}
+                                        for rid, hn, _rk in rr_rows:
+                                            rid_i = int(rid or 0)
+                                            if rid_i <= 0:
+                                                continue
+                                            if rid_i not in actual_by_race:
+                                                actual_by_race[rid_i] = []
+                                            if len(actual_by_race[rid_i]) >= 5:
+                                                continue
+                                            try:
+                                                hn_i = int(hn or 0)
+                                            except Exception:
+                                                hn_i = 0
+                                            if hn_i > 0:
+                                                actual_by_race[rid_i].append(hn_i)
+
+                                        sf_rows = (
+                                            session.query(RaceEntry.race_id, RaceEntry.horse_no, ScoringFactor.factor_name, ScoringFactor.score)
+                                            .join(ScoringFactor, ScoringFactor.entry_id == RaceEntry.id)
+                                            .filter(RaceEntry.race_id.in_(race_ids))
+                                            .filter(ScoringFactor.factor_name.in_(used_factors))
+                                            .all()
+                                        )
+                                        score_map = {}
+                                        for rid, hn, fn, sc in sf_rows:
+                                            rid_i = int(rid or 0)
+                                            if rid_i <= 0:
+                                                continue
+                                            try:
+                                                hn_i = int(hn or 0)
+                                            except Exception:
+                                                hn_i = 0
+                                            if hn_i <= 0:
+                                                continue
+                                            rmap = score_map.setdefault(rid_i, {})
+                                            hmap = rmap.setdefault(hn_i, {})
+                                            hmap[str(fn)] = float(sc or 0.0)
+
+                                        def _ranked_horses(rid: int):
+                                            horses = horses_by_race.get(int(rid)) or []
+                                            rmap = score_map.get(int(rid)) or {}
+                                            items = []
+                                            for hn in horses:
+                                                m = rmap.get(int(hn)) or {}
+                                                total = 0.0
+                                                for fn, ww in (weight_map or {}).items():
+                                                    total += float(m.get(str(fn), 0.0)) * float(ww or 0.0)
+                                                items.append((int(hn), float(total)))
+                                            items.sort(key=lambda x: (-x[1], x[0]))
+                                            return [hn for hn, _ in items]
+
+                                        for rid, rd, rno in race_rows:
+                                            rid_i = int(rid or 0)
+                                            if rid_i <= 0:
+                                                continue
+                                            actual_pos = actual_by_race.get(rid_i) or []
+                                            if len(actual_pos) < 5:
+                                                continue
+                                            ranked = _ranked_horses(rid_i)
+                                            if not ranked:
+                                                continue
+                                            n_field = len(horses_by_race.get(rid_i) or [])
+                                            elim_n = compute_elim_n(int(n_field or 0), float(bottom_pct))
+                                            if elim_n <= 0:
+                                                continue
+                                            pred_neg = ranked[-int(elim_n):]
+                                            rs = reverse_stats_for_race(actual_positive=actual_pos, predicted_negative=pred_neg)
+                                            pred_n = int(rs.get("pred_neg") or 0)
+                                            tn = int(rs.get("tn") or 0)
+                                            fp = int(rs.get("fp") or 0)
+                                            if pred_n <= 0:
+                                                continue
+                                            tot_pred += pred_n
+                                            tot_tn += tn
+                                            tot_fp += fp
+                                            tot_r += 1
+                                            date_s = rd.date().isoformat() if hasattr(rd, "date") else str(rd or "")
+                                            rows_calc.append({"賽日": date_s, "場次": int(rno or 0), "淘汰N": pred_n, "正確淘汰": tn, "錯殺": fp})
+
+                                    st.session_state["member_elim_verify_res"] = {"rows": rows_calc, "totals": {"pred": tot_pred, "tn": tot_tn, "fp": tot_fp, "races": tot_r}}
+
+                            verify_res = st.session_state.get("member_elim_verify_res") if st.session_state.get("member_elim_verify_sig") == sig else None
+                            if isinstance(verify_res, dict):
+                                tots = verify_res.get("totals") if isinstance(verify_res.get("totals"), dict) else {}
+                                vp = int(tots.get("pred") or 0)
+                                vtn = int(tots.get("tn") or 0)
+                                vfp = int(tots.get("fp") or 0)
+                                vr = int(tots.get("races") or 0)
+                                st.markdown("**即時計算（核對）**")
+                                c1, c2, c3, c4 = st.columns(4)
+                                c1.metric("樣本(場)", vr)
+                                c2.metric("淘汰總匹數", vp)
+                                c3.metric("淘汰準確率", f"{(vtn / vp):.1%}" if vp else "-")
+                                c4.metric("錯殺率", f"{(vfp / vp):.1%}" if vp else "-")
 
                 with st.expander("🔖 本場各組合 Top5 預測", expanded=False):
                     pr = []

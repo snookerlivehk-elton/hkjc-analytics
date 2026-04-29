@@ -618,7 +618,7 @@ with tab_preset:
                             st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
                         st.markdown("### 📉 會員組合反向表現（淘汰準確率）")
-                        pct = float(st.selectbox("淘汰 BottomN%", [10, 15, 20, 25, 30], index=4, key="hit_preset_elim_bottom_pct"))
+                        pct = 35.0
                         agg2 = {}
                         for email_k, preset_k, w in preset_defs:
                             key = (email_k, preset_k)
@@ -706,7 +706,7 @@ with tab_range:
             if isinstance(d1, date) and isinstance(d2, date) and d1 > d2:
                 d1, d2 = d2, d1
             mode = c2.selectbox("模式", ["總分(組合/整體)", "單一因子"], index=0, key="rev_range_mode")
-            bottom_pct = float(c3.selectbox("淘汰 BottomN%", [10, 15, 20, 25, 30], index=2, key="rev_range_bottom_pct"))
+            bottom_pct = 35.0
 
             seg_opts = ["地點", "草/泥", "距離", "班次"]
             segs = c4.multiselect("分桶維度", options=seg_opts, default=["地點", "距離"], key="rev_range_segs")
@@ -959,7 +959,7 @@ with tab_diag:
             else:
                 sel_race_no = c2.selectbox("場次", race_nos, index=0, key="diag_race_no")
                 mode = c3.selectbox("診斷模式", ["總分(組合/整體)", "單一因子"], index=0, key="diag_mode")
-                bottom_pct = float(c4.selectbox("淘汰 BottomN%", [10, 15, 20, 25, 30], index=2, key="diag_bottom_pct"))
+                bottom_pct = 35.0
 
                 factor_name = None
                 if mode == "單一因子":
