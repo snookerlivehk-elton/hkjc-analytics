@@ -12,6 +12,16 @@ if root_path not in sys.path:
 from database.connection import get_session, init_db
 from database.models import PredictionTop5, RaceEntry, RaceResult, ScoringWeight
 from scoring_engine.constants import DISABLED_FACTORS
+from scoring_engine.diagnostics import (
+    actual_ranks_by_horse_no,
+    actual_topk,
+    predicted_bottomk_by_factor,
+    predicted_bottomk_by_total,
+    predicted_topk_by_factor,
+    predicted_topk_by_total,
+    reverse_stats_for_race,
+    summarize_entry_reason,
+)
 from scoring_engine.prediction_snapshots import finalize_prediction_top5_hits_for_race_date
 from web_ui.auth import require_superadmin
 from web_ui.nav import render_admin_nav
@@ -58,7 +68,7 @@ def _actual_top5(session, race_id: int):
     return [int(r[0]) for r in rows]
 
 
-tab_factor, tab_preset = st.tabs(["📈 獨立條件", "👥 會員儲存組合"])
+tab_factor, tab_preset, tab_diag = st.tabs(["📈 獨立條件", "👥 會員儲存組合", "🧠 診斷"])
 
 with tab_factor:
     session = get_session()
@@ -452,5 +462,162 @@ with tab_preset:
                     st.info("目前未有任何已結算（已抓賽果）的會員組合命中資料。")
                 else:
                     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    finally:
+        session.close()
+
+
+with tab_diag:
+    st.markdown("### 🧠 單場診斷（反向統計 + 失準原因）")
+    st.caption("選擇賽日/場次後，可檢視：預測Top5 命中/誤推/漏網，以及 BottomN 淘汰是否錯殺。")
+
+    session = get_session()
+    try:
+        drows = (
+            session.query(func.date(PredictionTop5.race_date))
+            .distinct()
+            .order_by(func.date(PredictionTop5.race_date).desc())
+            .limit(365)
+            .all()
+        )
+        available_dates = [r[0] for r in drows if r and r[0]]
+        if not available_dates:
+            st.info("目前未有任何預測快照資料可供診斷。")
+        else:
+            c1, c2, c3, c4 = st.columns([2, 2, 3, 3])
+            sel_date = c1.selectbox(
+                "賽日",
+                available_dates,
+                index=0,
+                format_func=lambda x: x.isoformat() if hasattr(x, "isoformat") else str(x),
+                key="diag_date",
+            )
+
+            race_nos = (
+                session.query(PredictionTop5.race_no)
+                .filter(func.date(PredictionTop5.race_date) == sel_date.isoformat())
+                .distinct()
+                .order_by(PredictionTop5.race_no.asc())
+                .all()
+            )
+            race_nos = [int(r[0] or 0) for r in race_nos if r and int(r[0] or 0) > 0]
+            if not race_nos:
+                st.info("該賽日未找到可診斷的場次。")
+            else:
+                sel_race_no = c2.selectbox("場次", race_nos, index=0, key="diag_race_no")
+                mode = c3.selectbox("診斷模式", ["總分(組合/整體)", "單一因子"], index=0, key="diag_mode")
+                bottom_n = int(c4.selectbox("淘汰 BottomN", [3, 5, 7], index=1, key="diag_bottom_n"))
+
+                factor_name = None
+                if mode == "單一因子":
+                    factors = (
+                        session.query(ScoringWeight.factor_name, ScoringWeight.description)
+                        .filter(ScoringWeight.is_active == True)
+                        .filter(~ScoringWeight.factor_name.in_(DISABLED_FACTORS))
+                        .order_by(ScoringWeight.factor_name.asc())
+                        .all()
+                    )
+                    factor_desc = {str(fn): str(desc or fn) for fn, desc in factors}
+                    factor_names = [str(x[0]) for x in factors if x and x[0]]
+                    factor_name = c3.selectbox(
+                        "因子",
+                        factor_names,
+                        index=0 if factor_names else None,
+                        format_func=lambda x: f"{factor_desc.get(str(x), str(x))} ({x})",
+                        key="diag_factor_name",
+                    )
+
+                race_id_row = (
+                    session.query(PredictionTop5.race_id)
+                    .filter(func.date(PredictionTop5.race_date) == sel_date.isoformat())
+                    .filter(PredictionTop5.race_no == int(sel_race_no or 0))
+                    .order_by(PredictionTop5.race_id.asc())
+                    .first()
+                )
+                if not race_id_row:
+                    st.warning("⚠️ 找不到該場次的 race_id。")
+                else:
+                    rid = int(race_id_row[0])
+                    actual_rank = actual_ranks_by_horse_no(session, rid)
+                    actual_t5 = actual_topk(session, rid, 5)
+
+                    if mode == "單一因子" and factor_name:
+                        pred_t5 = predicted_topk_by_factor(session, rid, factor_name, 5)
+                        pred_b = predicted_bottomk_by_factor(session, rid, factor_name, bottom_n)
+                    else:
+                        pred_t5 = predicted_topk_by_total(session, rid, 5)
+                        pred_b = predicted_bottomk_by_total(session, rid, bottom_n)
+
+                    rs = reverse_stats_for_race(actual_positive=actual_t5, predicted_negative=pred_b)
+                    m1, m2, m3, m4 = st.columns(4)
+                    m1.metric("實際Top5", len(actual_t5))
+                    m2.metric("預測Top5", len(pred_t5))
+                    m3.metric("淘汰BottomN", int(rs.get("pred_neg") or 0))
+                    m4.metric("淘汰準確率(不入Top5)", f"{(rs.get('neg_accuracy') or 0.0):.1%}" if rs.get("neg_accuracy") is not None else "-")
+
+                    all_hns = sorted({int(x) for x in list(actual_rank.keys()) + pred_t5 + pred_b if int(x or 0) > 0})
+                    rows = []
+                    pred_t5_set = set(pred_t5)
+                    pred_b_set = set(pred_b)
+                    actual_t5_set = set(actual_t5)
+                    for hn in all_hns:
+                        rk = actual_rank.get(int(hn))
+                        rows.append(
+                            {
+                                "馬號": int(hn),
+                                "實際名次": int(rk) if rk else None,
+                                "實際Top5": bool(int(hn) in actual_t5_set),
+                                "預測Top5": bool(int(hn) in pred_t5_set),
+                                "預測淘汰": bool(int(hn) in pred_b_set),
+                            }
+                        )
+                    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+                    fp = [x for x in pred_t5 if x not in actual_t5_set]
+                    fn = [x for x in actual_t5 if x not in pred_t5_set]
+
+                    st.markdown("### ❌ 誤推 / ✅ 漏網（主要因子貢獻）")
+                    left, right = st.columns(2)
+                    with left:
+                        st.markdown("**誤推Top5（預測Top5但未入實際Top5）**")
+                        if not fp:
+                            st.caption("無")
+                        else:
+                            rows2 = []
+                            for hn in fp:
+                                entry_id = (
+                                    session.query(RaceEntry.id)
+                                    .filter(RaceEntry.race_id == rid)
+                                    .filter(RaceEntry.horse_no == int(hn))
+                                    .first()
+                                )
+                                rows2.append(
+                                    {
+                                        "馬號": int(hn),
+                                        "實際名次": actual_rank.get(int(hn)),
+                                        "主要貢獻": summarize_entry_reason(session, int(entry_id[0])) if entry_id else "",
+                                    }
+                                )
+                            st.dataframe(pd.DataFrame(rows2), use_container_width=True, hide_index=True)
+                    with right:
+                        st.markdown("**漏網馬（實際Top5但未入預測Top5）**")
+                        if not fn:
+                            st.caption("無")
+                        else:
+                            rows3 = []
+                            for hn in fn:
+                                entry_id = (
+                                    session.query(RaceEntry.id)
+                                    .filter(RaceEntry.race_id == rid)
+                                    .filter(RaceEntry.horse_no == int(hn))
+                                    .first()
+                                )
+                                rows3.append(
+                                    {
+                                        "馬號": int(hn),
+                                        "實際名次": actual_rank.get(int(hn)),
+                                        "主要貢獻": summarize_entry_reason(session, int(entry_id[0])) if entry_id else "",
+                                    }
+                                )
+                            st.dataframe(pd.DataFrame(rows3), use_container_width=True, hide_index=True)
     finally:
         session.close()
