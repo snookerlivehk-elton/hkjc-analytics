@@ -366,12 +366,12 @@ def main():
     member_email = st.session_state.get("member_email")
     if member_email:
         st.sidebar.caption(f"登入：{str(member_email).strip().lower()}")
-        if st.sidebar.button("🚪 登出", use_container_width=True):
+        if st.sidebar.button("🚪 登出", width="stretch"):
             st.session_state["member_logout_requested"] = True
             st.rerun()
     elif st.session_state.get("is_superadmin", False):
         st.sidebar.caption("已登入：Superadmin")
-        if st.sidebar.button("🚪 登出管理員", use_container_width=True):
+        if st.sidebar.button("🚪 登出管理員", width="stretch"):
             st.session_state["superadmin_logout_requested"] = True
             st.rerun()
 
@@ -429,7 +429,7 @@ def main():
     for i, rn in enumerate(race_no_options):
         col = cols[i % len(cols)]
         label = f"{rn}"
-        if col.button(label, key=f"race_btn_{selected_date_str}_{rn}", use_container_width=True):
+        if col.button(label, key=f"race_btn_{selected_date_str}_{rn}", width="stretch"):
             st.session_state.selected_race_no = rn
             st.rerun()
 
@@ -558,7 +558,7 @@ def main():
                     c1, c2, c3 = st.columns([2, 2, 3])
                     max_w = float(c1.selectbox("建議權重上限", [2.0, 3.0, 4.0, 5.0], index=1, key="member_tune_max_w"))
                     top_k = int(c2.selectbox("TopK 定義", [5], index=0, key="member_tune_topk"))
-                    run = c3.button("生成建議", use_container_width=True, key="member_tune_run_btn")
+                    run = c3.button("生成建議", width="stretch", key="member_tune_run_btn")
 
                     sig = (d1.isoformat() if isinstance(d1, date) else "", d2.isoformat() if isinstance(d2, date) else "", float(max_w), int(top_k))
                     if run:
@@ -597,7 +597,7 @@ def main():
                                     "建議權重": round(float(sugg.get(fn) or 0.0), 3),
                                 }
                             )
-                        st.dataframe(pd.DataFrame(out_rows).sort_values(["建議權重", "目前權重"], ascending=[False, False]), use_container_width=True, hide_index=True)
+                        st.dataframe(pd.DataFrame(out_rows).sort_values(["建議權重", "目前權重"], ascending=[False, False]), width="stretch", hide_index=True)
 
                         payload = {
                             "top_k": int(res.get("top_k") or 0),
@@ -610,7 +610,7 @@ def main():
                             data=json.dumps(payload, ensure_ascii=False, indent=2),
                             file_name=f"tuned_weights_top{int(top_k)}_{d1.isoformat()}_{d2.isoformat()}.json",
                             mime="application/json",
-                            use_container_width=True,
+                            width="stretch",
                             key="member_tune_download_btn",
                         )
 
@@ -620,7 +620,7 @@ def main():
                         preset_name = st.text_input("組合名稱", value=default_name, key="member_tune_preset_name")
                         confirm = st.text_input("輸入 APPLY 以套用", value="", key="member_tune_apply_confirm")
 
-                        if st.button("套用到我的組合", use_container_width=True, key="member_tune_apply_btn"):
+                        if st.button("套用到我的組合", width="stretch", key="member_tune_apply_btn"):
                             if str(confirm or "").strip().upper() != "APPLY":
                                 st.warning("請先輸入 APPLY 再套用。")
                             else:
@@ -698,11 +698,11 @@ def main():
                             share = (float(v) / total_w * 100.0) if total_w > 0 else 0.0
                             rows.append({"條件": weights_lookup[k], "權重": round(float(v), 2), "佔比%": round(share, 1)})
                     rows = sorted(rows, key=lambda x: x["佔比%"], reverse=True)
-                    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
                 c1, c2 = st.columns(2)
-                confirm = c1.button("確認儲存", type="primary", use_container_width=True)
-                cancel = c2.button("取消", use_container_width=True)
+                confirm = c1.button("確認儲存", type="primary", width="stretch")
+                cancel = c2.button("取消", width="stretch")
 
                 if cancel:
                     st.session_state.pop("pending_preset_op", None)
@@ -746,7 +746,7 @@ def main():
                             st.rerun()
 
     # 主面板：賽事資訊
-    race = session.query(Race).get(selected_race_id)
+    race = session.get(Race, selected_race_id)
     st.subheader(f"📊 賽事詳情: {selected_date_str} | 第 {race.race_no} 場")
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("跑道資訊", race.track_type if race.track_type else race.venue)
@@ -802,7 +802,7 @@ def main():
                                 "B5P%": round((b5p_n / races_n * 100.0), 1) if races_n else 0.0,
                             }
                         )
-                    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
                     with st.expander("📌 命中率統計口徑", expanded=False):
                         st.markdown(f"""
                         - 統計起始：{STATS_START_DATE.date().isoformat()}（之前忽略）
@@ -857,7 +857,7 @@ def main():
                             key="member_preset_share_name",
                         )
 
-                        if c3.button("生成分享字段", use_container_width=True, key="member_preset_share_btn"):
+                        if c3.button("生成分享字段", width="stretch", key="member_preset_share_btn"):
                             rows2 = (
                                 session.query(PredictionTop5.race_no, PredictionTop5.top5)
                                 .filter(PredictionTop5.predictor_type == "preset")
@@ -909,7 +909,7 @@ def main():
                                     data=txt.encode("utf-8"),
                                     file_name=f"preset_top5_{str(member_email).strip().lower()}_{share_preset}_{share_date.isoformat()}.txt",
                                     mime="text/plain",
-                                    use_container_width=False,
+                                    width="content",
                                     key="member_preset_share_txt",
                                 )
                                 st.download_button(
@@ -917,7 +917,7 @@ def main():
                                     data=json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"),
                                     file_name=f"preset_top5_{str(member_email).strip().lower()}_{share_preset}_{share_date.isoformat()}.json",
                                     mime="application/json",
-                                    use_container_width=False,
+                                    width="content",
                                     key="member_preset_share_json",
                                 )
 
@@ -948,7 +948,7 @@ def main():
                                 "Top5": top5[4] if len(top5) > 4 else "",
                             }
                         )
-                    st.dataframe(pd.DataFrame(pr), use_container_width=True, hide_index=True)
+                    st.dataframe(pd.DataFrame(pr), width="stretch", hide_index=True)
 
         if member_email:
             with st.expander("📈 各獨立條件命中統計", expanded=False):
@@ -986,16 +986,16 @@ def main():
                         st.session_state[range_key] = (start_default, end_default)
 
                     b1, b2, b3, b4 = st.columns(4)
-                    if b1.button("前30日", use_container_width=True):
+                    if b1.button("前30日", width="stretch"):
                         st.session_state[range_key] = (max(end_default - timedelta(days=30), min(available_dates)), end_default)
                         st.rerun()
-                    if b2.button("前60日", use_container_width=True):
+                    if b2.button("前60日", width="stretch"):
                         st.session_state[range_key] = (max(end_default - timedelta(days=60), min(available_dates)), end_default)
                         st.rerun()
-                    if b3.button("前180日", use_container_width=True):
+                    if b3.button("前180日", width="stretch"):
                         st.session_state[range_key] = (max(end_default - timedelta(days=180), min(available_dates)), end_default)
                         st.rerun()
-                    if b4.button("最長日子", use_container_width=True):
+                    if b4.button("最長日子", width="stretch"):
                         st.session_state[range_key] = (min(available_dates), end_default)
                         st.rerun()
 
@@ -1089,7 +1089,7 @@ def main():
                                     "B5P%": round((a["b5p"] / n * 100.0), 1) if n else 0.0,
                                 }
                             )
-                        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
         active_name = st.session_state.get("selected_preset_name", "（手動調整）")
         with st.expander(f"🏆 專業排名表（目前權重：{active_name}）", expanded=True):
@@ -1118,7 +1118,7 @@ def main():
             rank_map = {int(h): int(r) for h, r in res_rows if h is not None and r is not None}
             df_display = df[display_cols + ["騎師", "練馬師", "檔位", "負磅", "評分"]].copy()
             df_display.insert(0, "賽果", df_display["馬號"].apply(lambda x: rank_map.get(int(x), "")))
-            st.dataframe(df_display, use_container_width=True, hide_index=True)
+            st.dataframe(df_display, width="stretch", hide_index=True)
 
             with st.expander("ℹ️ 專業排名表計算邏輯", expanded=False):
                 st.markdown("""

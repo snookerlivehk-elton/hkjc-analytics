@@ -3,7 +3,7 @@ import pandas as pd
 import sys
 from pathlib import Path
 from datetime import date, timedelta
-from sqlalchemy import func
+from sqlalchemy import func, case
 
 root_path = str(Path(__file__).resolve().parent.parent.parent)
 if root_path not in sys.path:
@@ -114,7 +114,7 @@ with tab_factor:
                 format_func=lambda x: f"{factor_desc.get(str(x), str(x))} ({x})",
             )
 
-            if share_c3.button("生成分享字段", use_container_width=True, key="share_factor_text_only"):
+            if share_c3.button("生成分享字段", width="stretch", key="share_factor_text_only"):
                 rows = (
                     session.query(PredictionTop5.race_no, PredictionTop5.top5)
                     .filter(PredictionTop5.predictor_type == "factor")
@@ -162,7 +162,7 @@ with tab_factor:
                         data=txt.encode("utf-8"),
                         file_name=f"factor_top5_{share_factor}_{share_date.isoformat()}.txt",
                         mime="text/plain",
-                        use_container_width=False,
+                        width="content",
                         key="share_factor_txt_download",
                     )
                     st.download_button(
@@ -170,7 +170,7 @@ with tab_factor:
                         data=json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"),
                         file_name=f"factor_top5_{share_factor}_{share_date.isoformat()}.json",
                         mime="application/json",
-                        use_container_width=False,
+                        width="content",
                         key="share_factor_json_download",
                     )
 
@@ -181,16 +181,16 @@ with tab_factor:
                 st.session_state[range_key] = (start_default, end_default)
 
             b1, b2, b3, b4 = st.columns(4)
-            if b1.button("前30日", use_container_width=True):
+            if b1.button("前30日", width="stretch"):
                 st.session_state[range_key] = (max(end_default - timedelta(days=30), min(available_dates)), end_default)
                 st.rerun()
-            if b2.button("前60日", use_container_width=True):
+            if b2.button("前60日", width="stretch"):
                 st.session_state[range_key] = (max(end_default - timedelta(days=60), min(available_dates)), end_default)
                 st.rerun()
-            if b3.button("前180日", use_container_width=True):
+            if b3.button("前180日", width="stretch"):
                 st.session_state[range_key] = (max(end_default - timedelta(days=180), min(available_dates)), end_default)
                 st.rerun()
-            if b4.button("最長日子", use_container_width=True):
+            if b4.button("最長日子", width="stretch"):
                 st.session_state[range_key] = (min(available_dates), end_default)
                 st.rerun()
 
@@ -198,7 +198,7 @@ with tab_factor:
             if isinstance(d1, date) and isinstance(d2, date) and d1 > d2:
                 d1, d2 = d2, d1
 
-            if st.button(f"🧾 結算 Top5 命中（{d2.isoformat()}）", use_container_width=False):
+            if st.button(f"🧾 結算 Top5 命中（{d2.isoformat()}）", width="content"):
                 res = finalize_prediction_top5_hits_for_race_date(session, d2.strftime("%Y/%m/%d"))
                 st.success(f"完成：updated={res.get('updated')} skipped={res.get('skipped')}")
                 st.rerun()
@@ -279,7 +279,7 @@ with tab_factor:
                             "B5P%": round((a["b5p"] / n * 100.0), 1) if n else 0.0,
                         }
                     )
-                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
     finally:
         session.close()
 
@@ -325,7 +325,7 @@ with tab_preset:
                 share_email = s2.selectbox("會員 Email", emails, index=0, key="preset_share_email")
                 share_preset = s3.selectbox("組合名稱", presets, index=0, key="preset_share_preset")
 
-                if s4.button("生成分享字段", use_container_width=True, key="preset_share_text"):
+                if s4.button("生成分享字段", width="stretch", key="preset_share_text"):
                     rows = (
                         session.query(PredictionTop5.race_no, PredictionTop5.top5)
                         .filter(PredictionTop5.predictor_type == "preset")
@@ -383,7 +383,7 @@ with tab_preset:
                             data=txt.encode("utf-8"),
                             file_name=f"preset_top5_{share_email}_{share_preset}_{share_date.isoformat()}.txt",
                             mime="text/plain",
-                            use_container_width=False,
+                            width="content",
                             key="preset_share_txt_download",
                         )
                         st.download_button(
@@ -391,7 +391,7 @@ with tab_preset:
                             data=json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"),
                             file_name=f"preset_top5_{share_email}_{share_preset}_{share_date.isoformat()}.json",
                             mime="application/json",
-                            use_container_width=False,
+                            width="content",
                             key="preset_share_json_download",
                         )
 
@@ -401,7 +401,7 @@ with tab_preset:
             if isinstance(d1, date) and isinstance(d2, date) and d1 > d2:
                 d1, d2 = d2, d1
 
-            if st.button(f"🧾 結算 Top5 命中（{d2.isoformat()}）", use_container_width=False, key="settle_preset"):
+            if st.button(f"🧾 結算 Top5 命中（{d2.isoformat()}）", width="content", key="settle_preset"):
                 res = finalize_prediction_top5_hits_for_race_date(session, d2.strftime("%Y/%m/%d"))
                 st.success(f"完成：updated={res.get('updated')} skipped={res.get('skipped')}")
                 st.rerun()
@@ -465,7 +465,7 @@ with tab_preset:
                 if not rows:
                     st.info("目前未有任何已結算（已抓賽果）的會員組合命中資料。")
                 else:
-                    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
     finally:
         session.close()
 
@@ -641,7 +641,7 @@ with tab_range:
                         )
                         out["淘汰準確率"] = out["淘汰準確率"].map(lambda x: f"{float(x):.1%}")
                         out["錯殺率"] = out["錯殺率"].map(lambda x: f"{float(x):.1%}")
-                        st.dataframe(out, use_container_width=True, hide_index=True)
+                        st.dataframe(out, width="stretch", hide_index=True)
 
                     st.markdown("### 場次明細（按錯殺率排序）")
                     df_show = df.copy()
@@ -678,7 +678,7 @@ with tab_range:
                                 "錯殺(匹)",
                             ]
                         ],
-                        use_container_width=True,
+                        width="stretch",
                         hide_index=True,
                     )
     finally:
@@ -759,6 +759,33 @@ with tab_diag:
                     st.warning("⚠️ 找不到該場次的 race_id。")
                 else:
                     rid = int(race_id_row[0])
+                    srow = (
+                        session.query(
+                            func.count(RaceEntry.id),
+                            func.sum(case((RaceEntry.total_score == None, 1), else_=0)),
+                            func.min(RaceEntry.total_score),
+                            func.max(RaceEntry.total_score),
+                            func.count(func.distinct(RaceEntry.total_score)),
+                        )
+                        .filter(RaceEntry.race_id == int(rid))
+                        .first()
+                    )
+                    if srow:
+                        total_n = int(srow[0] or 0)
+                        null_n = int(srow[1] or 0)
+                        min_s = srow[2]
+                        max_s = srow[3]
+                        distinct_s = int(srow[4] or 0)
+                        non_null_n = max(0, total_n - null_n)
+                        m1s, m2s, m3s, m4s = st.columns(4)
+                        m1s.metric("總分筆數", total_n)
+                        m2s.metric("總分缺失", null_n)
+                        m3s.metric("總分範圍", f"{float(min_s):.3f}~{float(max_s):.3f}" if (min_s is not None and max_s is not None) else "-")
+                        m4s.metric("總分分散度", f"{distinct_s} 值" if non_null_n else "-")
+                        if non_null_n == 0:
+                            st.warning("本場未有 total_score（未重新計分/未保存）。預測Top5/淘汰會退化成任意排序。請先在「數據管理後台」重算該日賽事。")
+                        elif distinct_s <= 1:
+                            st.warning("本場 total_score 幾乎全部相同，Top5/淘汰會高度重疊甚至看似一樣。通常原因：有效權重接近 0（因子覆蓋不足且策略=自動忽略）、或因子分數全同/全缺。")
                     n_field = field_size(session, rid)
                     elim_n = compute_elim_n(n_field, bottom_pct)
                     actual_rank = actual_ranks_by_horse_no(session, rid)
@@ -775,6 +802,9 @@ with tab_diag:
                         pred_b = predicted_bottomk_by_total(session, rid, elim_n)
 
                     rs = reverse_stats_for_race(actual_positive=actual_pos, predicted_negative=pred_b)
+                    overlap = sorted(set(pred_t5) & set(pred_b))
+                    if overlap:
+                        st.warning(f"預測Top5 與 預測淘汰 有重疊（{len(overlap)} 匹）：{', '.join(str(x) for x in overlap[:12])}{'...' if len(overlap) > 12 else ''}。通常因 total_score 同分/缺失造成邊界選取退化。")
                     m1, m2, m3, m4 = st.columns(4)
                     m1.metric("參賽馬數", int(n_field or 0))
                     m2.metric("預測Top5", len(pred_t5))
@@ -799,7 +829,7 @@ with tab_diag:
                                 "預測淘汰": bool(int(hn) in pred_b_set),
                             }
                         )
-                    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
                     q_cfg = session.query(SystemConfig).filter_by(key=f"factor_quality:{rid}").first()
                     qv = q_cfg.value if q_cfg and isinstance(q_cfg.value, dict) else {}
@@ -808,9 +838,14 @@ with tab_diag:
                         st.markdown("### 🧩 因子資料完整度（本場）")
                         st.caption("缺失判斷以 raw_data_display 為「無數據/空白」計算；覆蓋率越低，代表該因子本場越多馬匹欠缺參考。")
                         qrows = []
+                        eff_sum = 0.0
                         for k, v in qf.items():
                             if not isinstance(v, dict):
                                 continue
+                            try:
+                                eff_sum += float(v.get("effective_weight") or 0.0)
+                            except Exception:
+                                pass
                             reasons = v.get("reasons") if isinstance(v.get("reasons"), dict) else {}
                             top_reasons = []
                             if isinstance(reasons, dict) and reasons:
@@ -828,11 +863,14 @@ with tab_diag:
                                     "門檻(%)": round(float(v.get("min_coverage") or 0.0) * 100.0, 0),
                                     "策略": "自動忽略" if str(v.get("action") or "") == "ignore" else "只提示",
                                     "已忽略": bool(v.get("ignored") is True),
+                                    "有效權重": round(float(v.get("effective_weight") or 0.0), 3),
                                 }
                             )
                         if qrows:
                             qdf = pd.DataFrame(qrows).sort_values(["已忽略", "覆蓋率"], ascending=[False, True])
-                            st.dataframe(qdf, use_container_width=True, hide_index=True)
+                            st.dataframe(qdf, width="stretch", hide_index=True)
+                            if abs(float(eff_sum or 0.0)) < 1e-9:
+                                st.warning("本場所有因子有效權重合計為 0（策略=自動忽略 + 覆蓋不足）→ total_score 會全部相同，Top5/淘汰結果將退化並重疊。")
 
                     fp = [x for x in pred_t5 if x not in actual_t5_set]
                     fn = [x for x in actual_t5 if x not in pred_t5_set]
@@ -868,7 +906,7 @@ with tab_diag:
                                         "缺資料(項)": miss,
                                     }
                                 )
-                            st.dataframe(pd.DataFrame(rows2), use_container_width=True, hide_index=True)
+                            st.dataframe(pd.DataFrame(rows2), width="stretch", hide_index=True)
                     with right:
                         st.markdown("**漏網馬（實際Top5但未入預測Top5）**")
                         if not fn:
@@ -898,6 +936,6 @@ with tab_diag:
                                         "缺資料(項)": miss,
                                     }
                                 )
-                            st.dataframe(pd.DataFrame(rows3), use_container_width=True, hide_index=True)
+                            st.dataframe(pd.DataFrame(rows3), width="stretch", hide_index=True)
     finally:
         session.close()

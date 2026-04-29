@@ -441,7 +441,7 @@ else:
                 # 加上名次標籤
                 factor_df = factor_df.reset_index(drop=True)
                 factor_df.insert(0, "該項排名", range(1, len(factor_df) + 1))
-                st.dataframe(factor_df, use_container_width=True, hide_index=True)
+                st.dataframe(factor_df, width="stretch", hide_index=True)
                 
                 # 針對特定因子顯示詳細說明與參數調整
                 if selected_factor == "近期狀態 (Last 6 Runs)":
@@ -918,7 +918,7 @@ else:
                                 stats_df = stats_df.sort_values(by="draw")
 
                             show_cols = [c for c in ["draw", "total_runs", "win", "win_rate", "place_rate"] if c in stats_df.columns]
-                            st.dataframe(stats_df[show_cols], use_container_width=True, hide_index=True)
+                            st.dataframe(stats_df[show_cols], width="stretch", hide_index=True)
 
                             chart_df = stats_df.set_index("draw")[["win_rate", "place_rate"]] if all(
                                 c in stats_df.columns for c in ["draw", "win_rate", "place_rate"]
@@ -940,6 +940,6 @@ else:
             # 總表按馬號排序
             full_df = df.sort_values(by="馬號").reset_index(drop=True)
             full_df.insert(0, "序", range(1, len(full_df) + 1))
-            st.dataframe(full_df, use_container_width=True, hide_index=True)
+            st.dataframe(full_df, width="stretch", hide_index=True)
 
 session.close()

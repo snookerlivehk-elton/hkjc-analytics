@@ -324,7 +324,7 @@ with tab_ops:
         st.caption("用途：更新「本月＋下月」有賽事的日期清單，供系統決定下一賽日與排程目標。若已設定 fixture cron（每日 HK 06:00），通常不需手動按。")
         c_confirm, c_btn = st.columns([2, 3])
         ok = _confirm_run(c_confirm, "fixture", label="輸入 RUN 以更新賽期表")
-        if c_btn.button("📅 更新賽期表 (本月+下月)", use_container_width=True, disabled=not ok):
+        if c_btn.button("📅 更新賽期表 (本月+下月)", width="stretch", disabled=not ok):
             if trigger_fixture_fetch():
                 st.success("✅ 賽期表已更新！")
 
@@ -428,7 +428,7 @@ with tab_ops:
                 df_edit = pd.DataFrame(factor_rows)
                 edited = st.data_editor(
                     df_edit,
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True,
                     column_config={
                         "模式": st.column_config.SelectboxColumn("模式", options=["default", "warn", "ignore"], help="default=跟預設；warn=只提示；ignore=自動忽略"),
@@ -512,7 +512,7 @@ with tab_ops:
                 c1, c2 = st.columns([2, 3])
                 do_rescore = c1.checkbox("同時重算所選範圍", value=False, key="calib_rescore")
                 ok = _confirm_run(c1, "calib_train", label="輸入 RUN 以訓練/保存")
-                run = c2.button("訓練並保存 temperature", use_container_width=True, key="calib_train_btn", disabled=not ok)
+                run = c2.button("訓練並保存 temperature", width="stretch", key="calib_train_btn", disabled=not ok)
 
                 if run:
                     res = fit_winprob_temperature(session_cal, d1=d1, d2=d2)
@@ -543,7 +543,7 @@ with tab_ops:
         st.caption("會依序完成：抓排位 → 回填該日涉及馬匹往績 → 重算該日所有場次 → 生成 Top5 快照（factor + preset）。每一步會等待上一個完成。")
         c_confirm, c_btn = st.columns([2, 3])
         ok = _confirm_run(c_confirm, "oneclick_update", label="輸入 RUN 以執行一鍵完整更新")
-        if c_btn.button("⚡ 一鍵：抓排位 → 回填馬匹往績 → 重算當日 → 生成Top5快照", use_container_width=True, disabled=not ok):
+        if c_btn.button("⚡ 一鍵：抓排位 → 回填馬匹往績 → 重算當日 → 生成Top5快照", width="stretch", disabled=not ok):
             target_date_str = selected_date.strftime("%Y/%m/%d")
             ok1 = trigger_scraper(target_date=target_date_str)
             if not ok1:
@@ -592,7 +592,7 @@ with tab_ops:
         st.caption("只做「抓排位/即時數據 + 計分（不包含回填往績/重算）」；如要產生更完整的條件結果與 Top5 快照，建議使用上方「一鍵完整更新」。")
         c_confirm, c_btn = st.columns([2, 3])
         ok = _confirm_run(c_confirm, "scrape_day", label="輸入 RUN 以開始抓取")
-        if c_btn.button("🔄 開始抓取該日賽事", use_container_width=True, disabled=not ok):
+        if c_btn.button("🔄 開始抓取該日賽事", width="stretch", disabled=not ok):
             target_date_str = selected_date.strftime("%Y/%m/%d")
             if trigger_scraper(target_date=target_date_str):
                 st.success(f"✅ {target_date_str} 數據更新成功！")
@@ -601,7 +601,7 @@ with tab_ops:
         st.caption("只生成 Top5 快照（落庫 PredictionTop5）。需要先完成該日計分/重算，否則快照會反映不完整數據。")
         c_confirm, c_btn = st.columns([2, 3])
         ok = _confirm_run(c_confirm, "snapshot_day", label="輸入 RUN 以生成快照")
-        if c_btn.button("🧾 生成當日 Top5 預測快照", use_container_width=True, disabled=not ok):
+        if c_btn.button("🧾 生成當日 Top5 預測快照", width="stretch", disabled=not ok):
             target_date_str = selected_date.strftime("%Y/%m/%d")
             if trigger_predictions_snapshot(target_date_str):
                 st.success(f"✅ 已生成 {target_date_str} Top5 預測快照！")
@@ -610,7 +610,7 @@ with tab_ops:
         st.caption("抓取賽果/派彩入庫後，會自動結算：會員組合命中率 + Top5 快照命中（回寫 hits/actual_top5）。若已設定賽果 cron（每日 HK 23:55）通常不需手動按。")
         c_confirm, c_btn = st.columns([2, 3])
         ok = _confirm_run(c_confirm, "fetch_results", label="輸入 RUN 以抓取賽果")
-        if c_btn.button("🏁 抓取該日賽果與派彩", use_container_width=True, disabled=not ok):
+        if c_btn.button("🏁 抓取該日賽果與派彩", width="stretch", disabled=not ok):
             target_date_str = selected_date.strftime("%Y/%m/%d")
             if trigger_race_results_fetch(target_date=target_date_str):
                 st.success(f"✅ 已完成 {target_date_str} 賽果與派彩同步！")
@@ -652,14 +652,14 @@ with tab_ops:
                     }
                 )
             if rows:
-                st.dataframe(pd.DataFrame(rows).sort_values(["race_no"]), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(rows).sort_values(["race_no"]), width="stretch", hide_index=True)
         finally:
             session_sp.close()
 
         race_nos_str = ",".join([str(int(x)) for x in selected_races if str(x).isdigit()])
         c_confirm, c_btn = st.columns([2, 3])
         ok = _confirm_run(c_confirm, "speedpro_fetch", label="輸入 RUN 以抓取 SpeedPRO")
-        if c_btn.button("⚡ 立即抓取 SpeedPRO", use_container_width=True, disabled=not ok):
+        if c_btn.button("⚡ 立即抓取 SpeedPRO", width="stretch", disabled=not ok):
             ok = trigger_speedpro_fetch(target_date=target_date_str, race_nos=race_nos_str, retry_minutes=int(retry_minutes), force=True)
             if ok:
                 st.success("✅ 已觸發 SpeedPRO 抓取（詳情見上方日誌/狀態表）。")
@@ -671,14 +671,14 @@ with tab_ops:
         col_h1, col_h2 = st.columns(2)
         with col_h1:
             ok = _confirm_run(col_h1, "backfill_date", label="輸入 RUN 以回填（所選日期）")
-            if st.button("📚 回填所選日期馬匹往績", use_container_width=True, disabled=not ok):
+            if st.button("📚 回填所選日期馬匹往績", width="stretch", disabled=not ok):
                 target_date_str = selected_date.strftime("%Y/%m/%d")
                 if trigger_history_backfill(target_date=target_date_str, mode="date"):
                     st.success(f"✅ 已完成 {target_date_str} 所需馬匹之歷史往績回填！")
         with col_h2:
             with st.expander("完整回填 (較慢)"):
                 ok = _confirm_run(st, "backfill_all", label="輸入 RUN 以回填（全部）")
-                if st.button("📚 回填所有馬匹往績", use_container_width=True, disabled=not ok):
+                if st.button("📚 回填所有馬匹往績", width="stretch", disabled=not ok):
                     if trigger_history_backfill(mode="all"):
                         st.success("✅ 已完成所有馬匹之歷史往績回填！")
 
@@ -687,7 +687,7 @@ with tab_ops:
         st.caption("只做「重算所選日期」所有場次（不包含回填/快照）。適合你已完成回填但想再重算一次。")
         c_confirm, c_btn = st.columns([2, 3])
         ok = _confirm_run(c_confirm, "rescore_date", label="輸入 RUN 以重算所選日期")
-        if c_btn.button("🚀 重算所選日期所有賽事", use_container_width=True, disabled=not ok):
+        if c_btn.button("🚀 重算所選日期所有賽事", width="stretch", disabled=not ok):
             session = get_session()
             try:
                 from database.models import Race
@@ -727,7 +727,7 @@ with tab_ops:
         with st.expander("清理已移除因子舊記錄", expanded=False):
             st.markdown("此操作只會刪除已移除因子在資料庫中的舊計分結果與設定，不會影響賽事、馬匹、往績等核心數據。")
             confirm = st.checkbox("我明白此操作會刪除舊因子資料", value=False)
-            if st.button("🧹 清理 trainer_horse_bond 舊記錄", use_container_width=True, disabled=not confirm):
+            if st.button("🧹 清理 trainer_horse_bond 舊記錄", width="stretch", disabled=not confirm):
                 session = get_session()
                 deleted_sf, deleted_sw, deleted_cfg = cleanup_removed_factor_data(session)
                 session.close()
@@ -735,7 +735,7 @@ with tab_ops:
 
         st.subheader("🔌 系統測試與升級")
         st.caption("用於排查連線/結構問題。一般日常不用操作。")
-        if st.button("🔌 測試資料庫連線", use_container_width=True):
+        if st.button("🔌 測試資料庫連線", width="stretch"):
             session = get_session()
             try:
                 from database.models import ScoringWeight
@@ -747,7 +747,7 @@ with tab_ops:
             
         c_confirm, c_btn = st.columns([2, 3])
         ok = _confirm_run(c_confirm, "db_upgrade", label="輸入 RUN 以執行升級")
-        if c_btn.button("🆙 執行資料庫欄位升級 (新增原始數據欄位)", use_container_width=True, disabled=not ok):
+        if c_btn.button("🆙 執行資料庫欄位升級 (新增原始數據欄位)", width="stretch", disabled=not ok):
             try:
                 env = os.environ.copy()
                 process = subprocess.Popen(
@@ -837,7 +837,7 @@ with tab_members:
                 rr = dict(r)
                 rr.pop("_weights", None)
                 df_overview.append(rr)
-            st.dataframe(pd.DataFrame(df_overview), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(df_overview), width="stretch", hide_index=True)
 
             st.markdown("---")
             st.markdown("### 🔎 組合權重參數")
@@ -854,7 +854,7 @@ with tab_members:
                             items.append({"條件": factor_desc[k], "代號": k, "權重": round(float(v), 2), "佔比%": round(share, 1)})
                     items = sorted(items, key=lambda x: x["佔比%"], reverse=True)
                     if items:
-                        st.dataframe(pd.DataFrame(items), use_container_width=True, hide_index=True)
+                        st.dataframe(pd.DataFrame(items), width="stretch", hide_index=True)
                     else:
                         st.info("此組合沒有可用的權重資料。")
     finally:
@@ -891,15 +891,19 @@ with tab_hits:
                 .all()
             )
             available_dates = [r[0] for r in drows if r and r[0]]
-            if not available_dates:
-                st.info("目前未有任何獨立條件 Top5 快照。請先抓取排位並生成預測快照。")
-            else:
-                end_default = available_dates[0]
-                start_default = max(end_default - timedelta(days=30), min(available_dates))
-                d1, d2 = st.date_input("統計日期範圍", value=(start_default, end_default))
-                if isinstance(d1, date) and isinstance(d2, date) and d1 > d2:
-                    d1, d2 = d2, d1
+            end_default = available_dates[0] if available_dates else date.today()
+            start_default = (
+                max(end_default - timedelta(days=30), min(available_dates)) if available_dates else (end_default - timedelta(days=30))
+            )
+            d1, d2 = st.date_input("統計日期範圍", value=(start_default, end_default), key="hit_factor_range_admin")
+            if isinstance(d1, date) and isinstance(d2, date) and d1 > d2:
+                d1, d2 = d2, d1
 
+            if not available_dates:
+                st.info("目前未有任何獨立條件 Top5 快照。你仍可先設定 AI；要生成建議需先抓排位並生成預測快照，並且有已結算賽果。")
+
+            preds = []
+            if available_dates and factor_names:
                 preds = (
                     session_hit.query(
                         PredictionTop5.race_id,
@@ -913,87 +917,88 @@ with tab_hits:
                     .filter(func.date(PredictionTop5.race_date) <= d2.isoformat())
                     .all()
                 )
-                if not preds:
-                    st.info("選定範圍內沒有任何獨立條件 Top5 快照。")
-                else:
-                    from scoring_engine.member_stats import _calc_hits
 
-                    def actual_top5(race_id: int):
-                        rows = (
-                            session_hit.query(RaceEntry.horse_no, RaceResult.rank)
-                            .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
-                            .filter(RaceEntry.race_id == race_id)
-                            .filter(RaceResult.rank != None)
-                            .order_by(RaceResult.rank.asc())
-                            .limit(5)
-                            .all()
-                        )
-                        return [int(r[0]) for r in rows]
+            if preds:
+                from scoring_engine.member_stats import _calc_hits
 
-                    agg = {
-                        fn: {"races": 0, "win": 0, "p": 0, "q1": 0, "pq": 0, "t3e": 0, "t3": 0, "f4": 0, "f4q": 0, "b5w": 0, "b5p": 0}
-                        for fn in factor_names
-                    }
-                    cache_act = {}
+                def actual_top5(race_id: int):
+                    rows = (
+                        session_hit.query(RaceEntry.horse_no, RaceResult.rank)
+                        .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
+                        .filter(RaceEntry.race_id == race_id)
+                        .filter(RaceResult.rank != None)
+                        .order_by(RaceResult.rank.asc())
+                        .limit(5)
+                        .all()
+                    )
+                    return [int(r[0]) for r in rows]
 
-                    for race_id, factor_name, top5, meta in preds:
-                        if not isinstance(top5, list) or len(top5) < 5:
+                agg = {
+                    fn: {"races": 0, "win": 0, "p": 0, "q1": 0, "pq": 0, "t3e": 0, "t3": 0, "f4": 0, "f4q": 0, "b5w": 0, "b5p": 0}
+                    for fn in factor_names
+                }
+                cache_act = {}
+
+                for race_id, factor_name, top5, meta in preds:
+                    if not isinstance(top5, list) or len(top5) < 5:
+                        continue
+
+                    hits = None
+                    if isinstance(meta, dict):
+                        h = meta.get("hits")
+                        if isinstance(h, dict):
+                            hits = {str(k).lower(): int(v) for k, v in h.items()}
+
+                    if hits is None:
+                        act = cache_act.get(int(race_id))
+                        if act is None:
+                            act = actual_top5(int(race_id))
+                            cache_act[int(race_id)] = act
+                        if len(act) < 5:
                             continue
+                        hits = _calc_hits([int(x) for x in top5], act)
 
-                        hits = None
-                        if isinstance(meta, dict):
-                            h = meta.get("hits")
-                            if isinstance(h, dict):
-                                hits = {str(k).lower(): int(v) for k, v in h.items()}
+                    if not hits:
+                        continue
 
-                        if hits is None:
-                            act = cache_act.get(int(race_id))
-                            if act is None:
-                                act = actual_top5(int(race_id))
-                                cache_act[int(race_id)] = act
-                            if len(act) < 5:
-                                continue
-                            hits = _calc_hits([int(x) for x in top5], act)
+                    a = agg.get(str(factor_name))
+                    if not a:
+                        continue
+                    a["races"] += 1
+                    for k, v in hits.items():
+                        kk = str(k).lower()
+                        if kk in a:
+                            a[kk] += int(v)
 
-                        if not hits:
-                            continue
+                rows = []
+                for fn in factor_names:
+                    a = agg[fn]
+                    n = int(a["races"] or 0)
+                    rows.append(
+                        {
+                            "條件": factor_desc.get(fn, fn),
+                            "代號": fn,
+                            "樣本(場)": n,
+                            "WIN%": round((a["win"] / n * 100.0), 1) if n else 0.0,
+                            "P%": round((a["p"] / n * 100.0), 1) if n else 0.0,
+                            "Q1%": round((a["q1"] / n * 100.0), 1) if n else 0.0,
+                            "PQ%": round((a["pq"] / n * 100.0), 1) if n else 0.0,
+                            "T3E%": round((a["t3e"] / n * 100.0), 1) if n else 0.0,
+                            "T3%": round((a["t3"] / n * 100.0), 1) if n else 0.0,
+                            "F4%": round((a["f4"] / n * 100.0), 1) if n else 0.0,
+                            "F4Q%": round((a["f4q"] / n * 100.0), 1) if n else 0.0,
+                            "B5W%": round((a["b5w"] / n * 100.0), 1) if n else 0.0,
+                            "B5P%": round((a["b5p"] / n * 100.0), 1) if n else 0.0,
+                        }
+                    )
+                st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
-                        a = agg.get(str(factor_name))
-                        if not a:
-                            continue
-                        a["races"] += 1
-                        for k, v in hits.items():
-                            kk = str(k).lower()
-                            if kk in a:
-                                a[kk] += int(v)
+                with st.expander("🧩 因子缺資料統計（所選日期範圍）", expanded=False):
+                    st.caption("用途：檢查各因子在所選範圍內「無數據/空白」比例，幫你判斷要補數據、降低權重或暫時忽略。")
+                    from database.models import Race, ScoringFactor
+                    from sqlalchemy import case
 
-                    rows = []
-                    for fn in factor_names:
-                        a = agg[fn]
-                        n = int(a["races"] or 0)
-                        rows.append(
-                            {
-                                "條件": factor_desc.get(fn, fn),
-                                "代號": fn,
-                                "樣本(場)": n,
-                                "WIN%": round((a["win"] / n * 100.0), 1) if n else 0.0,
-                                "P%": round((a["p"] / n * 100.0), 1) if n else 0.0,
-                                "Q1%": round((a["q1"] / n * 100.0), 1) if n else 0.0,
-                                "PQ%": round((a["pq"] / n * 100.0), 1) if n else 0.0,
-                                "T3E%": round((a["t3e"] / n * 100.0), 1) if n else 0.0,
-                                "T3%": round((a["t3"] / n * 100.0), 1) if n else 0.0,
-                                "F4%": round((a["f4"] / n * 100.0), 1) if n else 0.0,
-                                "F4Q%": round((a["f4q"] / n * 100.0), 1) if n else 0.0,
-                                "B5W%": round((a["b5w"] / n * 100.0), 1) if n else 0.0,
-                                "B5P%": round((a["b5p"] / n * 100.0), 1) if n else 0.0,
-                            }
-                        )
-                    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-
-                    with st.expander("🧩 因子缺資料統計（所選日期範圍）", expanded=False):
-                        st.caption("用途：檢查各因子在所選範圍內「無數據/空白」比例，幫你判斷要補數據、降低權重或暫時忽略。")
-                        from database.models import Race, ScoringFactor
-                        from sqlalchemy import case
+                    with st.container():
 
                         q = (
                             session_hit.query(
@@ -1043,7 +1048,7 @@ with tab_hits:
                         else:
                             st.dataframe(
                                 pd.DataFrame(rowsq).sort_values(["缺失顯示(%)", "缺失原始(%)"], ascending=[False, False]),
-                                use_container_width=True,
+                                width="stretch",
                                 hide_index=True,
                             )
                             st.markdown("---")
@@ -1218,12 +1223,18 @@ with tab_hits:
                                                 "佔缺失(%)": round((int(n or 0) / total_missing * 100.0), 1) if total_missing else 0.0,
                                             }
                                         )
-                                    st.dataframe(pd.DataFrame(rr), use_container_width=True, hide_index=True)
+                                    st.dataframe(pd.DataFrame(rr), width="stretch", hide_index=True)
 
-                    with st.expander("🤖 權重建議（Top5 模型）", expanded=False):
-                        st.caption("用所選日期範圍的歷史賽果（Top5=正例）自動估計各因子重要性，輸出建議權重（後台只作分析與下載）。")
-                        st.markdown(
-                            """
+            elif available_dates:
+                st.info("選定範圍內沒有任何獨立條件 Top5 快照。")
+
+            with st.expander("🤖 權重建議（Top5 模型）", expanded=False):
+                if not factor_names:
+                    st.info("目前沒有可用的獨立條件因子。")
+                else:
+                    st.caption("用所選日期範圍的歷史賽果（Top5=正例）自動估計各因子重要性，輸出建議權重（後台只作分析與下載）。")
+                    st.markdown(
+                        """
 **方法說明（自動估計因子重要性）**
 - **資料來源**：使用所選日期範圍內、已結算賽果的場次；每匹馬取資料庫 `ScoringFactor` 的各因子分數與 `raw_data_display`。
 - **目標定義**：把「實際名次 ≤ Top5」視為正例（y=1），其他為負例（y=0）。
@@ -1234,80 +1245,83 @@ with tab_hits:
 - **模型**：Logistic Regression（二分類），並用 `class_weight=balanced` 減少正負例比例不均造成的偏差。
 - **建議權重**：只取 `係數(分數)` 的正值，然後按「最大值」比例縮放到你選的「建議權重上限」。
 - **指標**：AUC / LogLoss 為同一批資料的擬合表現（in-sample），用作方向參考；建議以不同日期範圍反覆驗證。
-                            """.strip()
+                        """.strip()
+                    )
+                    from scoring_engine.weight_tuning import tune_weights_topk
+                    import json
+
+                    w_rows = (
+                        session_hit.query(ScoringWeight.factor_name, ScoringWeight.weight)
+                        .filter(ScoringWeight.is_active == True)
+                        .filter(ScoringWeight.factor_name.in_(factor_names))
+                        .all()
+                    )
+                    current_w = {str(fn): float(w or 0.0) for fn, w in w_rows if fn}
+
+                    c1, c2, c3 = st.columns([2, 2, 3])
+                    max_w = float(c1.selectbox("建議權重上限", [2.0, 3.0, 4.0, 5.0], index=1, key="tune_max_w"))
+                    top_k = int(c2.selectbox("TopK 定義", [5], index=0, key="tune_topk"))
+                    run = c3.button("生成建議", width="stretch", key="tune_run_btn")
+
+                    if run:
+                        res = tune_weights_topk(
+                            session_hit,
+                            d1=d1,
+                            d2=d2,
+                            top_k=top_k,
+                            factor_names=factor_names,
+                            max_suggest_weight=max_w,
                         )
-                        from scoring_engine.weight_tuning import tune_weights_topk
-                        import json
+                        st.session_state["tune_top5_result"] = res
 
-                        w_rows = (
-                            session_hit.query(ScoringWeight.factor_name, ScoringWeight.weight)
-                            .filter(ScoringWeight.is_active == True)
-                            .filter(ScoringWeight.factor_name.in_(factor_names))
-                            .all()
+                    res = st.session_state.get("tune_top5_result")
+                    if isinstance(res, dict) and res.get("ok") is True:
+                        m1, m2, m3, m4 = st.columns(4)
+                        m1.metric("樣本(匹)", int(res.get("rows") or 0))
+                        m2.metric("Top5 比例", f"{float(res.get('pos_rate') or 0.0):.1%}" if res.get("pos_rate") is not None else "-")
+                        m3.metric("AUC", f"{float(res.get('auc') or 0.0):.3f}" if res.get("auc") is not None else "-")
+                        m4.metric("LogLoss", f"{float(res.get('log_loss') or 0.0):.3f}" if res.get("log_loss") is not None else "-")
+
+                        sugg = res.get("suggested_weights") if isinstance(res.get("suggested_weights"), dict) else {}
+                        cs = res.get("coef_score") if isinstance(res.get("coef_score"), dict) else {}
+                        cm = res.get("coef_missing") if isinstance(res.get("coef_missing"), dict) else {}
+
+                        out_rows = []
+                        for fn in factor_names:
+                            out_rows.append(
+                                {
+                                    "條件": factor_desc.get(fn, fn),
+                                    "代號": fn,
+                                    "目前權重": round(float(current_w.get(fn) or 0.0), 3),
+                                    "建議權重": round(float(sugg.get(fn) or 0.0), 3),
+                                    "係數(分數)": round(float(cs.get(fn) or 0.0), 4),
+                                    "係數(缺失)": round(float(cm.get(fn) or 0.0), 4),
+                                }
+                            )
+                        df_out = pd.DataFrame(out_rows).sort_values(["建議權重", "目前權重"], ascending=[False, False])
+                        st.dataframe(df_out, width="stretch", hide_index=True)
+
+                        payload = {
+                            "top_k": int(res.get("top_k") or 0),
+                            "date_range": {"from": d1.isoformat(), "to": d2.isoformat()},
+                            "metrics": {"rows": res.get("rows"), "pos_rate": res.get("pos_rate"), "auc": res.get("auc"), "log_loss": res.get("log_loss")},
+                            "suggested_weights": {str(k): float(v) for k, v in (sugg or {}).items()},
+                        }
+                        st.download_button(
+                            "下載建議權重 JSON",
+                            data=json.dumps(payload, ensure_ascii=False, indent=2),
+                            file_name=f"tuned_weights_top{int(top_k)}_{d1.isoformat()}_{d2.isoformat()}.json",
+                            mime="application/json",
+                            width="stretch",
+                            key="tune_download_btn",
                         )
-                        current_w = {str(fn): float(w or 0.0) for fn, w in w_rows if fn}
+                    elif isinstance(res, dict) and res.get("ok") is False and res.get("reason"):
+                        st.info("選定範圍內未找到足夠的已結算賽果 + 計分資料，無法生成建議。")
 
-                        c1, c2, c3 = st.columns([2, 2, 3])
-                        max_w = float(c1.selectbox("建議權重上限", [2.0, 3.0, 4.0, 5.0], index=1, key="tune_max_w"))
-                        top_k = int(c2.selectbox("TopK 定義", [5], index=0, key="tune_topk"))
-                        run = c3.button("生成建議", use_container_width=True, key="tune_run_btn")
-
-                        if run:
-                            res = tune_weights_topk(
-                                session_hit,
-                                d1=d1,
-                                d2=d2,
-                                top_k=top_k,
-                                factor_names=factor_names,
-                                max_suggest_weight=max_w,
-                            )
-                            st.session_state["tune_top5_result"] = res
-
-                        res = st.session_state.get("tune_top5_result")
-                        if isinstance(res, dict) and res.get("ok") is True:
-                            m1, m2, m3, m4 = st.columns(4)
-                            m1.metric("樣本(匹)", int(res.get("rows") or 0))
-                            m2.metric("Top5 比例", f"{float(res.get('pos_rate') or 0.0):.1%}" if res.get("pos_rate") is not None else "-")
-                            m3.metric("AUC", f"{float(res.get('auc') or 0.0):.3f}" if res.get("auc") is not None else "-")
-                            m4.metric("LogLoss", f"{float(res.get('log_loss') or 0.0):.3f}" if res.get("log_loss") is not None else "-")
-
-                            sugg = res.get("suggested_weights") if isinstance(res.get("suggested_weights"), dict) else {}
-                            cs = res.get("coef_score") if isinstance(res.get("coef_score"), dict) else {}
-                            cm = res.get("coef_missing") if isinstance(res.get("coef_missing"), dict) else {}
-
-                            out_rows = []
-                            for fn in factor_names:
-                                out_rows.append(
-                                    {
-                                        "條件": factor_desc.get(fn, fn),
-                                        "代號": fn,
-                                        "目前權重": round(float(current_w.get(fn) or 0.0), 3),
-                                        "建議權重": round(float(sugg.get(fn) or 0.0), 3),
-                                        "係數(分數)": round(float(cs.get(fn) or 0.0), 4),
-                                        "係數(缺失)": round(float(cm.get(fn) or 0.0), 4),
-                                    }
-                                )
-                            df_out = pd.DataFrame(out_rows).sort_values(["建議權重", "目前權重"], ascending=[False, False])
-                            st.dataframe(df_out, use_container_width=True, hide_index=True)
-
-                            payload = {
-                                "top_k": int(res.get("top_k") or 0),
-                                "date_range": {"from": d1.isoformat(), "to": d2.isoformat()},
-                                "metrics": {"rows": res.get("rows"), "pos_rate": res.get("pos_rate"), "auc": res.get("auc"), "log_loss": res.get("log_loss")},
-                                "suggested_weights": {str(k): float(v) for k, v in (sugg or {}).items()},
-                            }
-                            st.download_button(
-                                "下載建議權重 JSON",
-                                data=json.dumps(payload, ensure_ascii=False, indent=2),
-                                file_name=f"tuned_weights_top{int(top_k)}_{d1.isoformat()}_{d2.isoformat()}.json",
-                                mime="application/json",
-                                use_container_width=True,
-                                key="tune_download_btn",
-                            )
-                        elif isinstance(res, dict) and res.get("ok") is False and res.get("reason"):
-                            st.info("選定範圍內未找到足夠的已結算賽果 + 計分資料，無法生成建議。")
-
-                    with st.expander("🧠 AI 因子建議（LLM）", expanded=False):
+            with st.expander("🧠 AI 因子建議（LLM）", expanded=False):
+                if not factor_names:
+                    st.info("目前沒有可用的獨立條件因子。")
+                else:
                         st.caption("用途：把命中率、因子重要性、缺失原因等摘要交給 LLM，輸出可執行建議（不會自動改全局）。")
                         from scoring_engine.ai_advisor import (
                             load_ai_settings,
@@ -1356,7 +1370,7 @@ with tab_hits:
                         save_db = st.checkbox("將 API Key 儲存到資料庫（不建議）", value=False, key="ai_save_key_db")
                         if save_db:
                             ok_save = _confirm_run(st, "ai_save_key", label="輸入 RUN 以儲存 API Key")
-                            btn_save = st.button("💾 儲存 API Key 到資料庫", use_container_width=True, disabled=not ok_save)
+                            btn_save = st.button("💾 儲存 API Key 到資料庫", width="stretch", disabled=not ok_save)
                             if btn_save:
                                 key_to_save = str(api_key_input or "").strip()
                                 if not key_to_save:
@@ -1374,7 +1388,7 @@ with tab_hits:
                         ai_max_w = float(c1.selectbox("建議權重上限", [2.0, 3.0, 4.0, 5.0], index=1, key="ai_tune_max_w"))
                         ai_top_k = int(c2.selectbox("TopK 定義", [5], index=0, key="ai_topk"))
                         ok_run = _confirm_run(c1, "ai_run", label="輸入 RUN 以呼叫 AI")
-                        run_ai = c3.button("🤖 呼叫 AI 生成建議", use_container_width=True, key="ai_run_btn", disabled=not ok_run)
+                        run_ai = c3.button("🤖 呼叫 AI 生成建議", width="stretch", key="ai_run_btn", disabled=not ok_run)
 
                         if run_ai:
                             key_used = ""
@@ -1431,7 +1445,7 @@ with tab_hits:
                                             }
                                         )
                                     if rows:
-                                        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                                        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
                                 else:
                                     st.info("AI 未輸出 recommendations。")
                             else:
@@ -1449,12 +1463,12 @@ with tab_hits:
                                 data=json.dumps(payload_out, ensure_ascii=False, indent=2),
                                 file_name=f"ai_factor_advice_{d1.isoformat()}_{d2.isoformat()}.json",
                                 mime="application/json",
-                                use_container_width=True,
+                                width="stretch",
                                 key="ai_advice_download_btn",
                             )
 
                             ok_save2 = _confirm_run(st, "ai_save_report", label="輸入 RUN 以保存為最新 AI 建議")
-                            if st.button("💾 保存為最新 AI 建議（供後續執行方案）", use_container_width=True, disabled=not ok_save2):
+                            if st.button("💾 保存為最新 AI 建議（供後續執行方案）", width="stretch", disabled=not ok_save2):
                                 cfg2 = session_hit.query(SystemConfig).filter_by(key="ai_last_advice").first()
                                 if not cfg2:
                                     cfg2 = SystemConfig(key="ai_last_advice", description="最新 AI 因子建議（摘要）")
@@ -1559,6 +1573,6 @@ with tab_hits:
                     if not rows:
                         st.info("目前未有任何已結算（已抓賽果）的會員組合命中資料。")
                     else:
-                        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
         finally:
             session_p.close()

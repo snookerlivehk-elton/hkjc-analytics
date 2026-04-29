@@ -25,11 +25,10 @@ def require_superadmin(page_title: str):
             else:
                 st.error("❌ 密碼錯誤")
 
-    if st.button("➡️ 前往數據管理後台", use_container_width=False):
+    if st.button("➡️ 前往數據管理後台", width="content"):
         try:
             st.switch_page("pages/1_數據管理.py")
         except Exception:
             st.markdown("[➡️ 前往數據管理後台](/%E6%95%B8%E6%93%9A%E7%AE%A1%E7%90%86)")
 
     st.stop()
-
