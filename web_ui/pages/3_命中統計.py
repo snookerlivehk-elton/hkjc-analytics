@@ -792,7 +792,7 @@ with tab_range:
 
 with tab_diag:
     st.markdown("### 🧠 單場診斷（反向統計 + 失準原因）")
-    st.caption("選擇賽日/場次後，可檢視：預測Top5 命中/誤推/漏網，以及 BottomN 淘汰是否錯殺。")
+    st.caption("選擇賽日/場次後，可檢視：預測Top4 命中/誤推/漏網，以及 BottomN 淘汰是否錯殺。")
     st.caption("推高原因的 +分值＝該因子對總分的加權貢獻（因子分×權重），數值越大越推高排名。")
 
     session = get_session()
@@ -894,28 +894,28 @@ with tab_diag:
                     n_field = field_size(session, rid)
                     elim_n = compute_elim_n(n_field, bottom_pct)
                     actual_rank = actual_ranks_by_horse_no(session, rid)
-                    actual_t5 = actual_topk(session, rid, 5)
-                    actual_t5_set = set(actual_t5)
-                    top_k = 5
-                    actual_pos = actual_topk(session, rid, top_k)
+                    top_k = 4
+                    actual_tk = actual_topk(session, rid, top_k)
+                    actual_tk_set = set(actual_tk)
+                    actual_pos = actual_tk
 
                     if mode == "單一因子" and factor_name:
-                        pred_t5 = predicted_topk_by_factor(session, rid, factor_name, 5)
+                        pred_t5 = predicted_topk_by_factor(session, rid, factor_name, top_k)
                         pred_b = predicted_bottomk_by_factor(session, rid, factor_name, elim_n)
                     else:
-                        pred_t5 = predicted_topk_by_total(session, rid, 5)
+                        pred_t5 = predicted_topk_by_total(session, rid, top_k)
                         pred_b = predicted_bottomk_by_total(session, rid, elim_n)
 
                     rs = reverse_stats_for_race(actual_positive=actual_pos, predicted_negative=pred_b)
                     overlap = sorted(set(pred_t5) & set(pred_b))
                     if overlap:
-                        st.warning(f"預測Top5 與 預測淘汰 有重疊（{len(overlap)} 匹）：{', '.join(str(x) for x in overlap[:12])}{'...' if len(overlap) > 12 else ''}。通常因 total_score 同分/缺失造成邊界選取退化。")
+                        st.warning(f"預測Top4 與 預測淘汰 有重疊（{len(overlap)} 匹）：{', '.join(str(x) for x in overlap[:12])}{'...' if len(overlap) > 12 else ''}。通常因 total_score 同分/缺失造成邊界選取退化。")
                     m1, m2, m3, m4 = st.columns(4)
                     m1.metric("參賽馬數", int(n_field or 0))
-                    m2.metric("預測Top5", len(pred_t5))
+                    m2.metric("預測Top4", len(pred_t5))
                     m3.metric("淘汰N", f"{int(rs.get('pred_neg') or 0)} ({int(bottom_pct)}%)")
                     m4.metric(
-                        "淘汰準確率(不入Top5)",
+                        "淘汰準確率(不入Top4)",
                         f"{(rs.get('neg_accuracy') or 0.0):.1%}" if rs.get("neg_accuracy") is not None else "-",
                     )
 
@@ -929,8 +929,8 @@ with tab_diag:
                             {
                                 "馬號": int(hn),
                                 "實際名次": int(rk) if rk else None,
-                                "實際Top5": bool(int(hn) in actual_t5_set),
-                                "預測Top5": bool(int(hn) in pred_t5_set),
+                                "實際Top4": bool(int(hn) in actual_tk_set),
+                                "預測Top4": bool(int(hn) in pred_t5_set),
                                 "預測淘汰": bool(int(hn) in pred_b_set),
                             }
                         )
@@ -977,13 +977,13 @@ with tab_diag:
                             if abs(float(eff_sum or 0.0)) < 1e-9:
                                 st.warning("本場所有因子有效權重合計為 0（策略=自動忽略 + 覆蓋不足）→ total_score 會全部相同，Top5/淘汰結果將退化並重疊。")
 
-                    fp = [x for x in pred_t5 if x not in actual_t5_set]
-                    fn = [x for x in actual_t5 if x not in pred_t5_set]
+                    fp = [x for x in pred_t5 if x not in actual_tk_set]
+                    fn = [x for x in actual_tk if x not in pred_t5_set]
 
                     st.markdown("### ❌ 誤推 / ✅ 漏網（主要因子貢獻）")
                     left, right = st.columns(2)
                     with left:
-                        st.markdown("**誤推Top5（預測Top5但未入實際Top5）**")
+                        st.markdown("**誤推Top4（預測Top4但未入實際Top4）**")
                         if not fp:
                             st.caption("無")
                         else:
@@ -1013,7 +1013,7 @@ with tab_diag:
                                 )
                             st.dataframe(pd.DataFrame(rows2), width="stretch", hide_index=True)
                     with right:
-                        st.markdown("**漏網馬（實際Top5但未入預測Top5）**")
+                        st.markdown("**漏網馬（實際Top4但未入預測Top4）**")
                         if not fn:
                             st.caption("無")
                         else:
