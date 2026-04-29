@@ -296,6 +296,23 @@ def main():
 
     session = get_db()
 
+    if st.session_state.get("member_logout_requested"):
+        for k in list(st.session_state.keys()):
+            if (
+                k in {"member_email", "active_weight_map", "selected_preset_name", "pending_weight_map"}
+                or k.startswith("member_")
+                or k.startswith("pending_")
+                or k.startswith("weight_")
+            ):
+                st.session_state.pop(k, None)
+        st.session_state.pop("member_logout_requested", None)
+        st.rerun()
+
+    if st.session_state.get("superadmin_logout_requested"):
+        st.session_state["is_superadmin"] = False
+        st.session_state.pop("superadmin_logout_requested", None)
+        st.rerun()
+
     if not st.session_state.get("is_superadmin", False) and not st.session_state.get("member_email"):
         wl = []
         cfg = session.query(SystemConfig).filter_by(key="member_whitelist_emails").first()
@@ -345,6 +362,18 @@ def main():
         st.caption("｜".join(parts))
     else:
         st.caption("目前勝率校準：未設定（temperature=1.0）")
+
+    member_email = st.session_state.get("member_email")
+    if member_email:
+        st.sidebar.caption(f"登入：{str(member_email).strip().lower()}")
+        if st.sidebar.button("🚪 登出", use_container_width=True):
+            st.session_state["member_logout_requested"] = True
+            st.rerun()
+    elif st.session_state.get("is_superadmin", False):
+        st.sidebar.caption("已登入：Superadmin")
+        if st.sidebar.button("🚪 登出管理員", use_container_width=True):
+            st.session_state["superadmin_logout_requested"] = True
+            st.rerun()
 
     # Sidebar: 賽事選擇
     st.sidebar.header("🔍 賽事選擇")
