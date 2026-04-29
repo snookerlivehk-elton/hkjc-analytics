@@ -382,6 +382,19 @@ def main():
         if "active_weight_map" not in st.session_state:
             st.session_state["active_weight_map"] = dict(base_weight_map)
 
+        pending_map = st.session_state.pop("pending_weight_map", None)
+        if isinstance(pending_map, dict) and pending_map:
+            new_map = dict(base_weight_map)
+            for k, v in pending_map.items():
+                if k in new_map:
+                    try:
+                        new_map[k] = float(v)
+                    except Exception:
+                        pass
+            st.session_state["active_weight_map"] = new_map
+            for k, v in new_map.items():
+                st.session_state[f"weight_{k}"] = float(v)
+
         member_email = st.session_state.get("member_email")
         presets = _get_member_presets(session, member_email) if member_email else []
         preset_names = ["（手動調整）"] + [p["name"] for p in presets]
@@ -405,9 +418,7 @@ def main():
                                 new_map[k] = float(v)
                             except Exception:
                                 pass
-                    st.session_state["active_weight_map"] = new_map
-                    for k, v in new_map.items():
-                        st.session_state[f"weight_{k}"] = float(v)
+                    st.session_state["pending_weight_map"] = dict(new_map)
             st.rerun()
 
         updated_weights = {}
@@ -432,6 +443,9 @@ def main():
                 from datetime import date, timedelta
                 import json
                 from scoring_engine.weight_tuning import tune_weights_topk
+
+                if st.session_state.pop("member_tune_apply_success", False):
+                    st.success("✅ 已套用到你的會員組合")
 
                 factor_names = list(base_weight_map.keys())
                 drows = (
@@ -559,10 +573,8 @@ def main():
                                 new_map = dict(base_weight_map)
                                 for k, v in suggested_map.items():
                                     new_map[k] = float(v)
-                                st.session_state["active_weight_map"] = new_map
-                                for k, v in new_map.items():
-                                    st.session_state[f"weight_{k}"] = float(v)
-                                st.success("✅ 已套用到你的會員組合")
+                                st.session_state["pending_weight_map"] = dict(new_map)
+                                st.session_state["member_tune_apply_success"] = True
                                 st.rerun()
                     elif isinstance(res, dict) and res.get("ok") is False:
                         st.info("選定範圍內未找到足夠的已結算賽果 + 計分資料，無法生成建議。")
