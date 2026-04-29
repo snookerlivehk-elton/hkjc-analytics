@@ -3,6 +3,7 @@ import sys
 import os
 from pathlib import Path
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 # 將專案根目錄加入路徑
 root_path = str(Path(__file__).resolve().parent.parent)
@@ -69,11 +70,9 @@ async def run_daily_scraper():
 
         print(f">>> 成功發現 {len(races_info)} 場賽事，開始同步數據...")
         for race_info in races_info:
-            # 如果有指定日期，使用該日期建立賽事，否則使用當天
-            if target_date_str:
-                race_date = datetime.strptime(target_date_str, "%Y/%m/%d")
-            else:
-                race_date = datetime.now()
+            hk_now = datetime.now(ZoneInfo("Asia/Hong_Kong"))
+            base_date_str = target_date_str or hk_now.strftime("%Y/%m/%d")
+            race_date = datetime.strptime(base_date_str, "%Y/%m/%d")
             venue = race_info.get("venue", "ST")
             race = repo.create_race(
                 race_date, 

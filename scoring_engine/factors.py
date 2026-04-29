@@ -20,6 +20,14 @@ class FactorCalculator:
             # 預設回傳 0.0 (中性分數) 與空字串
             return pd.Series(0.0, index=self.df.index), pd.Series("無數據", index=self.df.index)
 
+
+def get_available_factors():
+    out = set()
+    for name in dir(FactorCalculator):
+        if name.startswith("_calculate_"):
+            out.add(name.replace("_calculate_", "", 1))
+    return out
+
     def _to_int(self, v, default=0):
         try:
             if v is None:

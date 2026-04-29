@@ -17,6 +17,9 @@ class ScoringEngine:
 
     def _load_weights(self) -> Dict[str, float]:
         """從資料庫載入權重配置"""
+        from scoring_engine.factors import get_available_factors
+
+        available = get_available_factors()
         weights = (
             self.session.query(ScoringWeight)
             .filter(ScoringWeight.is_active == True)
@@ -24,7 +27,16 @@ class ScoringEngine:
             .all()
         )
         # 確保資料庫中已有預設權重，否則初始化失敗
-        return {w.factor_name: w.weight for w in weights}
+        out: Dict[str, float] = {}
+        for w in weights:
+            name = str(w.factor_name or "").strip()
+            if not name:
+                continue
+            if name not in available:
+                logger.warning(f"已啟用但未實作的因子將被略過：{name}")
+                continue
+            out[name] = float(w.weight or 0.0)
+        return out
 
     def score_race(self, race_id: int):
         """核心函數：對單場賽事的所有出賽馬匹進行獨立計分、相對排名"""
@@ -67,6 +79,7 @@ class ScoringEngine:
         # 確保所有分數都在本場馬匹內做相對比較
         scored_df = df.copy()
         for factor_name, raw_vals in factor_raw_scores.items():
+            scored_df[f"{factor_name}_raw"] = raw_vals
             scored_df[f"{factor_name}_score"] = calculate_relative_percentile(raw_vals, score_range=(0, 10))
             scored_df[f"{factor_name}_display"] = factor_displays[factor_name]
 
@@ -106,6 +119,14 @@ class ScoringEngine:
                         sf = ScoringFactor(entry_id=entry.id, factor_name=factor_name)
                         self.session.add(sf)
                     
+                    raw_val = row.get(f"{factor_name}_raw")
+                    if raw_val is None or (isinstance(raw_val, float) and np.isnan(raw_val)):
+                        sf.raw_value = None
+                    else:
+                        try:
+                            sf.raw_value = float(raw_val)
+                        except Exception:
+                            sf.raw_value = None
                     sf.score = row[f"{factor_name}_score"]
                     sf.raw_data_display = row[f"{factor_name}_display"]
                     sf.weight_at_time = self.weights[factor_name]

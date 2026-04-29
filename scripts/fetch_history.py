@@ -113,19 +113,29 @@ async def backfill_horse_history():
                 if not race_date:
                     continue
 
-                existing = session.query(HorseHistory).filter_by(
-                    horse_id=horse.id, 
-                    race_date=race_date
-                ).first()
+                venue = rec.get("venue", "") or ""
+                race_class = rec.get("race_class", "") or ""
+                distance = int(rec.get("distance", 0)) if str(rec.get("distance", "")).isdigit() else 0
+                surface = parse_surface(venue, rec.get("condition", ""))
+
+                existing = (
+                    session.query(HorseHistory)
+                    .filter(HorseHistory.horse_id == horse.id)
+                    .filter(HorseHistory.race_date == race_date)
+                    .filter(HorseHistory.venue == venue)
+                    .filter(HorseHistory.distance == distance)
+                    .filter(HorseHistory.race_class == race_class)
+                    .first()
+                )
 
                 if not existing:
                     hh = HorseHistory(
                         horse_id=horse.id,
                         race_date=race_date,
-                        venue=rec.get("venue", ""),
-                        surface=parse_surface(rec.get("venue", ""), rec.get("condition", "")),
-                        race_class=rec.get("race_class", ""),
-                        distance=int(rec.get("distance", 0)) if str(rec.get("distance", "")).isdigit() else 0,
+                        venue=venue,
+                        surface=surface,
+                        race_class=race_class,
+                        distance=distance,
                         rank=int(str(rec.get("rank", "0"))) if str(rec.get("rank", "")).isdigit() else 0,
                         draw=int(str(rec.get("draw", "0"))) if str(rec.get("draw", "")).isdigit() else 0,
                         jockey_name=rec.get("jockey", ""),
@@ -138,7 +148,7 @@ async def backfill_horse_history():
                     new_count += 1
                 else:
                     if not getattr(existing, "surface", ""):
-                        existing.surface = parse_surface(rec.get("venue", ""), rec.get("condition", ""))
+                        existing.surface = surface
             except Exception as e:
                 print(f"    - [錯誤] 儲存紀錄失敗: {e}")
                 continue
