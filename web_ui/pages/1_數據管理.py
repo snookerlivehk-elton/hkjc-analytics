@@ -1306,6 +1306,171 @@ with tab_hits:
                             )
                         elif isinstance(res, dict) and res.get("ok") is False and res.get("reason"):
                             st.info("選定範圍內未找到足夠的已結算賽果 + 計分資料，無法生成建議。")
+
+                    with st.expander("🧠 AI 因子建議（LLM）", expanded=False):
+                        st.caption("用途：把命中率、因子重要性、缺失原因等摘要交給 LLM，輸出可執行建議（不會自動改全局）。")
+                        from scoring_engine.ai_advisor import (
+                            load_ai_settings,
+                            save_ai_settings,
+                            load_ai_api_key,
+                            save_ai_api_key,
+                            run_ai_factor_advice,
+                            parse_json_response,
+                            default_ai_system_prompt,
+                        )
+                        from database.models import SystemConfig
+                        import json
+                        import os
+                        from datetime import datetime
+
+                        st.markdown("**設定**")
+                        settings = load_ai_settings(session_hit)
+                        with st.form("ai_llm_settings_form"):
+                            endpoint = st.text_input("Endpoint（OpenAI-compatible）", value=str(settings.get("endpoint") or "").strip(), placeholder="https://api.openai.com/v1/chat/completions")
+                            model_id = st.text_input("模型名稱（Model ID）", value=str(settings.get("model_id") or "").strip(), placeholder="gpt-4.1-mini")
+                            system_prompt = st.text_area(
+                                "AI 系統提示詞（System Prompt）",
+                                value=str(settings.get("system_prompt") or default_ai_system_prompt()).strip(),
+                                height=200,
+                            )
+                            submitted = st.form_submit_button("💾 儲存設定", type="primary")
+                            if submitted:
+                                save_ai_settings(session_hit, endpoint=endpoint, model_id=model_id, system_prompt=system_prompt)
+                                st.success("✅ 已儲存 LLM 設定。")
+                                st.rerun()
+
+                        st.markdown("**API Key**")
+                        kinfo = load_ai_api_key(session_hit)
+                        env_key = str(kinfo.get("env") or "").strip()
+                        stored_key = str(kinfo.get("stored") or "").strip()
+                        if env_key:
+                            st.info("已偵測到環境變數 API Key（AI_API_KEY / OPENAI_API_KEY）。")
+                        elif stored_key:
+                            st.warning("未偵測到環境變數，但資料庫內有保存 API Key（不建議長期使用 DB 保存）。")
+                        else:
+                            st.warning("目前未設定 API Key。建議在 Railway 設定 AI_API_KEY / OPENAI_API_KEY 環境變數。")
+
+                        c1, c2 = st.columns([3, 2])
+                        api_key_input = c1.text_input("API Key（本次使用，可留空）", value="", type="password", placeholder="留空＝使用環境變數或 DB 保存值")
+                        use_env_first = c2.checkbox("優先使用環境變數", value=True, key="ai_use_env_first")
+                        save_db = st.checkbox("將 API Key 儲存到資料庫（不建議）", value=False, key="ai_save_key_db")
+                        if save_db:
+                            ok_save = _confirm_run(st, "ai_save_key", label="輸入 RUN 以儲存 API Key")
+                            btn_save = st.button("💾 儲存 API Key 到資料庫", use_container_width=True, disabled=not ok_save)
+                            if btn_save:
+                                key_to_save = str(api_key_input or "").strip()
+                                if not key_to_save:
+                                    st.error("❌ 請先輸入 API Key。")
+                                else:
+                                    save_ai_api_key(session_hit, key_to_save)
+                                    st.success("✅ 已儲存。建議改用 Railway 環境變數以提升安全性。")
+                                    st.rerun()
+
+                        st.markdown("**生成建議**")
+                        st.caption("省資源建議：只在需要時按一次；日期範圍建議 60～180 日。")
+                        extra = st.text_area("額外指示（可留空）", value="", height=80, key="ai_extra_instructions")
+
+                        c1, c2, c3 = st.columns([2, 2, 3])
+                        ai_max_w = float(c1.selectbox("建議權重上限", [2.0, 3.0, 4.0, 5.0], index=1, key="ai_tune_max_w"))
+                        ai_top_k = int(c2.selectbox("TopK 定義", [5], index=0, key="ai_topk"))
+                        ok_run = _confirm_run(c1, "ai_run", label="輸入 RUN 以呼叫 AI")
+                        run_ai = c3.button("🤖 呼叫 AI 生成建議", use_container_width=True, key="ai_run_btn", disabled=not ok_run)
+
+                        if run_ai:
+                            key_used = ""
+                            if str(api_key_input or "").strip():
+                                key_used = str(api_key_input or "").strip()
+                            elif use_env_first and env_key:
+                                key_used = env_key
+                            elif stored_key:
+                                key_used = stored_key
+
+                            res_ai = run_ai_factor_advice(
+                                session_hit,
+                                d1=d1,
+                                d2=d2,
+                                top_k=int(ai_top_k),
+                                max_suggest_weight=float(ai_max_w),
+                                endpoint=str(endpoint or "").strip(),
+                                model_id=str(model_id or "").strip(),
+                                system_prompt=str(system_prompt or "").strip(),
+                                api_key=str(key_used or "").strip(),
+                                extra_instructions=str(extra or "").strip(),
+                            )
+                            st.session_state["ai_last_advice_result"] = res_ai
+
+                        res_ai = st.session_state.get("ai_last_advice_result")
+                        if isinstance(res_ai, dict) and res_ai.get("ok") is True:
+                            req = res_ai.get("request") if isinstance(res_ai.get("request"), dict) else {}
+                            m1, m2, m3, m4 = st.columns(4)
+                            m1.metric("TopK", int(req.get("top_k") or 0))
+                            m2.metric("範圍", f"{str(req.get('date_range', {}).get('from') or '')}~{str(req.get('date_range', {}).get('to') or '')}")
+                            m3.metric("Model", str(req.get("model_id") or ""))
+                            m4.metric("Payload Hash", str(req.get("payload_hash") or ""))
+
+                            parsed = res_ai.get("parsed") if isinstance(res_ai.get("parsed"), dict) else {}
+                            if parsed.get("ok") is True and isinstance(parsed.get("data"), dict):
+                                data = parsed.get("data") if isinstance(parsed.get("data"), dict) else {}
+                                summary = str(data.get("summary") or "").strip()
+                                if summary:
+                                    st.success(summary)
+                                recs = data.get("recommendations") if isinstance(data.get("recommendations"), list) else []
+                                if recs:
+                                    rows = []
+                                    for r in recs:
+                                        if not isinstance(r, dict):
+                                            continue
+                                        rows.append(
+                                            {
+                                                "優先級": str(r.get("priority") or ""),
+                                                "動作": str(r.get("action") or ""),
+                                                "因子": str(r.get("factor_name") or ""),
+                                                "預期影響": str(r.get("expected_impact") or ""),
+                                                "風險": str(r.get("risk") or ""),
+                                                "驗證方式": str(r.get("validation") or ""),
+                                            }
+                                        )
+                                    if rows:
+                                        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                                else:
+                                    st.info("AI 未輸出 recommendations。")
+                            else:
+                                st.error("❌ AI 回傳內容無法解析成 JSON。")
+
+                            with st.expander("查看原始回應（Raw）", expanded=False):
+                                st.code(str(res_ai.get("response_text") or ""), language="json")
+
+                            payload_out = {
+                                "request": res_ai.get("request"),
+                                "parsed": (parsed.get("data") if isinstance(parsed, dict) else None),
+                            }
+                            st.download_button(
+                                "下載 AI 建議 JSON",
+                                data=json.dumps(payload_out, ensure_ascii=False, indent=2),
+                                file_name=f"ai_factor_advice_{d1.isoformat()}_{d2.isoformat()}.json",
+                                mime="application/json",
+                                use_container_width=True,
+                                key="ai_advice_download_btn",
+                            )
+
+                            ok_save2 = _confirm_run(st, "ai_save_report", label="輸入 RUN 以保存為最新 AI 建議")
+                            if st.button("💾 保存為最新 AI 建議（供後續執行方案）", use_container_width=True, disabled=not ok_save2):
+                                cfg2 = session_hit.query(SystemConfig).filter_by(key="ai_last_advice").first()
+                                if not cfg2:
+                                    cfg2 = SystemConfig(key="ai_last_advice", description="最新 AI 因子建議（摘要）")
+                                    session_hit.add(cfg2)
+                                cfg2.value = {
+                                    "saved_at": datetime.utcnow().isoformat(),
+                                    "request": res_ai.get("request"),
+                                    "parsed": (parsed.get("data") if isinstance(parsed, dict) else None),
+                                }
+                                session_hit.commit()
+                                st.success("✅ 已保存。")
+                        elif isinstance(res_ai, dict) and res_ai.get("ok") is False:
+                            if res_ai.get("reason") == "missing_api_key":
+                                st.error("❌ 未提供 API Key。請先設定環境變數或在此輸入 API Key。")
+                            else:
+                                st.error(f"❌ 呼叫失敗：{str(res_ai.get('error') or res_ai.get('reason') or '')}")
         finally:
             session_hit.close()
 
