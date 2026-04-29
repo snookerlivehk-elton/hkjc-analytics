@@ -10,7 +10,7 @@ if root_path not in sys.path:
     sys.path.append(root_path)
 
 from database.connection import get_session, init_db
-from database.models import PredictionTop5, RaceEntry, RaceResult, ScoringWeight
+from database.models import PredictionTop5, Race, RaceEntry, RaceResult, ScoringWeight
 from scoring_engine.constants import DISABLED_FACTORS
 from scoring_engine.diagnostics import (
     actual_ranks_by_horse_no,
@@ -19,6 +19,7 @@ from scoring_engine.diagnostics import (
     compute_top_n,
     factor_label_map,
     field_size,
+    active_factor_names,
     predicted_bottomk_by_factor,
     predicted_bottomk_by_total,
     predicted_topk_by_factor,
@@ -72,7 +73,7 @@ def _actual_top5(session, race_id: int):
     return [int(r[0]) for r in rows]
 
 
-tab_factor, tab_preset, tab_diag = st.tabs(["📈 獨立條件", "👥 會員儲存組合", "🧠 診斷"])
+tab_factor, tab_preset, tab_range, tab_diag = st.tabs(["📈 獨立條件", "👥 會員儲存組合", "📊 反向統計", "🧠 診斷"])
 
 with tab_factor:
     session = get_session()
@@ -466,6 +467,221 @@ with tab_preset:
                     st.info("目前未有任何已結算（已抓賽果）的會員組合命中資料。")
                 else:
                     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    finally:
+        session.close()
+
+
+with tab_range:
+    st.markdown("### 📊 反向統計（日期範圍）")
+    st.caption("用 BottomN%（按每場參賽馬數計算 N）評估：你淘汰的馬匹是否真的不入 TopK（K=參賽馬數-N）。")
+
+    session = get_session()
+    try:
+        label_map = factor_label_map(session)
+        factor_names = active_factor_names(session)
+
+        drows = (
+            session.query(func.date(Race.race_date))
+            .join(RaceEntry, RaceEntry.race_id == Race.id)
+            .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
+            .filter(RaceResult.rank != None)
+            .distinct()
+            .order_by(func.date(Race.race_date).desc())
+            .limit(365)
+            .all()
+        )
+        available_dates = [r[0] for r in drows if r and r[0]]
+        if not available_dates:
+            st.info("目前未有任何已抓取賽果的場次可供統計。")
+        else:
+            end_default = available_dates[0]
+            start_default = max(end_default - timedelta(days=30), min(available_dates))
+
+            c1, c2, c3, c4 = st.columns([3, 2, 2, 3])
+            d1, d2 = c1.date_input("統計日期範圍", value=(start_default, end_default), key="rev_range_dates")
+            if isinstance(d1, date) and isinstance(d2, date) and d1 > d2:
+                d1, d2 = d2, d1
+            mode = c2.selectbox("模式", ["總分(組合/整體)", "單一因子"], index=0, key="rev_range_mode")
+            bottom_pct = float(c3.selectbox("淘汰 BottomN%", [10, 15, 20, 25, 30], index=2, key="rev_range_bottom_pct"))
+
+            seg_opts = ["場地", "距離", "班次", "草/泥"]
+            segs = c4.multiselect("分桶維度", options=seg_opts, default=["場地", "距離"], key="rev_range_segs")
+
+            factor_name = None
+            if mode == "單一因子":
+                factor_name = st.selectbox(
+                    "選擇因子",
+                    options=factor_names,
+                    format_func=lambda x: f"{label_map.get(x, x)} ({x})",
+                    key="rev_range_factor",
+                )
+
+            races = (
+                session.query(Race)
+                .join(RaceEntry, RaceEntry.race_id == Race.id)
+                .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
+                .filter(RaceResult.rank != None)
+                .filter(func.date(Race.race_date) >= d1.isoformat())
+                .filter(func.date(Race.race_date) <= d2.isoformat())
+                .distinct()
+                .order_by(Race.race_date.asc(), Race.race_no.asc(), Race.id.asc())
+                .all()
+            )
+            if not races:
+                st.info("選定範圍內沒有任何已抓取賽果的場次。")
+            else:
+                rows = []
+                for r in races:
+                    rid = int(getattr(r, "id") or 0)
+                    if not rid:
+                        continue
+                    n_field = field_size(session, rid)
+                    elim_n = compute_elim_n(n_field, bottom_pct)
+                    top_n = compute_top_n(n_field, bottom_pct)
+                    if elim_n <= 0 or top_n <= 0:
+                        continue
+
+                    actual_pos = actual_topk(session, rid, top_n)
+                    if len(actual_pos) < top_n:
+                        continue
+
+                    if mode == "單一因子" and factor_name:
+                        pred_neg = predicted_bottomk_by_factor(session, rid, factor_name, elim_n)
+                    else:
+                        pred_neg = predicted_bottomk_by_total(session, rid, elim_n)
+                    rs = reverse_stats_for_race(actual_positive=actual_pos, predicted_negative=pred_neg)
+                    if rs.get("pred_neg") is None:
+                        continue
+
+                    venue = str(getattr(r, "venue", "") or "").strip()
+                    distance = getattr(r, "distance", None)
+                    race_class = str(getattr(r, "race_class", "") or "").strip()
+                    track_type = str(getattr(r, "track_type", "") or "").strip()
+
+                    seg_vals = []
+                    if "場地" in segs:
+                        seg_vals.append(f"場地:{venue or '-'}")
+                    if "距離" in segs:
+                        seg_vals.append(f"距離:{int(distance or 0) or '-'}")
+                    if "班次" in segs:
+                        seg_vals.append(f"班次:{race_class or '-'}")
+                    if "草/泥" in segs:
+                        seg_vals.append(f"草泥:{track_type or '-'}")
+                    seg_key = "｜".join(seg_vals) if seg_vals else "全部"
+
+                    rd = getattr(r, "race_date", None)
+                    rd_s = rd.date().isoformat() if hasattr(rd, "date") else str(rd or "")
+                    rows.append(
+                        {
+                            "seg": seg_key,
+                            "race_id": rid,
+                            "date": rd_s,
+                            "race_no": int(getattr(r, "race_no", 0) or 0),
+                            "venue": venue,
+                            "distance": int(distance or 0) if distance is not None else None,
+                            "class": race_class,
+                            "track": track_type,
+                            "field": int(n_field or 0),
+                            "elim_n": int(elim_n or 0),
+                            "top_n": int(top_n or 0),
+                            "pred_neg": int(rs.get("pred_neg") or 0),
+                            "tn": int(rs.get("tn") or 0),
+                            "fp": int(rs.get("fp") or 0),
+                        }
+                    )
+
+                if not rows:
+                    st.info("選定範圍內沒有足夠資料（可能尚未重新計分或賽果未齊）。")
+                else:
+                    df = pd.DataFrame(rows)
+                    df["neg_accuracy"] = df["tn"] / df["pred_neg"]
+                    df["false_elim_rate"] = df["fp"] / df["pred_neg"]
+
+                    total_pred = int(df["pred_neg"].sum() or 0)
+                    total_tn = int(df["tn"].sum() or 0)
+                    total_fp = int(df["fp"].sum() or 0)
+                    overall_acc = (total_tn / total_pred) if total_pred else None
+                    overall_fp_rate = (total_fp / total_pred) if total_pred else None
+
+                    m1, m2, m3, m4 = st.columns(4)
+                    m1.metric("樣本(場)", int(df["race_id"].nunique() or 0))
+                    m2.metric("淘汰總匹數", total_pred)
+                    m3.metric("淘汰準確率", f"{overall_acc:.1%}" if overall_acc is not None else "-")
+                    m4.metric("錯殺率", f"{overall_fp_rate:.1%}" if overall_fp_rate is not None else "-")
+
+                    st.markdown("### 分桶表現")
+                    min_races = st.slider("最少樣本(場)", min_value=1, max_value=50, value=10, step=1, key="rev_range_min_races")
+                    g = (
+                        df.groupby("seg", dropna=False)
+                        .agg(
+                            races=("race_id", "nunique"),
+                            pred_neg=("pred_neg", "sum"),
+                            tn=("tn", "sum"),
+                            fp=("fp", "sum"),
+                        )
+                        .reset_index()
+                    )
+                    g["neg_accuracy"] = g["tn"] / g["pred_neg"]
+                    g["false_elim_rate"] = g["fp"] / g["pred_neg"]
+                    g = g[g["races"] >= int(min_races or 0)]
+                    if g.empty:
+                        st.info("未達到最少樣本門檻，請降低最少樣本(場)或擴大日期範圍。")
+                    else:
+                        show_cols = ["seg", "races", "pred_neg", "neg_accuracy", "false_elim_rate", "tn", "fp"]
+                        out = g[show_cols].sort_values(["neg_accuracy", "false_elim_rate"], ascending=[True, False])
+                        out = out.rename(
+                            columns={
+                                "seg": "分桶",
+                                "races": "樣本(場)",
+                                "pred_neg": "淘汰(匹)",
+                                "neg_accuracy": "淘汰準確率",
+                                "false_elim_rate": "錯殺率",
+                                "tn": "正確淘汰(匹)",
+                                "fp": "錯殺(匹)",
+                            }
+                        )
+                        out["淘汰準確率"] = out["淘汰準確率"].map(lambda x: f"{float(x):.1%}")
+                        out["錯殺率"] = out["錯殺率"].map(lambda x: f"{float(x):.1%}")
+                        st.dataframe(out, use_container_width=True, hide_index=True)
+
+                    st.markdown("### 場次明細（按錯殺率排序）")
+                    df_show = df.copy()
+                    df_show = df_show.sort_values(["false_elim_rate", "neg_accuracy"], ascending=[False, True]).head(80)
+                    df_show = df_show.rename(
+                        columns={
+                            "date": "賽日",
+                            "race_no": "場次",
+                            "field": "參賽馬數",
+                            "elim_n": "淘汰N",
+                            "top_n": "TopK",
+                            "pred_neg": "淘汰(匹)",
+                            "tn": "正確淘汰(匹)",
+                            "fp": "錯殺(匹)",
+                            "neg_accuracy": "淘汰準確率",
+                            "false_elim_rate": "錯殺率",
+                            "seg": "分桶",
+                        }
+                    )
+                    df_show["淘汰準確率"] = df_show["淘汰準確率"].map(lambda x: f"{float(x):.1%}")
+                    df_show["錯殺率"] = df_show["錯殺率"].map(lambda x: f"{float(x):.1%}")
+                    st.dataframe(
+                        df_show[
+                            [
+                                "賽日",
+                                "場次",
+                                "分桶",
+                                "參賽馬數",
+                                "淘汰N",
+                                "TopK",
+                                "淘汰(匹)",
+                                "淘汰準確率",
+                                "錯殺率",
+                                "錯殺(匹)",
+                            ]
+                        ],
+                        use_container_width=True,
+                        hide_index=True,
+                    )
     finally:
         session.close()
 
