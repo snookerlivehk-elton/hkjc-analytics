@@ -59,6 +59,7 @@ if not st.session_state.get("is_superadmin", False):
     st.stop()
 
 st.title("🛠️ 數據管理後台")
+st.markdown("在此頁面執行數據更新、回填與清理操作。")
 render_admin_nav()
 
 def trigger_scraper(target_date: str = None):
@@ -72,7 +73,7 @@ def trigger_scraper(target_date: str = None):
             env["TARGET_DATE"] = target_date
             
         process = subprocess.Popen(
-            ["python3", "scripts/run_scraper.py"],
+            [sys.executable, "scripts/run_scraper.py"],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, env=env, bufsize=1
         )
@@ -97,7 +98,7 @@ def trigger_history_backfill(target_date: str = None, mode: str = None):
         if mode:
             env["BACKFILL_MODE"] = mode
         process = subprocess.Popen(
-            ["python3", "scripts/fetch_history.py"],
+            [sys.executable, "scripts/fetch_history.py"],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, env=env, bufsize=1
         )
@@ -119,7 +120,7 @@ def trigger_race_results_fetch(target_date: str = None):
         if target_date:
             env["TARGET_DATE"] = target_date
         process = subprocess.Popen(
-            ["python3", "scripts/fetch_race_results.py"],
+            [sys.executable, "scripts/fetch_race_results.py"],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, env=env, bufsize=1
         )
@@ -139,7 +140,7 @@ def trigger_fixture_fetch():
     try:
         env = os.environ.copy()
         process = subprocess.Popen(
-            ["python3", "scripts/fetch_fixture.py"],
+            [sys.executable, "scripts/fetch_fixture.py"],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, env=env, bufsize=1
         )
@@ -161,7 +162,7 @@ def trigger_predictions_snapshot(target_date: str):
         if target_date:
             env["TARGET_DATE"] = target_date
         process = subprocess.Popen(
-            ["python3", "scripts/generate_predictions.py"],
+            [sys.executable, "scripts/generate_predictions.py"],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, env=env, bufsize=1
         )
@@ -189,7 +190,7 @@ def trigger_speedpro_fetch(target_date: str, race_nos: str = "", retry_minutes: 
         if force:
             env["FORCE_SPEEDPRO_FETCH"] = "1"
         process = subprocess.Popen(
-            ["python3", "scripts/cron_speedpro_fetch.py"],
+            [sys.executable, "scripts/cron_speedpro_fetch.py"],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -217,12 +218,6 @@ def cleanup_removed_factor_data(session):
         session.rollback()
         st.error(f"❌ 清理失敗: {e}")
         return 0, 0, 0
-
-st.title("🛠️ 數據管理後台")
-st.markdown("在此頁面執行數據更新、回填與清理操作。")
-
-from web_ui.nav import render_admin_nav
-
 
 with st.expander("🗺️ 優化排程（Roadmap）", expanded=False):
     st.markdown(

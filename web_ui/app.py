@@ -55,7 +55,7 @@ import os
 import subprocess
 
 # 終極修復：指定 Playwright 瀏覽器安裝路徑 (Railway 必備)
-os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "/app/playwright_browsers"
+os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "/app/playwright_browsers")
 
 def trigger_scraper(target_date: str = None):
     """使用 Popen 實現實時日誌串流輸出 (穩定版)"""
@@ -70,7 +70,7 @@ def trigger_scraper(target_date: str = None):
             
         # 直接執行，不再檢查 Playwright
         process = subprocess.Popen(
-            ["python3", "scripts/run_scraper.py"],
+            [sys.executable, "scripts/run_scraper.py"],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -107,7 +107,7 @@ def trigger_history_backfill():
     try:
         env = os.environ.copy()
         process = subprocess.Popen(
-            ["python3", "scripts/fetch_history.py"],
+            [sys.executable, "scripts/fetch_history.py"],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -315,6 +315,36 @@ def main():
                 else:
                     st.error("❌ 未授權：請先在後台白名單加入此 Email。")
         st.stop()
+
+    try:
+        cfg = session.query(SystemConfig).filter_by(key="winprob_temperature").first()
+        cv = cfg.value if cfg and isinstance(cfg.value, dict) else {}
+        t = cv.get("temperature")
+        t = float(t) if t is not None else None
+        dr = cv.get("date_range") if isinstance(cv.get("date_range"), dict) else {}
+        dfrom = str(dr.get("from") or "").strip()
+        dto = str(dr.get("to") or "").strip()
+        races_n = int(cv.get("races") or 0) if str(cv.get("races") or "").strip() else 0
+        nll = cv.get("nll")
+        nll = float(nll) if nll is not None else None
+    except Exception:
+        t = None
+        dfrom = ""
+        dto = ""
+        races_n = 0
+        nll = None
+
+    if t:
+        parts = [f"目前勝率校準：temperature={float(t):.3f}"]
+        if dfrom and dto:
+            parts.append(f"範圍 {dfrom}~{dto}")
+        if races_n:
+            parts.append(f"races={int(races_n)}")
+        if nll is not None:
+            parts.append(f"nll={float(nll):.4f}")
+        st.caption("｜".join(parts))
+    else:
+        st.caption("目前勝率校準：未設定（temperature=1.0）")
 
     # Sidebar: 賽事選擇
     st.sidebar.header("🔍 賽事選擇")
