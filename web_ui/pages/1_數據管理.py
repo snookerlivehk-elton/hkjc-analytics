@@ -1138,9 +1138,8 @@ with tab_hits:
                                     st.dataframe(pd.DataFrame(rr), use_container_width=True, hide_index=True)
 
                     with st.expander("🤖 權重建議（Top5 模型）", expanded=False):
-                        st.caption("用所選日期範圍的歷史賽果（Top5=正例）自動估計各因子重要性，輸出建議權重。建議只作參考，套用後需重算場次才會影響排名。")
+                        st.caption("用所選日期範圍的歷史賽果（Top5=正例）自動估計各因子重要性，輸出建議權重（後台只作分析與下載）。")
                         from scoring_engine.weight_tuning import tune_weights_topk
-                        from database.models import Race
                         import json
 
                         w_rows = (
@@ -1208,38 +1207,6 @@ with tab_hits:
                                 use_container_width=True,
                                 key="tune_download_btn",
                             )
-
-                            st.markdown("---")
-                            st.caption("套用會直接更新 ScoringWeight（全局權重）。套用後可選擇立即重算該日期範圍內的所有場次。")
-                            apply_rescore = st.checkbox("同時重算所選日期範圍", value=False, key="tune_apply_rescore")
-                            confirm = st.text_input("輸入 APPLY 以套用", value="", key="tune_apply_confirm")
-                            if st.button("套用到全局權重", use_container_width=True, key="tune_apply_btn"):
-                                if str(confirm or "").strip().upper() != "APPLY":
-                                    st.warning("請先輸入 APPLY 再套用。")
-                                else:
-                                    for fn, w in (sugg or {}).items():
-                                        try:
-                                            ww = session_hit.query(ScoringWeight).filter_by(factor_name=str(fn)).first()
-                                            if ww:
-                                                ww.weight = float(w or 0.0)
-                                        except Exception:
-                                            continue
-                                    session_hit.commit()
-
-                                    if apply_rescore:
-                                        races2 = (
-                                            session_hit.query(Race)
-                                            .filter(func.date(Race.race_date) >= d1.isoformat())
-                                            .filter(func.date(Race.race_date) <= d2.isoformat())
-                                            .order_by(Race.race_date.asc(), Race.race_no.asc(), Race.id.asc())
-                                            .all()
-                                        )
-                                        engine = ScoringEngine(session_hit)
-                                        for r in races2:
-                                            rid2 = int(getattr(r, "id") or 0)
-                                            if rid2:
-                                                engine.score_race(rid2)
-                                    st.success("✅ 已套用建議權重。")
                         elif isinstance(res, dict) and res.get("ok") is False and res.get("reason"):
                             st.info("選定範圍內未找到足夠的已結算賽果 + 計分資料，無法生成建議。")
         finally:

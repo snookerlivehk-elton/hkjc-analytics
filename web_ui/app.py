@@ -426,6 +426,147 @@ def main():
         st.session_state["active_weight_map"] = dict(updated_weights)
 
         if member_email:
+            with st.expander("🤖 權重建議（Top5 模型）", expanded=False):
+                st.caption("用所選日期範圍的歷史賽果（Top5=正例）自動估計各因子重要性，輸出建議權重。建議只作參考，套用只會寫入你的會員組合，不會影響其他用戶。")
+                from sqlalchemy import func
+                from datetime import date, timedelta
+                import json
+                from scoring_engine.weight_tuning import tune_weights_topk
+
+                factor_names = list(base_weight_map.keys())
+                drows = (
+                    session.query(func.date(Race.race_date))
+                    .join(RaceEntry, RaceEntry.race_id == Race.id)
+                    .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
+                    .filter(RaceResult.rank != None)
+                    .distinct()
+                    .order_by(func.date(Race.race_date).desc())
+                    .limit(365)
+                    .all()
+                )
+                available_dates = [r[0] for r in drows if r and r[0]]
+
+                if not available_dates:
+                    st.info("目前未有任何已結算賽果可供訓練。請先抓取賽果再試。")
+                else:
+                    end_default = available_dates[0]
+                    start_default = max(end_default - timedelta(days=30), min(available_dates))
+                    d1, d2 = st.date_input(
+                        "訓練日期範圍",
+                        value=(start_default, end_default),
+                        key="member_tune_dates",
+                    )
+                    if isinstance(d1, date) and isinstance(d2, date) and d1 > d2:
+                        d1, d2 = d2, d1
+
+                    c1, c2, c3 = st.columns([2, 2, 3])
+                    max_w = float(c1.selectbox("建議權重上限", [2.0, 3.0, 4.0, 5.0], index=1, key="member_tune_max_w"))
+                    top_k = int(c2.selectbox("TopK 定義", [5], index=0, key="member_tune_topk"))
+                    run = c3.button("生成建議", use_container_width=True, key="member_tune_run_btn")
+
+                    sig = (d1.isoformat() if isinstance(d1, date) else "", d2.isoformat() if isinstance(d2, date) else "", float(max_w), int(top_k))
+                    if run:
+                        res = tune_weights_topk(
+                            session,
+                            d1=d1,
+                            d2=d2,
+                            top_k=top_k,
+                            factor_names=factor_names,
+                            max_suggest_weight=max_w,
+                        )
+                        st.session_state["member_tune_result"] = res
+                        st.session_state["member_tune_sig"] = sig
+
+                    res = st.session_state.get("member_tune_result")
+                    if st.session_state.get("member_tune_sig") != sig:
+                        res = None
+
+                    if isinstance(res, dict) and res.get("ok") is True:
+                        m1, m2, m3, m4 = st.columns(4)
+                        m1.metric("樣本(匹)", int(res.get("rows") or 0))
+                        m2.metric("Top5 比例", f"{float(res.get('pos_rate') or 0.0):.1%}" if res.get("pos_rate") is not None else "-")
+                        m3.metric("AUC", f"{float(res.get('auc') or 0.0):.3f}" if res.get("auc") is not None else "-")
+                        m4.metric("LogLoss", f"{float(res.get('log_loss') or 0.0):.3f}" if res.get("log_loss") is not None else "-")
+
+                        sugg = res.get("suggested_weights") if isinstance(res.get("suggested_weights"), dict) else {}
+                        out_rows = []
+                        for fn, desc in [(w.factor_name, w.description) for w in weights]:
+                            if fn not in base_weight_map:
+                                continue
+                            out_rows.append(
+                                {
+                                    "條件": str(desc or fn),
+                                    "代號": str(fn),
+                                    "目前權重": round(float(updated_weights.get(fn) or 0.0), 3),
+                                    "建議權重": round(float(sugg.get(fn) or 0.0), 3),
+                                }
+                            )
+                        st.dataframe(pd.DataFrame(out_rows).sort_values(["建議權重", "目前權重"], ascending=[False, False]), use_container_width=True, hide_index=True)
+
+                        payload = {
+                            "top_k": int(res.get("top_k") or 0),
+                            "date_range": {"from": d1.isoformat(), "to": d2.isoformat()},
+                            "metrics": {"rows": res.get("rows"), "pos_rate": res.get("pos_rate"), "auc": res.get("auc"), "log_loss": res.get("log_loss")},
+                            "suggested_weights": {str(k): float(v) for k, v in (sugg or {}).items()},
+                        }
+                        st.download_button(
+                            "下載建議權重 JSON",
+                            data=json.dumps(payload, ensure_ascii=False, indent=2),
+                            file_name=f"tuned_weights_top{int(top_k)}_{d1.isoformat()}_{d2.isoformat()}.json",
+                            mime="application/json",
+                            use_container_width=True,
+                            key="member_tune_download_btn",
+                        )
+
+                        st.markdown("---")
+                        apply_mode = st.selectbox("套用方式", ["另存新組合", "更新目前組合"], index=0, key="member_tune_apply_mode")
+                        default_name = f"Top5模型建議 {d1.isoformat()}~{d2.isoformat()}"
+                        preset_name = st.text_input("組合名稱", value=default_name, key="member_tune_preset_name")
+                        confirm = st.text_input("輸入 APPLY 以套用", value="", key="member_tune_apply_confirm")
+
+                        if st.button("套用到我的組合", use_container_width=True, key="member_tune_apply_btn"):
+                            if str(confirm or "").strip().upper() != "APPLY":
+                                st.warning("請先輸入 APPLY 再套用。")
+                            else:
+                                suggested_map = {k: float(v or 0.0) for k, v in (sugg or {}).items() if k in base_weight_map}
+                                if apply_mode == "更新目前組合":
+                                    selected = str(st.session_state.get("selected_preset_name") or "")
+                                    if selected == "（手動調整）":
+                                        st.error("❌ 請先選擇要更新的已儲存組合")
+                                    else:
+                                        presets2 = _get_member_presets(session, member_email)
+                                        for p in presets2:
+                                            if p.get("name") == selected:
+                                                p["weights"] = dict(suggested_map)
+                                                p["updated_at"] = datetime.now().isoformat()
+                                        _save_member_presets(session, member_email, presets2)
+                                        st.session_state["selected_preset_name"] = selected
+                                else:
+                                    n = str(preset_name or "").strip()
+                                    if not n:
+                                        st.error("❌ 請輸入組合名稱")
+                                    else:
+                                        presets2 = _get_member_presets(session, member_email)
+                                        if any(str(p.get("name") or "") == n for p in presets2):
+                                            st.error("❌ 組合名稱已存在")
+                                        elif len(presets2) >= 3:
+                                            st.error("❌ 已達上限（最多 3 個組合）")
+                                        else:
+                                            presets2.append({"name": n, "weights": dict(suggested_map), "updated_at": datetime.now().isoformat()})
+                                            _save_member_presets(session, member_email, presets2)
+                                            st.session_state["selected_preset_name"] = n
+
+                                new_map = dict(base_weight_map)
+                                for k, v in suggested_map.items():
+                                    new_map[k] = float(v)
+                                st.session_state["active_weight_map"] = new_map
+                                for k, v in new_map.items():
+                                    st.session_state[f"weight_{k}"] = float(v)
+                                st.success("✅ 已套用到你的會員組合")
+                                st.rerun()
+                    elif isinstance(res, dict) and res.get("ok") is False:
+                        st.info("選定範圍內未找到足夠的已結算賽果 + 計分資料，無法生成建議。")
+
             st.markdown("**儲存/編輯組合（每位會員最多 3 個）**")
             with st.form("preset_save_form"):
                 name = st.text_input("組合名稱", value="", placeholder="例如：穩健型 / 追熱型")
