@@ -944,6 +944,19 @@ else:
             # 總表按馬號排序
             full_df = df.sort_values(by="馬號").reset_index(drop=True)
             full_df.insert(0, "序", range(1, len(full_df) + 1))
+            preferred_cols = [
+                "序",
+                "馬號",
+                "馬名",
+                "檔位",
+                "負磅",
+                "評分",
+                "總分(落庫)",
+                "總分(全局權重)",
+            ]
+            head_cols = [c for c in preferred_cols if c in full_df.columns]
+            tail_cols = [c for c in full_df.columns if c not in head_cols]
+            full_df = full_df[head_cols + tail_cols]
             st.dataframe(full_df, width="stretch", hide_index=True)
 
 session.close()
