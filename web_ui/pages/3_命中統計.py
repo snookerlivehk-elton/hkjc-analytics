@@ -489,6 +489,61 @@ with tab_preset:
                     st.info("目前未有任何已結算（已抓賽果）的會員組合命中資料。")
                 else:
                     st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+
+                st.markdown("### 📉 會員組合反向表現（淘汰準確率）")
+                pct = float(st.selectbox("淘汰 BottomN%", [10, 15, 20, 25, 30], index=4, key="hit_preset_elim_bottom_pct"))
+                pct_key = str(int(pct))
+                agg2 = {}
+                for email, preset_name, meta in preds:
+                    email_k = str(email or "").strip().lower()
+                    preset_k = str(preset_name or "").strip()
+                    if not email_k or not preset_k:
+                        continue
+                    if not isinstance(meta, dict):
+                        continue
+                    ev = meta.get("elim_eval") if isinstance(meta.get("elim_eval"), dict) else {}
+                    cur = ev.get(pct_key) if isinstance(ev.get(pct_key), dict) else None
+                    if not isinstance(cur, dict):
+                        continue
+                    pred_n = int(cur.get("elim_n") or 0)
+                    tn = int(cur.get("tn") or 0)
+                    fp = int(cur.get("fp") or 0)
+                    if pred_n <= 0:
+                        continue
+                    key = (email_k, preset_k)
+                    a = agg2.get(key)
+                    if a is None:
+                        a = {"races": 0, "pred": 0, "tn": 0, "fp": 0}
+                        agg2[key] = a
+                    a["races"] += 1
+                    a["pred"] += pred_n
+                    a["tn"] += tn
+                    a["fp"] += fp
+
+                rows2 = []
+                for (email_k, preset_k), a in agg2.items():
+                    n = int(a["races"] or 0)
+                    pred_n = int(a["pred"] or 0)
+                    tn = int(a["tn"] or 0)
+                    fp = int(a["fp"] or 0)
+                    acc = (tn / pred_n) if pred_n else None
+                    fp_rate = (fp / pred_n) if pred_n else None
+                    rows2.append(
+                        {
+                            "Email": email_k,
+                            "組合": preset_k,
+                            "樣本(場)": n,
+                            "淘汰(匹)": pred_n,
+                            "淘汰準確率(不入Top5)": (round(acc * 100.0, 1) if acc is not None else None),
+                            "錯殺率": (round(fp_rate * 100.0, 1) if fp_rate is not None else None),
+                            "正確淘汰(匹)": tn,
+                            "錯殺(匹)": fp,
+                        }
+                    )
+                if not rows2:
+                    st.info("目前未有任何已結算（已抓賽果）的會員組合淘汰統計資料。請先按上方「結算 Top5 命中」再查看。")
+                else:
+                    st.dataframe(pd.DataFrame(rows2).sort_values(["淘汰準確率(不入Top5)", "錯殺率"], ascending=[False, True]), width="stretch", hide_index=True)
     finally:
         session.close()
 
