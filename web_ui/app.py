@@ -281,7 +281,13 @@ def load_scoring_data(session: Session, race_id: int, weight_map: dict):
     df = pd.DataFrame(data)
     df = df.sort_values("總分", ascending=False).reset_index(drop=True)
     df["排名"] = range(1, len(df) + 1)
-    df["預估勝率"] = (estimate_win_probability(df["總分"]) * 100).round(1).astype(str) + "%"
+    try:
+        from scoring_engine.calibration import load_winprob_temperature
+
+        t = load_winprob_temperature(session)
+    except Exception:
+        t = None
+    df["預估勝率"] = (estimate_win_probability(df["總分"], temperature=float(t) if t else 1.0) * 100).round(1).astype(str) + "%"
     return df
 
 def main():

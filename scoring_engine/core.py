@@ -259,7 +259,13 @@ class ScoringEngine:
         scored_df["rank_in_race"] = scored_df["total_score"].rank(ascending=False, method='min').astype(int)
         
         # 6. 估計勝出概率 (Win Probability)
-        scored_df["win_probability"] = estimate_win_probability(scored_df["total_score"])
+        try:
+            from scoring_engine.calibration import load_winprob_temperature
+
+            t = load_winprob_temperature(self.session)
+        except Exception:
+            t = None
+        scored_df["win_probability"] = estimate_win_probability(scored_df["total_score"], temperature=float(t) if t else 1.0)
 
         # 7. 將結果持久化到資料庫
         self._save_results(scored_df, weights_at_time=weights_at_time)

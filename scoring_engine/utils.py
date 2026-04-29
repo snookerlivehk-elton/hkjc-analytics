@@ -25,11 +25,22 @@ def calculate_relative_percentile(series: pd.Series, score_range=(0, 10)) -> pd.
     min_score, max_score = score_range
     return min_score + (percentiles * (max_score - min_score))
 
-def estimate_win_probability(total_scores: pd.Series) -> pd.Series:
-    """
-    根據總分估計勝出概率 (使用 Softmax 概念)
-    """
-    # 進行特徵縮放以避免數值不穩定
+def estimate_win_probability(total_scores: pd.Series, temperature: float = 1.0) -> pd.Series:
+    if total_scores is None or len(total_scores) == 0:
+        return pd.Series([], dtype=float)
+    t = float(temperature) if temperature is not None else 1.0
+    if t <= 0:
+        t = 1.0
     x = total_scores - total_scores.mean()
-    exp_x = np.exp(x / total_scores.std() if total_scores.std() > 0 else 0)
-    return exp_x / exp_x.sum()
+    std = float(total_scores.std() or 0.0)
+    if std > 0:
+        z = x / std
+    else:
+        z = x * 0.0
+    z = z / t
+    z = z - float(z.max() or 0.0)
+    exp_x = np.exp(z)
+    denom = float(exp_x.sum() or 0.0)
+    if denom <= 0:
+        return pd.Series(np.ones(len(total_scores)) / float(len(total_scores) or 1), index=total_scores.index)
+    return exp_x / denom

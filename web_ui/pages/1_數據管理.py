@@ -471,6 +471,71 @@ with tab_ops:
             st.error(f"❌ 策略讀寫失敗: {e}")
         finally:
             session_q.close()
+
+        st.subheader("🎯 勝率校準（Temperature）")
+        st.caption("用途：把「總分→預估勝率」的 softmax 溫度做校準，讓勝率分佈更貼近歷史賽果（只影響顯示/勝率欄位，不改排名）。")
+        session_cal = get_session()
+        try:
+            from scoring_engine.calibration import fit_winprob_temperature, load_winprob_temperature, save_winprob_temperature
+            from database.models import Race, RaceEntry, RaceResult
+            from scoring_engine.core import ScoringEngine
+            from sqlalchemy import func
+            from datetime import date, timedelta
+
+            current_t = load_winprob_temperature(session_cal)
+            if current_t:
+                st.info(f"目前 temperature：{float(current_t):.3f}")
+            else:
+                st.info("目前未設定 temperature（預設 1.0）。")
+
+            drows = (
+                session_cal.query(func.date(Race.race_date))
+                .join(RaceEntry, RaceEntry.race_id == Race.id)
+                .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
+                .filter(RaceResult.rank != None)
+                .distinct()
+                .order_by(func.date(Race.race_date).desc())
+                .limit(365)
+                .all()
+            )
+            available_dates = [r[0] for r in drows if r and r[0]]
+            if not available_dates:
+                st.info("目前未有任何已結算賽果可供校準。")
+            else:
+                end_default = available_dates[0]
+                start_default = max(end_default - timedelta(days=60), min(available_dates))
+                d1, d2 = st.date_input("校準日期範圍", value=(start_default, end_default), key="calib_dates")
+                if isinstance(d1, date) and isinstance(d2, date) and d1 > d2:
+                    d1, d2 = d2, d1
+
+                c1, c2 = st.columns([2, 3])
+                do_rescore = c1.checkbox("同時重算所選範圍", value=False, key="calib_rescore")
+                run = c2.button("訓練並保存 temperature", use_container_width=True, key="calib_train_btn")
+
+                if run:
+                    res = fit_winprob_temperature(session_cal, d1=d1, d2=d2)
+                    if res.get("ok") is True:
+                        save_winprob_temperature(session_cal, res)
+                        st.success(f"✅ 已保存 temperature={float(res.get('temperature') or 1.0):.3f}（races={int(res.get('races') or 0)} nll={float(res.get('nll') or 0.0):.4f}）")
+                        if do_rescore:
+                            races2 = (
+                                session_cal.query(Race)
+                                .filter(func.date(Race.race_date) >= d1.isoformat())
+                                .filter(func.date(Race.race_date) <= d2.isoformat())
+                                .order_by(Race.race_date.asc(), Race.race_no.asc(), Race.id.asc())
+                                .all()
+                            )
+                            engine = ScoringEngine(session_cal)
+                            for r in races2:
+                                rid2 = int(getattr(r, "id") or 0)
+                                if rid2:
+                                    engine.score_race(rid2)
+                            st.success("✅ 已重算所選範圍場次。")
+                        st.rerun()
+                    else:
+                        st.error("❌ 訓練失敗：所選範圍內沒有足夠的已結算賽果/計分資料。")
+        finally:
+            session_cal.close()
         
         st.subheader("⚡ 一鍵完整更新（建議）")
         st.caption("會依序完成：抓排位 → 回填該日涉及馬匹往績 → 重算該日所有場次 → 生成 Top5 快照（factor + preset）。每一步會等待上一個完成。")
