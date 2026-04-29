@@ -478,6 +478,7 @@ with tab_diag:
     session = get_session()
     try:
         label_map = factor_label_map(session)
+        from database.models import SystemConfig
         drows = (
             session.query(func.date(PredictionTop5.race_date))
             .distinct()
@@ -584,6 +585,31 @@ with tab_diag:
                             }
                         )
                     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+                    q_cfg = session.query(SystemConfig).filter_by(key=f"factor_quality:{rid}").first()
+                    qv = q_cfg.value if q_cfg and isinstance(q_cfg.value, dict) else {}
+                    qf = qv.get("factors") if isinstance(qv, dict) else {}
+                    if isinstance(qf, dict) and qf:
+                        st.markdown("### 🧩 因子資料完整度（本場）")
+                        st.caption("缺失判斷以 raw_data_display 為「無數據/空白」計算；覆蓋率越低，代表該因子本場越多馬匹欠缺參考。")
+                        qrows = []
+                        for k, v in qf.items():
+                            if not isinstance(v, dict):
+                                continue
+                            qrows.append(
+                                {
+                                    "因子": k,
+                                    "名稱": label_map.get(k, k),
+                                    "覆蓋率": round(float(v.get("coverage") or 0.0) * 100.0, 1),
+                                    "缺失(匹)": int(v.get("missing") or 0),
+                                    "門檻(%)": round(float(v.get("min_coverage") or 0.0) * 100.0, 0),
+                                    "策略": "自動忽略" if str(v.get("action") or "") == "ignore" else "只提示",
+                                    "已忽略": bool(v.get("ignored") is True),
+                                }
+                            )
+                        if qrows:
+                            qdf = pd.DataFrame(qrows).sort_values(["已忽略", "覆蓋率"], ascending=[False, True])
+                            st.dataframe(qdf, use_container_width=True, hide_index=True)
 
                     fp = [x for x in pred_t5 if x not in actual_t5_set]
                     fn = [x for x in actual_t5 if x not in pred_t5_set]

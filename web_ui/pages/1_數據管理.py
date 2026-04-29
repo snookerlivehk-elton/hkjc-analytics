@@ -351,6 +351,122 @@ with tab_ops:
                 st.caption("｜".join(meta_lines))
         finally:
             session_meta.close()
+
+        st.subheader("🧩 因子資料不足策略")
+        st.caption("用於識別因子資料是否齊全：可只提示，或在資料覆蓋不足時自動忽略該因子（本場有效權重設為 0）。")
+        session_q = get_session()
+        try:
+            from database.models import SystemConfig, ScoringWeight
+            from scoring_engine.constants import DISABLED_FACTORS
+
+            cfg = session_q.query(SystemConfig).filter_by(key="factor_quality_policy").first()
+            val = cfg.value if cfg and isinstance(cfg.value, dict) else {}
+            default_p = val.get("default") if isinstance(val.get("default"), dict) else {}
+            overrides = val.get("overrides") if isinstance(val.get("overrides"), dict) else {}
+
+            def_action = str(default_p.get("action") or "warn").strip().lower()
+            def_min_cov = default_p.get("min_coverage")
+            try:
+                def_min_cov = float(def_min_cov if def_min_cov is not None else 0.7)
+            except Exception:
+                def_min_cov = 0.7
+            if def_min_cov > 1.0:
+                def_min_cov = def_min_cov / 100.0
+            if def_min_cov < 0.0:
+                def_min_cov = 0.0
+            if def_min_cov > 1.0:
+                def_min_cov = 1.0
+
+            weights = (
+                session_q.query(ScoringWeight.factor_name, ScoringWeight.description)
+                .filter(ScoringWeight.is_active == True)
+                .filter(~ScoringWeight.factor_name.in_(DISABLED_FACTORS))
+                .order_by(ScoringWeight.factor_name.asc())
+                .all()
+            )
+            factor_rows = []
+            for fn, desc in weights:
+                code = str(fn or "").strip()
+                if not code:
+                    continue
+                ov = overrides.get(code) if isinstance(overrides.get(code), dict) else {}
+                act = str((ov.get("action") if isinstance(ov, dict) else None) or "default").strip().lower()
+                mc = ov.get("min_coverage") if isinstance(ov, dict) else None
+                try:
+                    mc = float(mc) if mc is not None else None
+                except Exception:
+                    mc = None
+                if mc is not None and mc > 1.0:
+                    mc = mc / 100.0
+                if mc is not None and mc < 0.0:
+                    mc = 0.0
+                if mc is not None and mc > 1.0:
+                    mc = 1.0
+                factor_rows.append(
+                    {
+                        "因子代號": code,
+                        "因子名稱": str(desc or code),
+                        "模式": act,
+                        "門檻(%)": round((mc * 100.0), 0) if mc is not None else None,
+                    }
+                )
+
+            with st.form("factor_quality_policy_form"):
+                c1, c2 = st.columns(2)
+                with c1:
+                    action_label = "只提示" if def_action != "ignore" else "自動忽略"
+                    new_action_label = st.selectbox("預設策略", ["只提示", "自動忽略"], index=0 if action_label == "只提示" else 1)
+                with c2:
+                    new_min_pct = st.slider("預設門檻(覆蓋率%)", min_value=0, max_value=100, value=int(round(def_min_cov * 100.0)))
+
+                st.markdown("**因子個別設定（可留空＝跟預設）**")
+                df_edit = pd.DataFrame(factor_rows)
+                edited = st.data_editor(
+                    df_edit,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "模式": st.column_config.SelectboxColumn("模式", options=["default", "warn", "ignore"], help="default=跟預設；warn=只提示；ignore=自動忽略"),
+                        "門檻(%)": st.column_config.NumberColumn("門檻(%)", min_value=0, max_value=100, step=1, help="留空＝跟預設"),
+                    },
+                    disabled=["因子代號", "因子名稱"],
+                )
+                submitted = st.form_submit_button("💾 儲存策略", type="primary")
+                if submitted:
+                    new_default_action = "ignore" if new_action_label == "自動忽略" else "warn"
+                    new_policy = {"default": {"action": new_default_action, "min_coverage": float(new_min_pct) / 100.0}, "overrides": {}}
+                    if isinstance(edited, pd.DataFrame):
+                        for _, r in edited.iterrows():
+                            code = str(r.get("因子代號") or "").strip()
+                            if not code:
+                                continue
+                            mode = str(r.get("模式") or "").strip().lower()
+                            mc = r.get("門檻(%)")
+                            mc_v = None
+                            try:
+                                mc_v = float(mc) / 100.0 if mc is not None and str(mc) != "nan" else None
+                            except Exception:
+                                mc_v = None
+                            if mode in ("warn", "ignore") or mc_v is not None:
+                                ov = {}
+                                if mode in ("warn", "ignore"):
+                                    ov["action"] = mode
+                                if mc_v is not None:
+                                    ov["min_coverage"] = mc_v
+                                new_policy["overrides"][code] = ov
+
+                    if not cfg:
+                        cfg = SystemConfig(key="factor_quality_policy", description="因子資料不足策略")
+                        session_q.add(cfg)
+                    cfg.value = new_policy
+                    session_q.commit()
+                    st.success("✅ 已儲存。新策略會於下一次重新計分後生效。")
+                    st.rerun()
+        except Exception as e:
+            session_q.rollback()
+            st.error(f"❌ 策略讀寫失敗: {e}")
+        finally:
+            session_q.close()
         
         st.subheader("⚡ 一鍵完整更新（建議）")
         st.caption("會依序完成：抓排位 → 回填該日涉及馬匹往績 → 重算該日所有場次 → 生成 Top5 快照（factor + preset）。每一步會等待上一個完成。")
@@ -786,6 +902,63 @@ with tab_hits:
                             }
                         )
                     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+                    with st.expander("🧩 因子缺資料統計（所選日期範圍）", expanded=False):
+                        st.caption("用途：檢查各因子在所選範圍內「無數據/空白」比例，幫你判斷要補數據、降低權重或暫時忽略。")
+                        from database.models import Race, ScoringFactor
+                        from sqlalchemy import case
+
+                        q = (
+                            session_hit.query(
+                                ScoringFactor.factor_name.label("factor"),
+                                func.count(ScoringFactor.id).label("rows"),
+                                func.sum(
+                                    case(
+                                        (
+                                            (ScoringFactor.raw_data_display == None)
+                                            | (ScoringFactor.raw_data_display == "")
+                                            | (ScoringFactor.raw_data_display == "無數據"),
+                                            1,
+                                        ),
+                                        else_=0,
+                                    )
+                                ).label("missing_display"),
+                                func.sum(case((ScoringFactor.raw_value == None, 1), else_=0)).label("missing_raw"),
+                            )
+                            .join(RaceEntry, RaceEntry.id == ScoringFactor.entry_id)
+                            .join(Race, Race.id == RaceEntry.race_id)
+                            .filter(ScoringFactor.factor_name.in_(factor_names))
+                            .filter(func.date(Race.race_date) >= d1.isoformat())
+                            .filter(func.date(Race.race_date) <= d2.isoformat())
+                            .group_by(ScoringFactor.factor_name)
+                            .all()
+                        )
+                        rowsq = []
+                        for factor, rows_n, miss_d, miss_r in q:
+                            total = int(rows_n or 0)
+                            md = int(miss_d or 0)
+                            mr = int(miss_r or 0)
+                            cov = (1.0 - (md / total)) if total else 0.0
+                            rowsq.append(
+                                {
+                                    "條件": factor_desc.get(str(factor), str(factor)),
+                                    "代號": str(factor),
+                                    "樣本(匹)": total,
+                                    "缺失顯示(匹)": md,
+                                    "缺失顯示(%)": round((md / total * 100.0), 1) if total else 0.0,
+                                    "缺失原始(匹)": mr,
+                                    "缺失原始(%)": round((mr / total * 100.0), 1) if total else 0.0,
+                                    "覆蓋率(%)": round(cov * 100.0, 1),
+                                }
+                            )
+                        if not rowsq:
+                            st.info("選定範圍內未找到因子計分資料。")
+                        else:
+                            st.dataframe(
+                                pd.DataFrame(rowsq).sort_values(["缺失顯示(%)", "缺失原始(%)"], ascending=[False, False]),
+                                use_container_width=True,
+                                hide_index=True,
+                            )
         finally:
             session_hit.close()
 

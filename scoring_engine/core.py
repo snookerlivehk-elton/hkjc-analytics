@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 from typing import List, Dict, Any
 from sqlalchemy.orm import Session
-from database.models import RaceEntry, ScoringFactor, ScoringWeight
+from database.models import RaceEntry, ScoringFactor, ScoringWeight, SystemConfig
 from utils.logger import logger
 
 from scoring_engine.utils import calculate_relative_percentile, estimate_win_probability
@@ -37,6 +37,19 @@ class ScoringEngine:
                 continue
             out[name] = float(w.weight or 0.0)
         return out
+
+    def _load_factor_quality_policy(self) -> Dict[str, Any]:
+        cfg = self.session.query(SystemConfig).filter_by(key="factor_quality_policy").first()
+        if cfg and isinstance(cfg.value, dict):
+            return cfg.value
+        return {"default": {"action": "warn", "min_coverage": 0.7}, "overrides": {}}
+
+    def _upsert_system_config(self, key: str, value: Any, description: str = ""):
+        cfg = self.session.query(SystemConfig).filter_by(key=key).first()
+        if not cfg:
+            cfg = SystemConfig(key=key, description=str(description or "").strip() or None)
+            self.session.add(cfg)
+        cfg.value = value
 
     def score_race(self, race_id: int):
         """核心函數：對單場賽事的所有出賽馬匹進行獨立計分、相對排名"""
@@ -84,9 +97,58 @@ class ScoringEngine:
             scored_df[f"{factor_name}_display"] = factor_displays[factor_name]
 
         # 5. 計算加權總分與排名
+        policy = self._load_factor_quality_policy()
+        default_policy = policy.get("default") if isinstance(policy.get("default"), dict) else {}
+        overrides = policy.get("overrides") if isinstance(policy.get("overrides"), dict) else {}
+        weights_at_time = dict(self.weights)
+        factor_quality: Dict[str, Any] = {}
+        n_field = int(len(scored_df))
+        for factor_name in list(self.weights.keys()):
+            disp = scored_df.get(f"{factor_name}_display")
+            if disp is None:
+                missing_cnt = n_field
+            else:
+                d = disp.fillna("").astype(str).str.strip()
+                missing_cnt = int(((d == "") | (d == "無數據")).sum())
+            coverage = (1.0 - (missing_cnt / float(n_field))) if n_field else 0.0
+
+            ov = overrides.get(factor_name) if isinstance(overrides.get(factor_name), dict) else {}
+            action = str((ov.get("action") if isinstance(ov, dict) else None) or default_policy.get("action") or "warn").strip().lower()
+            min_cov = (ov.get("min_coverage") if isinstance(ov, dict) else None)
+            if min_cov is None:
+                min_cov = default_policy.get("min_coverage")
+            try:
+                min_cov = float(min_cov if min_cov is not None else 0.0)
+            except Exception:
+                min_cov = 0.0
+            if min_cov > 1.0:
+                min_cov = min_cov / 100.0
+            if min_cov < 0.0:
+                min_cov = 0.0
+            if min_cov > 1.0:
+                min_cov = 1.0
+
+            ignored = False
+            if action == "ignore" and coverage < min_cov:
+                weights_at_time[factor_name] = 0.0
+                ignored = True
+            elif action == "warn" and coverage < min_cov:
+                logger.warning(f"因子資料覆蓋不足：{factor_name} 覆蓋率 {coverage:.1%} (< {min_cov:.0%})")
+
+            factor_quality[factor_name] = {
+                "field_size": n_field,
+                "missing": missing_cnt,
+                "coverage": coverage,
+                "action": action,
+                "min_coverage": min_cov,
+                "weight": float(self.weights.get(factor_name) or 0.0),
+                "effective_weight": float(weights_at_time.get(factor_name) or 0.0),
+                "ignored": bool(ignored),
+            }
+
         total_score = np.zeros(len(scored_df))
-        for factor_name, weight in self.weights.items():
-            total_score += scored_df[f"{factor_name}_score"] * weight
+        for factor_name, weight in weights_at_time.items():
+            total_score += scored_df[f"{factor_name}_score"] * float(weight or 0.0)
         
         scored_df["total_score"] = total_score
         # 總分越高，名次越前 (rank 1)
@@ -96,12 +158,22 @@ class ScoringEngine:
         scored_df["win_probability"] = estimate_win_probability(scored_df["total_score"])
 
         # 7. 將結果持久化到資料庫
-        self._save_results(scored_df)
+        self._save_results(scored_df, weights_at_time=weights_at_time)
+        try:
+            self._upsert_system_config(
+                key=f"factor_quality:{int(race_id)}",
+                value={"race_id": int(race_id), "field_size": n_field, "factors": factor_quality},
+                description="因子資料完整度（按場次）",
+            )
+            self.session.commit()
+        except Exception as e:
+            self.session.rollback()
+            logger.warning(f"寫入因子資料完整度失敗: {e}")
         
         logger.info(f"賽事 ID {race_id} 計分排名完成 (成功計算 {len(scored_df)} 匹馬)")
         return scored_df
 
-    def _save_results(self, df: pd.DataFrame):
+    def _save_results(self, df: pd.DataFrame, weights_at_time: Dict[str, float]):
         """儲存計分結果與因子得分"""
         for _, row in df.iterrows():
             entry = self.session.get(RaceEntry, row["entry_id"])
@@ -129,6 +201,6 @@ class ScoringEngine:
                             sf.raw_value = None
                     sf.score = row[f"{factor_name}_score"]
                     sf.raw_data_display = row[f"{factor_name}_display"]
-                    sf.weight_at_time = self.weights[factor_name]
+                    sf.weight_at_time = float(weights_at_time.get(factor_name) or 0.0)
         
         self.session.commit()
