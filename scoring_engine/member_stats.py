@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, or_
 
-from database.models import SystemConfig, Race, RaceEntry, RaceResult, ScoringFactor
+from database.models import SystemConfig, Race, RaceEntry, RaceResult, ScoringFactor, PredictionTop5
 
 
 STATS_START_DATE = datetime(2026, 4, 8)
@@ -17,6 +17,17 @@ CURRENT_POLICY = {
     "cmp": "date",
     "v": 3,
     "metrics": ["WIN", "P", "Q1", "PQ", "T3E", "T3", "F4", "F4Q", "B5W", "B5P"],
+}
+
+ELIM_BOTTOM_PCTS = [10, 15, 20, 25, 30]
+CURRENT_ELIM_POLICY = {
+    "start_date": STATS_START_DATE.date().isoformat(),
+    "window_days": int(STATS_WINDOW_DAYS),
+    "cmp": "date",
+    "v": 1,
+    "top_k": 5,
+    "bottom_pcts": ELIM_BOTTOM_PCTS,
+    "metrics": ["pred", "tn", "fp"],
 }
 
 
@@ -62,6 +73,179 @@ def delete_member_preset_stats(session: Session, email: str, preset_name: str) -
     if n in stats:
         stats.pop(n, None)
         save_member_preset_stats(session, e, stats)
+
+
+def load_member_preset_elim_stats(session: Session, email: str) -> Dict[str, Any]:
+    e = str(email or "").strip().lower()
+    if not e:
+        return {}
+    key = f"member_weight_preset_elim_stats:{e}"
+    cfg = session.query(SystemConfig).filter_by(key=key).first()
+    if cfg and isinstance(cfg.value, dict):
+        out = {}
+        for k, v in cfg.value.items():
+            if isinstance(v, dict) and v.get("policy") == CURRENT_ELIM_POLICY:
+                out[k] = v
+        return out
+    return {}
+
+
+def save_member_preset_elim_stats(session: Session, email: str, stats: Dict[str, Any]) -> None:
+    e = str(email or "").strip().lower()
+    if not e:
+        return
+    key = f"member_weight_preset_elim_stats:{e}"
+    cfg = session.query(SystemConfig).filter_by(key=key).first()
+    if not cfg:
+        cfg = SystemConfig(key=key, description="會員權重配置反向表現統計（淘汰準確率/錯殺率）")
+        session.add(cfg)
+    cfg.value = stats
+    session.commit()
+
+
+def delete_member_preset_elim_stats(session: Session, email: str, preset_name: str) -> None:
+    e = str(email or "").strip().lower()
+    n = str(preset_name or "").strip()
+    if not e or not n:
+        return
+    stats = load_member_preset_elim_stats(session, e)
+    if n in stats:
+        stats.pop(n, None)
+        save_member_preset_elim_stats(session, e, stats)
+
+
+def update_member_preset_elim_stats_incremental(
+    session: Session,
+    email: str,
+    presets: List[Dict[str, Any]],
+    per_preset_max_new_races: int = 60,
+) -> Dict[str, Any]:
+    cutoff = _cutoff_date()
+    stats = load_member_preset_elim_stats(session, email)
+    now = datetime.now().isoformat()
+    changed_any = False
+    policy = CURRENT_ELIM_POLICY
+
+    for p in (presets or [])[:3]:
+        name = str(p.get("name") or "").strip()
+        if not name:
+            continue
+
+        st = stats.get(name)
+        if not isinstance(st, dict):
+            st = {
+                "pcts": {str(int(x)): {"races": 0, "pred": 0, "tn": 0, "fp": 0} for x in ELIM_BOTTOM_PCTS},
+                "last_date": None,
+                "last_race_no": None,
+                "last_race_id": None,
+                "updated_at": None,
+                "policy": policy,
+            }
+            changed_any = True
+        else:
+            if st.get("policy") != policy:
+                st = {
+                    "pcts": {str(int(x)): {"races": 0, "pred": 0, "tn": 0, "fp": 0} for x in ELIM_BOTTOM_PCTS},
+                    "last_date": None,
+                    "last_race_no": None,
+                    "last_race_id": None,
+                    "updated_at": None,
+                    "policy": policy,
+                }
+                changed_any = True
+
+        last_date = None
+        if st.get("last_date"):
+            try:
+                last_date = datetime.fromisoformat(st["last_date"])
+            except Exception:
+                last_date = None
+        last_race_no = st.get("last_race_no")
+        last_race_id = st.get("last_race_id")
+
+        if last_date is not None and last_date < cutoff:
+            st["pcts"] = {str(int(x)): {"races": 0, "pred": 0, "tn": 0, "fp": 0} for x in ELIM_BOTTOM_PCTS}
+            st["last_date"] = None
+            st["last_race_no"] = None
+            st["last_race_id"] = None
+            last_date = None
+            last_race_no = None
+            last_race_id = None
+            changed_any = True
+
+        cutoff_s = cutoff.date().isoformat()
+        q = (
+            session.query(PredictionTop5)
+            .filter(PredictionTop5.predictor_type == "preset")
+            .filter(PredictionTop5.member_email == str(email or "").strip().lower())
+            .filter(PredictionTop5.predictor_key == str(name))
+            .filter(func.date(PredictionTop5.race_date) >= cutoff_s)
+            .order_by(func.date(PredictionTop5.race_date).asc(), PredictionTop5.race_no.asc(), PredictionTop5.race_id.asc())
+        )
+
+        if last_date is not None and last_race_no is not None and last_race_id is not None:
+            last_date_s = last_date.date().isoformat() if hasattr(last_date, "date") else str(last_date)
+            q = q.filter(
+                or_(
+                    func.date(PredictionTop5.race_date) > last_date_s,
+                    and_(func.date(PredictionTop5.race_date) == last_date_s, PredictionTop5.race_no > int(last_race_no)),
+                    and_(
+                        func.date(PredictionTop5.race_date) == last_date_s,
+                        PredictionTop5.race_no == int(last_race_no),
+                        PredictionTop5.race_id > int(last_race_id),
+                    ),
+                )
+            )
+
+        rows = q.limit(int(per_preset_max_new_races or 0)).all()
+        processed = 0
+
+        pcts_map = st.get("pcts") if isinstance(st.get("pcts"), dict) else {}
+        for pct in ELIM_BOTTOM_PCTS:
+            k = str(int(pct))
+            if k not in pcts_map or not isinstance(pcts_map.get(k), dict):
+                pcts_map[k] = {"races": 0, "pred": 0, "tn": 0, "fp": 0}
+
+        for row in rows:
+            meta = row.meta if isinstance(row.meta, dict) else {}
+            elim_eval = meta.get("elim_eval") if isinstance(meta.get("elim_eval"), dict) else {}
+            if not isinstance(elim_eval, dict) or not elim_eval:
+                continue
+
+            used_any = False
+            for pct in ELIM_BOTTOM_PCTS:
+                kk = str(int(pct))
+                cur = elim_eval.get(kk) if isinstance(elim_eval.get(kk), dict) else None
+                if not isinstance(cur, dict):
+                    continue
+                pred_n = int(cur.get("elim_n") or 0)
+                tn = int(cur.get("tn") or 0)
+                fp = int(cur.get("fp") or 0)
+                if pred_n <= 0:
+                    continue
+                a = pcts_map.get(kk) if isinstance(pcts_map.get(kk), dict) else {"races": 0, "pred": 0, "tn": 0, "fp": 0}
+                a["races"] = int(a.get("races") or 0) + 1
+                a["pred"] = int(a.get("pred") or 0) + pred_n
+                a["tn"] = int(a.get("tn") or 0) + tn
+                a["fp"] = int(a.get("fp") or 0) + fp
+                pcts_map[kk] = a
+                used_any = True
+
+            if used_any:
+                st["last_date"] = row.race_date.date().isoformat() if hasattr(row.race_date, "date") else str(row.race_date)
+                st["last_race_no"] = int(row.race_no or 0)
+                st["last_race_id"] = int(row.race_id or 0)
+                st["updated_at"] = now
+                processed += 1
+
+        st["pcts"] = pcts_map
+        stats[name] = st
+        if processed > 0:
+            changed_any = True
+
+    if changed_any:
+        save_member_preset_elim_stats(session, email, stats)
+    return stats
 
 
 def _list_completed_races(
