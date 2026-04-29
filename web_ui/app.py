@@ -945,7 +945,8 @@ def main():
                     with st.expander("📉 會員組合反向表現（淘汰準確率）", expanded=False):
                         st.caption("以 BottomN%（按每場參賽馬數計算 N）評估：你淘汰的馬匹是否真的不入 Top5。")
                         from sqlalchemy import func
-                        from database.models import PredictionTop5
+                        from database.models import Race, RaceEntry, RaceResult, ScoringFactor
+                        from scoring_engine.diagnostics import compute_elim_n, reverse_stats_for_race
 
                         bottom_pct = float(st.selectbox("淘汰 BottomN%", [10, 15, 20, 25, 30], index=4, key="member_elim_bottom_pct"))
                         end_default = date.today()
@@ -967,53 +968,148 @@ def main():
                         if not preset_sel:
                             st.info("未找到任何已儲存權重組合。")
                         else:
-                            rows = (
-                                session.query(PredictionTop5.race_date, PredictionTop5.race_no, PredictionTop5.meta)
-                                .filter(PredictionTop5.predictor_type == "preset")
-                                .filter(PredictionTop5.member_email == str(member_email).strip().lower())
-                                .filter(PredictionTop5.predictor_key == str(preset_sel))
-                                .filter(func.date(PredictionTop5.race_date) >= d1.isoformat())
-                                .filter(func.date(PredictionTop5.race_date) <= d2.isoformat())
-                                .order_by(PredictionTop5.race_date.asc(), PredictionTop5.race_no.asc())
+                            preset_weights = None
+                            for p in (presets or []):
+                                if isinstance(p, dict) and str(p.get("name") or "").strip() == str(preset_sel):
+                                    preset_weights = p.get("weights")
+                                    break
+                            weight_map = preset_weights if isinstance(preset_weights, dict) else {}
+                            used_factors = [str(k) for k, v in weight_map.items() if abs(float(v or 0.0)) > 1e-12]
+
+                            if not used_factors:
+                                st.info("此組合沒有任何有效權重，無法計算反向表現。")
+                                used_factors = []
+
+                            race_rows = (
+                                session.query(Race.id, Race.race_date, Race.race_no)
+                                .join(RaceEntry, RaceEntry.race_id == Race.id)
+                                .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
+                                .filter(RaceResult.rank != None)
+                                .filter(func.date(Race.race_date) >= d1.isoformat())
+                                .filter(func.date(Race.race_date) <= d2.isoformat())
+                                .group_by(Race.id, Race.race_date, Race.race_no)
+                                .having(func.count(RaceResult.id) >= 5)
+                                .order_by(func.date(Race.race_date).asc(), Race.race_no.asc(), Race.id.asc())
                                 .all()
                             )
+                            race_ids = [int(r[0]) for r in (race_rows or []) if r and int(r[0] or 0) > 0]
 
                             total_pred = 0
                             total_tn = 0
                             total_fp = 0
                             out = []
-                            pct_key = str(int(bottom_pct))
-                            for rd, rno, meta in rows:
-                                if not isinstance(meta, dict):
-                                    continue
-                                ev = meta.get("elim_eval") if isinstance(meta.get("elim_eval"), dict) else {}
-                                cur = ev.get(pct_key) if isinstance(ev.get(pct_key), dict) else None
-                                if not isinstance(cur, dict):
-                                    continue
-                                pred_neg = cur.get("pred_neg") if isinstance(cur.get("pred_neg"), list) else []
-                                tn = int(cur.get("tn") or 0)
-                                fp = int(cur.get("fp") or 0)
-                                pred_n = int(cur.get("elim_n") or len(pred_neg) or 0)
-                                total_pred += pred_n
-                                total_tn += tn
-                                total_fp += fp
-                                date_s = ""
-                                try:
-                                    if rd is not None and hasattr(rd, "date"):
-                                        date_s = rd.date().isoformat()
-                                except Exception:
-                                    date_s = ""
-                                out.append(
-                                    {
-                                        "賽日": date_s,
-                                        "場次": int(rno or 0),
-                                        "淘汰N": pred_n,
-                                        "正確淘汰": tn,
-                                        "錯殺": fp,
-                                        "淘汰準確率": (tn / pred_n) if pred_n else None,
-                                        "錯殺率": (fp / pred_n) if pred_n else None,
-                                    }
+                            if race_ids and used_factors:
+                                entries = (
+                                    session.query(RaceEntry.race_id, RaceEntry.horse_no)
+                                    .filter(RaceEntry.race_id.in_(race_ids))
+                                    .all()
                                 )
+                                horses_by_race = {}
+                                for rid, hn in entries:
+                                    rid_i = int(rid or 0)
+                                    if rid_i <= 0:
+                                        continue
+                                    try:
+                                        hn_i = int(hn or 0)
+                                    except Exception:
+                                        hn_i = 0
+                                    if hn_i <= 0:
+                                        continue
+                                    horses_by_race.setdefault(rid_i, []).append(hn_i)
+
+                                rr_rows = (
+                                    session.query(RaceEntry.race_id, RaceEntry.horse_no, RaceResult.rank)
+                                    .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
+                                    .filter(RaceEntry.race_id.in_(race_ids))
+                                    .filter(RaceResult.rank != None)
+                                    .order_by(RaceEntry.race_id.asc(), RaceResult.rank.asc())
+                                    .all()
+                                )
+                                actual_by_race = {}
+                                for rid, hn, _rk in rr_rows:
+                                    rid_i = int(rid or 0)
+                                    if rid_i <= 0:
+                                        continue
+                                    if rid_i not in actual_by_race:
+                                        actual_by_race[rid_i] = []
+                                    if len(actual_by_race[rid_i]) >= 5:
+                                        continue
+                                    try:
+                                        hn_i = int(hn or 0)
+                                    except Exception:
+                                        hn_i = 0
+                                    if hn_i > 0:
+                                        actual_by_race[rid_i].append(hn_i)
+
+                                sf_rows = (
+                                    session.query(RaceEntry.race_id, RaceEntry.horse_no, ScoringFactor.factor_name, ScoringFactor.score)
+                                    .join(ScoringFactor, ScoringFactor.entry_id == RaceEntry.id)
+                                    .filter(RaceEntry.race_id.in_(race_ids))
+                                    .filter(ScoringFactor.factor_name.in_(used_factors))
+                                    .all()
+                                )
+                                score_map = {}
+                                for rid, hn, fn, sc in sf_rows:
+                                    rid_i = int(rid or 0)
+                                    if rid_i <= 0:
+                                        continue
+                                    try:
+                                        hn_i = int(hn or 0)
+                                    except Exception:
+                                        hn_i = 0
+                                    if hn_i <= 0:
+                                        continue
+                                    rmap = score_map.setdefault(rid_i, {})
+                                    hmap = rmap.setdefault(hn_i, {})
+                                    hmap[str(fn)] = float(sc or 0.0)
+
+                                def _ranked_horses(rid: int):
+                                    horses = horses_by_race.get(int(rid)) or []
+                                    rmap = score_map.get(int(rid)) or {}
+                                    items = []
+                                    for hn in horses:
+                                        m = rmap.get(int(hn)) or {}
+                                        total = 0.0
+                                        for fn, ww in (weight_map or {}).items():
+                                            total += float(m.get(str(fn), 0.0)) * float(ww or 0.0)
+                                        items.append((int(hn), float(total)))
+                                    items.sort(key=lambda x: (-x[1], x[0]))
+                                    return [hn for hn, _ in items]
+
+                                for rid, rd, rno in race_rows:
+                                    rid_i = int(rid or 0)
+                                    if rid_i <= 0:
+                                        continue
+                                    actual_pos = actual_by_race.get(rid_i) or []
+                                    if len(actual_pos) < 5:
+                                        continue
+                                    ranked = _ranked_horses(rid_i)
+                                    if not ranked:
+                                        continue
+                                    n_field = len(horses_by_race.get(rid_i) or [])
+                                    elim_n = compute_elim_n(int(n_field or 0), float(bottom_pct))
+                                    if elim_n <= 0:
+                                        continue
+                                    pred_neg = ranked[-int(elim_n):]
+                                    rs = reverse_stats_for_race(actual_positive=actual_pos, predicted_negative=pred_neg)
+                                    pred_n = int(rs.get("pred_neg") or 0)
+                                    tn = int(rs.get("tn") or 0)
+                                    fp = int(rs.get("fp") or 0)
+                                    total_pred += pred_n
+                                    total_tn += tn
+                                    total_fp += fp
+                                    date_s = rd.date().isoformat() if hasattr(rd, "date") else str(rd or "")
+                                    out.append(
+                                        {
+                                            "賽日": date_s,
+                                            "場次": int(rno or 0),
+                                            "淘汰N": pred_n,
+                                            "正確淘汰": tn,
+                                            "錯殺": fp,
+                                            "淘汰準確率": (tn / pred_n) if pred_n else None,
+                                            "錯殺率": (fp / pred_n) if pred_n else None,
+                                        }
+                                    )
 
                             m1, m2, m3, m4 = st.columns(4)
                             m1.metric("樣本(場)", len(out))
@@ -1022,7 +1118,7 @@ def main():
                             m4.metric("錯殺率", f"{(total_fp / total_pred):.1%}" if total_pred else "-")
 
                             if not out:
-                                st.info("目前未找到可用的淘汰統計資料。請先在後台生成/結算快照（命中統計結算）後再查看。")
+                                st.info("目前未找到可用的淘汰統計資料（需要該日期範圍內有賽果 + 計分因子分數）。")
                             else:
                                 df_out = pd.DataFrame(out)
                                 df_out["淘汰準確率"] = df_out["淘汰準確率"].map(lambda x: f"{float(x):.1%}" if x is not None else "-")
