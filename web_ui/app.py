@@ -788,12 +788,13 @@ def main():
                         stt = stats_map.get(p["name"], {}) if isinstance(stats_map, dict) else {}
                         ett = elim_stats_map.get(p["name"], {}) if isinstance(elim_stats_map, dict) else {}
                         pcts = ett.get("pcts") if isinstance(ett.get("pcts"), dict) else {}
-                        pct30 = pcts.get("30") if isinstance(pcts.get("30"), dict) else {}
-                        pred30 = int(pct30.get("pred") or 0)
-                        tn30 = int(pct30.get("tn") or 0)
-                        fp30 = int(pct30.get("fp") or 0)
-                        elim_acc = (tn30 / pred30) if pred30 else None
-                        elim_fp = (fp30 / pred30) if pred30 else None
+                        pct_key = "35"
+                        pct_stats = pcts.get(pct_key) if isinstance(pcts.get(pct_key), dict) else {}
+                        pred_n = int(pct_stats.get("pred") or 0)
+                        tn_n = int(pct_stats.get("tn") or 0)
+                        fp_n = int(pct_stats.get("fp") or 0)
+                        elim_acc = (tn_n / pred_n) if pred_n else None
+                        elim_fp = (fp_n / pred_n) if pred_n else None
                         races_n = int(stt.get("races") or 0)
                         win_n = int(stt.get("win") or 0)
                         p_n = int(stt.get("p") or 0)
@@ -819,8 +820,8 @@ def main():
                                 "F4Q%": round((f4q_n / races_n * 100.0), 1) if races_n else 0.0,
                                 "B5W%": round((b5w_n / races_n * 100.0), 1) if races_n else 0.0,
                                 "B5P%": round((b5p_n / races_n * 100.0), 1) if races_n else 0.0,
-                                "淘汰準確率(30%)": (round(elim_acc * 100.0, 1) if elim_acc is not None else None),
-                                "錯殺率(30%)": (round(elim_fp * 100.0, 1) if elim_fp is not None else None),
+                                "淘汰準確率(35%)": (round(elim_acc * 100.0, 1) if elim_acc is not None else None),
+                                "錯殺率(35%)": (round(elim_fp * 100.0, 1) if elim_fp is not None else None),
                             }
                         )
                     st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
