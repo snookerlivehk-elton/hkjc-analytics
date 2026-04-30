@@ -785,7 +785,6 @@ def main():
     col4.metric("場地狀況", going_display or "N/A")
 
     with st.expander("🛰️ 數據源更新狀態", expanded=False):
-        from database.models import SystemConfig
         from datetime import datetime
         from zoneinfo import ZoneInfo
 
