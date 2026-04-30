@@ -255,8 +255,9 @@ def finalize_prediction_top5_hits_for_race_date(session: Session, target_date_st
     if not race_ids:
         return {"races": 0, "updated": 0, "skipped": 0}
 
-    from database.models import RaceResult
-    from scoring_engine.member_stats import _calc_hits
+    from database.models import RaceDividend, RaceResult
+    from scoring_engine.member_stats import CURRENT_ELIM_POLICY, _calc_hits
+    from scoring_engine.settlements import get_plugins
 
     rows = (
         session.query(RaceEntry.race_id, RaceEntry.horse_no, RaceResult.rank)
@@ -282,8 +283,21 @@ def finalize_prediction_top5_hits_for_race_date(session: Session, target_date_st
     updated = 0
     skipped = 0
     now = datetime.now().isoformat()
-    bottom_pcts = [10, 15, 20, 25, 30]
     from scoring_engine.diagnostics import compute_elim_n, reverse_stats_for_race
+    plugins = get_plugins()
+
+    div_rows = session.query(RaceDividend.race_id, RaceDividend.dividends).filter(RaceDividend.race_id.in_(race_ids)).all()
+    dividends_by_race: Dict[int, List[Dict[str, float]]] = {}
+    for rid, dividends in div_rows:
+        if isinstance(dividends, list):
+            dividends_by_race[int(rid)] = dividends
+
+    try:
+        top_k = int(CURRENT_ELIM_POLICY.get("top_k") or 4)
+    except Exception:
+        top_k = 4
+    bottom_pcts = CURRENT_ELIM_POLICY.get("bottom_pcts") if isinstance(CURRENT_ELIM_POLICY.get("bottom_pcts"), list) else [35]
+    bottom_pcts = [int(x) for x in bottom_pcts if str(x).strip().isdigit()]
     for s in snaps:
         act = actual.get(int(s.race_id)) or []
         pred = s.top5 if isinstance(s.top5, list) else []
@@ -310,7 +324,7 @@ def finalize_prediction_top5_hits_for_race_date(session: Session, target_date_st
                 if elim_n <= 0:
                     continue
                 pred_neg = [int(x) for x in ranked[-elim_n:] if str(x).strip().isdigit()]
-                stats = reverse_stats_for_race(actual_positive=act, predicted_negative=pred_neg)
+                stats = reverse_stats_for_race(actual_positive=act[:top_k], predicted_negative=pred_neg)
                 eval_map[str(int(pct))] = {
                     "bottom_pct": float(pct),
                     "field_size": int(n_field),
@@ -323,6 +337,27 @@ def finalize_prediction_top5_hits_for_race_date(session: Session, target_date_st
                 }
             if eval_map:
                 meta_new["elim_eval"] = eval_map
+
+        if plugins:
+            settlements_old = meta_old.get("settlements") if isinstance(meta_old.get("settlements"), dict) else {}
+            settlements_new = dict(settlements_old)
+            divs = dividends_by_race.get(int(s.race_id))
+            pred_i = [int(x) for x in pred if str(x).strip().isdigit()]
+            for plugin in plugins:
+                try:
+                    res = plugin.settle(
+                        race_id=int(s.race_id),
+                        pred_top5=pred_i,
+                        actual_top5=act,
+                        dividends=divs,
+                        settled_at=now,
+                    )
+                except Exception:
+                    res = None
+                if isinstance(res, dict):
+                    settlements_new[str(getattr(plugin, "plugin_key", ""))] = res
+            if settlements_new:
+                meta_new["settlements"] = settlements_new
 
         s.meta = meta_new
         updated += 1
