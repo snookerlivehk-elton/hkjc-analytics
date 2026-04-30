@@ -841,17 +841,25 @@ else:
                     st.markdown("---")
                     st.markdown("### 💡 演算法說明：負磅／評分表現")
                     st.markdown("""
-                    這個條件用於衡量「同路程」下，馬匹是否具備評分/負磅上的優勢，並加入同路程上名率作為輔助。
+                    這個條件用於衡量馬匹在「同路程」下，是否出現對 Top4 更有利的「讓磅／評分形勢」。
                     
-                    - **主訊號（勝仗評分差）**：找出同路程歷史勝仗中「最高可贏評分」，若目前評分低於該值則加分。
-                    - **輔助（同程上名率）**：同路程近 X 日的上名率（前 3）作為 fallback/輔助，並可設定樣本下限 N。
-                    - **時間衰減**：對歷史資料乘上半衰期衰減係數，越久以前的表現影響越小。
+                    - **同程強勢評分差（核心）**：找出同程曾經勝出（若無勝仗則用曾入 TopK）時的「最高評分」，若目前評分低於該值代表處於較有利的讓賽形勢。
+                    - **同程讓磅差（輔助）**：找出同程最近一次入 TopK 的負磅，若本場負磅較低代表讓磅更有利。
+                    - **同程 TopK 率（穩定性）**：同程近 X 日的 TopK 率（可時間衰減），作為穩定性補強；樣本不足時會自動降低影響力。
+                    - **場內形勢（缺歷史時仍可用）**：用本場「評分在場內的相對位置」與「同評分下是否較輕磅（場內線性校正後的磅差）」作為保守基準，避免缺歷史直接變 0。
                     - **最後調整**：同場再做百分位標準化成 0–10 分。
                     """)
                     with st.expander("⚙️ 調整時間窗/半衰期/樣本下限/入圍權重 (調整後將即時儲存並重算)", expanded=False):
                         from database.models import SystemConfig
 
-                        cfg = {"window_days": 365, "half_life_days": 180, "min_samples": 5, "place_weight": 0.2}
+                        cfg = {
+                            "window_days": 365,
+                            "half_life_days": 180,
+                            "min_samples": 5,
+                            "place_weight": 0.25,
+                            "target_k": 4,
+                            "field_weight": 0.25,
+                        }
                         config = session.query(SystemConfig).filter_by(key="weight_rating_perf_config").first()
                         if config and isinstance(config.value, dict):
                             v = config.value
@@ -863,21 +871,29 @@ else:
                                 cfg["min_samples"] = int(v["min_samples"])
                             if "place_weight" in v:
                                 cfg["place_weight"] = float(v["place_weight"])
+                            if "target_k" in v:
+                                cfg["target_k"] = int(v["target_k"])
+                            if "field_weight" in v:
+                                cfg["field_weight"] = float(v["field_weight"])
 
                         window_options = {"近 180 日": 180, "近 365 日": 365, "近 730 日": 730, "全部": 0}
                         hl_options = {"半衰期 90 日": 90, "半衰期 180 日": 180, "半衰期 365 日": 365, "不衰減": 0}
                         n_options = {"3": 3, "5": 5, "8": 8, "10": 10}
+                        k_options = {"Top3": 3, "Top4": 4, "Top5": 5}
 
                         cur_window_label = next((k for k, v in window_options.items() if v == cfg["window_days"]), "近 365 日")
                         cur_hl_label = next((k for k, v in hl_options.items() if v == cfg["half_life_days"]), "半衰期 180 日")
                         cur_n_label = next((k for k, v in n_options.items() if v == cfg["min_samples"]), "5")
+                        cur_k_label = next((k for k, v in k_options.items() if v == cfg.get("target_k", 4)), "Top4")
 
                         with st.form("weight_rating_perf_config_form"):
-                            c1, c2, c3, c4 = st.columns(4)
+                            c1, c2, c3, c4, c5, c6 = st.columns(6)
                             window_label = c1.selectbox("時間窗", list(window_options.keys()), index=list(window_options.keys()).index(cur_window_label))
                             hl_label = c2.selectbox("時間衰減", list(hl_options.keys()), index=list(hl_options.keys()).index(cur_hl_label))
                             n_label = c3.selectbox("同程樣本下限 N", list(n_options.keys()), index=list(n_options.keys()).index(cur_n_label))
-                            place_weight = c4.number_input("入圍權重 (0-1)", value=float(cfg["place_weight"]), min_value=0.0, max_value=1.0, step=0.05)
+                            k_label = c4.selectbox("TopK 目標", list(k_options.keys()), index=list(k_options.keys()).index(cur_k_label))
+                            place_weight = c5.number_input("同程TopK率權重", value=float(cfg["place_weight"]), min_value=0.0, max_value=1.0, step=0.05)
+                            field_weight = c6.number_input("場內形勢權重", value=float(cfg.get("field_weight", 0.25)), min_value=0.0, max_value=1.0, step=0.05)
 
                             submitted = st.form_submit_button("💾 儲存參數並為本場重新計分", type="primary")
                             if submitted:
@@ -886,6 +902,8 @@ else:
                                     "half_life_days": int(hl_options[hl_label]),
                                     "min_samples": int(n_options[n_label]),
                                     "place_weight": float(place_weight),
+                                    "target_k": int(k_options[k_label]),
+                                    "field_weight": float(field_weight),
                                 }
                                 if not config:
                                     config = SystemConfig(key="weight_rating_perf_config", description="負磅／評分表現：時間窗/半衰期/N/入圍權重")

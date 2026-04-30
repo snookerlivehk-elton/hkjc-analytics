@@ -963,7 +963,11 @@ class FactorCalculator:
             "window_days": 365,
             "half_life_days": 180,
             "min_samples": 5,
-            "place_weight": 0.2,
+            "place_weight": 0.25,
+            "target_k": 4,
+            "field_weight": 0.25,
+            "rating_relief_cap": 20.0,
+            "weight_relief_cap": 12.0,
         }
         try:
             config = self.session.query(SystemConfig).filter_by(key="weight_rating_perf_config").first()
@@ -977,6 +981,14 @@ class FactorCalculator:
                     cfg["min_samples"] = int(v["min_samples"])
                 if "place_weight" in v:
                     cfg["place_weight"] = float(v["place_weight"])
+                if "target_k" in v:
+                    cfg["target_k"] = int(v["target_k"])
+                if "field_weight" in v:
+                    cfg["field_weight"] = float(v["field_weight"])
+                if "rating_relief_cap" in v:
+                    cfg["rating_relief_cap"] = float(v["rating_relief_cap"])
+                if "weight_relief_cap" in v:
+                    cfg["weight_relief_cap"] = float(v["weight_relief_cap"])
         except Exception:
             pass
 
@@ -990,6 +1002,16 @@ class FactorCalculator:
             cfg["place_weight"] = 0.0
         if cfg["place_weight"] > 1:
             cfg["place_weight"] = 1.0
+        if cfg["target_k"] not in (3, 4, 5):
+            cfg["target_k"] = 4
+        if cfg["field_weight"] < 0:
+            cfg["field_weight"] = 0.0
+        if cfg["field_weight"] > 1:
+            cfg["field_weight"] = 1.0
+        if cfg["rating_relief_cap"] <= 0:
+            cfg["rating_relief_cap"] = 20.0
+        if cfg["weight_relief_cap"] <= 0:
+            cfg["weight_relief_cap"] = 12.0
 
         win_weight = 1.0 - cfg["place_weight"]
         cutoff_date = (race_date - timedelta(days=cfg["window_days"])) if cfg["window_days"] > 0 else None
@@ -999,6 +1021,29 @@ class FactorCalculator:
 
         cached_best_same_dist = {}
         cached_stats_same_dist = {}
+
+        valid_r = []
+        valid_w = []
+        for _, row in self.df.iterrows():
+            r = self._to_int(row.get("rating", 0), default=0)
+            w = self._to_int(row.get("weight", 0), default=0)
+            if r > 0 and w > 0:
+                valid_r.append(float(r))
+                valid_w.append(float(w))
+        r_min = min(valid_r) if valid_r else 0.0
+        r_max = max(valid_r) if valid_r else 0.0
+        r_rng = (r_max - r_min) if (r_max - r_min) > 0 else 0.0
+        mean_w = (sum(valid_w) / len(valid_w)) if valid_w else 0.0
+        slope = 0.0
+        intercept = mean_w
+        if len(valid_r) >= 2 and r_rng > 0:
+            mr = sum(valid_r) / len(valid_r)
+            mw = sum(valid_w) / len(valid_w)
+            cov = sum((valid_r[i] - mr) * (valid_w[i] - mw) for i in range(len(valid_r)))
+            var = sum((x - mr) ** 2 for x in valid_r)
+            if var > 0:
+                slope = cov / var
+                intercept = mw - slope * mr
 
         for _, row in self.df.iterrows():
             horse_id = self._to_int(row.get("horse_id", 0), default=0)
@@ -1034,6 +1079,28 @@ class FactorCalculator:
                             best_win_days = max((race_date - rec[2]).days, 0)
                         else:
                             best_win_days = None
+                    if best_win_rating is None:
+                        rec2 = (
+                            self.session.query(HorseHistory.rating, HorseHistory.weight, HorseHistory.race_date, HorseHistory.rank)
+                            .filter(
+                                HorseHistory.horse_id == horse_id,
+                                HorseHistory.distance == current_distance,
+                                HorseHistory.rank.in_(tuple(range(1, int(cfg["target_k"]) + 1))),
+                                HorseHistory.rating > 0,
+                                HorseHistory.race_date < cutoff_dt,
+                            )
+                            .order_by(HorseHistory.rating.desc())
+                        )
+                        if cutoff_date:
+                            rec2 = rec2.filter(HorseHistory.race_date >= cutoff_date)
+                        rec2 = rec2.first()
+                        if rec2:
+                            best_win_rating = self._to_int(rec2[0], default=0) or None
+                            best_win_weight = self._to_int(rec2[1], default=0) or None
+                            if isinstance(rec2[2], datetime):
+                                best_win_days = max((race_date - rec2[2]).days, 0)
+                            else:
+                                best_win_days = None
                     cached_best_same_dist[key] = (best_win_rating, best_win_weight, best_win_days)
 
             ref_w = None
@@ -1045,7 +1112,7 @@ class FactorCalculator:
                     .filter(
                         HorseHistory.horse_id == horse_id,
                         HorseHistory.distance == current_distance,
-                        HorseHistory.rank.in_((1, 2, 3)),
+                        HorseHistory.rank.in_(tuple(range(1, int(cfg["target_k"]) + 1))),
                         HorseHistory.weight > 0,
                         HorseHistory.race_date < cutoff_dt
                     )
@@ -1062,10 +1129,11 @@ class FactorCalculator:
 
             total_runs = 0
             weighted_place_rate = None
+            eff_runs = 0.0
             if horse_id and current_distance:
                 key = (horse_id, current_distance, cfg["window_days"], cfg["half_life_days"])
                 if key in cached_stats_same_dist:
-                    total_runs, weighted_place_rate = cached_stats_same_dist[key]
+                    total_runs, weighted_place_rate, eff_runs = cached_stats_same_dist[key]
                 else:
                     q = (
                         self.session.query(HorseHistory.rank, HorseHistory.race_date)
@@ -1092,13 +1160,15 @@ class FactorCalculator:
                                     days = 0
                                 w = math.exp(-days / float(cfg["half_life_days"]))
                                 sum_w += w
-                                if rnk in (1, 2, 3):
+                                if rnk in tuple(range(1, int(cfg["target_k"]) + 1)):
                                     sum_place_w += w
                             weighted_place_rate = (sum_place_w / sum_w) if sum_w > 0 else 0.0
+                            eff_runs = float(sum_w)
                         else:
-                            places = sum(1 for rnk, _ in hist if rnk in (1, 2, 3))
+                            places = sum(1 for rnk, _ in hist if rnk in tuple(range(1, int(cfg["target_k"]) + 1)))
                             weighted_place_rate = places / total_runs
-                    cached_stats_same_dist[key] = (total_runs, weighted_place_rate)
+                            eff_runs = float(total_runs)
+                    cached_stats_same_dist[key] = (total_runs, weighted_place_rate, eff_runs)
 
             decay = 1.0
             if cfg["half_life_days"] > 0 and best_win_days is not None:
@@ -1107,25 +1177,39 @@ class FactorCalculator:
             delta_rating = (best_win_rating - current_rating) if (best_win_rating is not None and current_rating) else 0
             delta_weight = (ref_w - current_weight) if (ref_w is not None and current_weight) else 0
 
-            win_component = 0.0
+            field_rating = 0.5
+            if current_rating > 0 and r_rng > 0:
+                field_rating = (float(current_rating) - float(r_min)) / float(r_rng)
+            expected_w = (float(intercept) + float(slope) * float(current_rating)) if (current_rating > 0 and mean_w > 0) else float(mean_w)
+            field_relief = float(expected_w) - float(current_weight or 0.0)
+            if field_relief > 6.0:
+                field_relief = 6.0
+            if field_relief < -6.0:
+                field_relief = -6.0
+            field_relief_score = (field_relief + 6.0) / 12.0
+            field_component = (0.7 * float(field_rating)) + (0.3 * float(field_relief_score))
+
+            relief_component = 0.0
             if delta_rating > 0:
-                win_component += min(delta_rating, 15) / 5.0
-            win_component *= decay
+                relief_component += min(float(delta_rating), float(cfg["rating_relief_cap"])) / float(cfg["rating_relief_cap"])
+            relief_component *= float(decay)
 
             weight_component = 0.0
             weight_decay = 1.0
             if cfg["half_life_days"] > 0 and ref_w_days is not None:
                 weight_decay = math.exp(-ref_w_days / float(cfg["half_life_days"]))
             if delta_weight > 0:
-                weight_component = (min(delta_weight, 10) / 40.0) * weight_decay
-            win_component += weight_component
+                weight_component = (min(float(delta_weight), float(cfg["weight_relief_cap"])) / float(cfg["weight_relief_cap"])) * float(weight_decay)
 
             place_component = 0.0
-            if weighted_place_rate is not None and total_runs >= cfg["min_samples"]:
-                place_component = float(weighted_place_rate) * 4.0
+            if weighted_place_rate is not None and (total_runs > 0 or eff_runs > 0):
+                conf2 = float(eff_runs) / (float(eff_runs) + float(cfg["min_samples"] or 1)) if float(eff_runs) >= 0 else 0.0
+                place_component = float(weighted_place_rate) * float(conf2)
 
-            score = (win_weight * win_component) + (cfg["place_weight"] * place_component)
-            score = round(score / 0.05) * 0.05
+            history_component = (0.75 * float(relief_component)) + (0.25 * float(weight_component))
+            history_component = (float(win_weight) * float(history_component)) + (float(cfg["place_weight"]) * float(place_component))
+
+            score = (float(cfg["field_weight"]) * float(field_component)) + ((1.0 - float(cfg["field_weight"])) * float(history_component))
 
             raw_scores.append(score)
 
@@ -1134,6 +1218,8 @@ class FactorCalculator:
             parts.append(f"HL{cfg['half_life_days']}d")
             parts.append(f"N{cfg['min_samples']}")
             parts.append(f"PW{cfg['place_weight']:.2f}")
+            parts.append(f"K{cfg['target_k']}")
+            parts.append(f"FW{cfg['field_weight']:.2f}")
             if current_distance:
                 parts.append(f"同程{current_distance}m")
 
@@ -1154,14 +1240,15 @@ class FactorCalculator:
                     parts.append(f"同程{ref_w_label}磅{ref_w}({dw:+d})")
 
             if weighted_place_rate is not None:
-                if total_runs < cfg["min_samples"]:
-                    parts.append(f"同程上名率{weighted_place_rate*100:.1f}%({total_runs}<{cfg['min_samples']})")
-                else:
-                    parts.append(f"同程上名率{weighted_place_rate*100:.1f}%({total_runs})")
+                parts.append(f"同程Top{cfg['target_k']}率{weighted_place_rate*100:.1f}%({total_runs})")
 
             if cfg["half_life_days"] > 0 and best_win_days is not None:
                 parts.append(f"decay{decay:.2f}")
 
+            if current_rating > 0:
+                parts.append(f"場內評分{field_rating*100:.0f}%")
+            if current_weight:
+                parts.append(f"場內磅差{(expected_w - float(current_weight)):+.1f}")
             parts.append(f"現評{current_rating}")
             parts.append(f"負磅{current_weight}")
 
