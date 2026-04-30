@@ -28,6 +28,7 @@ from scoring_engine.diagnostics import (
 )
 from scoring_engine.prediction_snapshots import finalize_prediction_top5_hits_for_race_date
 from scoring_engine.member_stats import METRIC_LABELS
+from scoring_engine import ranking
 from web_ui.auth import require_superadmin
 from web_ui.nav import render_admin_nav
 
@@ -472,7 +473,7 @@ with tab_preset:
                         weights = item.get("weights") if isinstance(item.get("weights"), dict) else {}
                         if not name or not weights:
                             continue
-                        preset_defs.append((email_k, name, {str(fn): float(w or 0.0) for fn, w in weights.items()}))
+                        preset_defs.append((email_k, name, ranking.normalize_weights(weights)))
 
                 if not preset_defs:
                     st.info("目前未找到任何會員已儲存組合。")

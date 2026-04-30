@@ -73,7 +73,7 @@ def predicted_bottomk_by_total(session: Session, race_id: int, k: int) -> List[i
     return [x for x in out if x > 0]
 
 
-def _normalize_weights(weight_map: Dict[str, float]) -> Dict[str, float]:
+def normalize_weights(weight_map: Dict[str, float]) -> Dict[str, float]:
     out: Dict[str, float] = {}
     for k, v in (weight_map or {}).items():
         kk = str(k or "").strip()
@@ -90,7 +90,7 @@ def _normalize_weights(weight_map: Dict[str, float]) -> Dict[str, float]:
 
 
 def ranked_horses_by_weights(session: Session, race_id: int, weight_map: Dict[str, float]) -> List[int]:
-    weights = _normalize_weights(weight_map)
+    weights = normalize_weights(weight_map)
     if not weights:
         return []
 

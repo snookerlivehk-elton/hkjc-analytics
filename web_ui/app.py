@@ -1155,12 +1155,13 @@ def main():
                                             horses = horses_by_race.get(int(rid)) or []
                                             rmap = score_map.get(int(rid)) or {}
                                             items = []
-                                            wkeys = sorted([str(k) for k in (weight_map or {}).keys() if str(k).strip()])
+                                            w2 = ranking.normalize_weights(weight_map)
+                                            wkeys = sorted([str(k) for k in (w2 or {}).keys() if str(k).strip()])
                                             for hn in horses:
                                                 m = rmap.get(int(hn)) or {}
                                                 total = 0.0
                                                 for fn in wkeys:
-                                                    total += float(m.get(str(fn), 0.0)) * float(weight_map.get(fn, 0.0) or 0.0)
+                                                    total += float(m.get(str(fn), 0.0)) * float(w2.get(fn, 0.0) or 0.0)
                                                 items.append((int(hn), float(total)))
                                             items.sort(key=lambda x: (-x[1], x[0]))
                                             return [hn for hn, _ in items]

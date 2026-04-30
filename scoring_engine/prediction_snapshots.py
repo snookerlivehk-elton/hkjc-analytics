@@ -43,7 +43,10 @@ def _load_member_presets(session: Session) -> List[Tuple[str, str, Dict[str, flo
             w = {}
             for k, v in weights.items():
                 try:
-                    w[str(k)] = float(v)
+                    kk = str(k or "").strip()
+                    if not kk:
+                        continue
+                    w[kk] = float(v)
                 except Exception:
                     continue
             if w:
