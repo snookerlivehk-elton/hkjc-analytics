@@ -520,7 +520,14 @@ else:
                         cfg = {
                             "global_window": 0, "global_win_w": 0.7, "global_place_w": 0.3,
                             "horse_window": 0, "horse_win_w": 0.7, "horse_place_w": 0.3,
-                            "global_weight": 0.5, "horse_weight": 0.5
+                            "global_weight": 0.5, "horse_weight": 0.5,
+                            "prior_strength_global": 12.0,
+                            "prior_strength_horse": 8.0,
+                            "prior_win_rate": 0.08,
+                            "prior_place_rate": 0.28,
+                            "confidence_runs_global": 12.0,
+                            "confidence_runs_horse": 8.0,
+                            "horse_weight_full_runs": 8.0,
                         }
                         
                         config = session.query(SystemConfig).filter_by(key="jt_bond_combined_config").first()
@@ -560,13 +567,33 @@ else:
                             c7, c8 = st.columns(2)
                             gw = c7.number_input("全庫得分佔比", value=cfg["global_weight"], min_value=0.0, max_value=1.0, step=0.05)
                             hw = c8.number_input("本駒得分佔比", value=cfg["horse_weight"], min_value=0.0, max_value=1.0, step=0.05)
+
+                            st.markdown("##### 4️⃣ 樣本不足（保守）設定：平滑 + 信心折扣 + 動態本駒權重")
+                            st.caption("用途：樣本不足時避免硬 0 分或爆分；以先驗平滑並按樣本量自動保守，目標更貼近 Top4 命中。")
+                            c9, c10, c11, c12 = st.columns(4)
+                            prior_win = c9.number_input("先驗勝率", value=float(cfg.get("prior_win_rate") or 0.08), min_value=0.0, max_value=1.0, step=0.01)
+                            prior_place = c10.number_input("先驗入位率(1-3)", value=float(cfg.get("prior_place_rate") or 0.28), min_value=0.0, max_value=1.0, step=0.01)
+                            ps_g = c11.number_input("全庫先驗強度(等價場數)", value=float(cfg.get("prior_strength_global") or 12.0), min_value=0.0, max_value=200.0, step=1.0)
+                            ps_h = c12.number_input("本駒先驗強度(等價場數)", value=float(cfg.get("prior_strength_horse") or 8.0), min_value=0.0, max_value=200.0, step=1.0)
+
+                            c13, c14, c15 = st.columns(3)
+                            cr_g = c13.number_input("全庫信心折扣(越大越保守)", value=float(cfg.get("confidence_runs_global") or 12.0), min_value=0.0, max_value=200.0, step=1.0)
+                            cr_h = c14.number_input("本駒信心折扣(越大越保守)", value=float(cfg.get("confidence_runs_horse") or 8.0), min_value=0.0, max_value=200.0, step=1.0)
+                            hw_full = c15.number_input("本駒權重滿檔所需樣本(場)", value=float(cfg.get("horse_weight_full_runs") or 8.0), min_value=1.0, max_value=100.0, step=1.0)
                             
                             submitted = st.form_submit_button("💾 儲存合併參數並為本場重新計分", type="primary")
                             if submitted:
                                 new_cfg = {
                                     "global_window": window_options[g_win], "global_win_w": g_ww, "global_place_w": g_pw,
                                     "horse_window": window_options[h_win], "horse_win_w": h_ww, "horse_place_w": h_pw,
-                                    "global_weight": gw, "horse_weight": hw
+                                    "global_weight": gw, "horse_weight": hw,
+                                    "prior_strength_global": float(ps_g),
+                                    "prior_strength_horse": float(ps_h),
+                                    "prior_win_rate": float(prior_win),
+                                    "prior_place_rate": float(prior_place),
+                                    "confidence_runs_global": float(cr_g),
+                                    "confidence_runs_horse": float(cr_h),
+                                    "horse_weight_full_runs": float(hw_full),
                                 }
                                 if not config:
                                     config = SystemConfig(key="jt_bond_combined_config", description="騎師＋練馬師合作(綜合)：全庫與本駒參數")

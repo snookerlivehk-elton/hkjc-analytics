@@ -95,7 +95,14 @@ class FactorCalculator:
             "horse_win_w": 0.7,
             "horse_place_w": 0.3,
             "global_weight": 0.5,
-            "horse_weight": 0.5
+            "horse_weight": 0.5,
+            "prior_strength_global": 12.0,
+            "prior_strength_horse": 8.0,
+            "prior_win_rate": 0.08,
+            "prior_place_rate": 0.28,
+            "confidence_runs_global": 12.0,
+            "confidence_runs_horse": 8.0,
+            "horse_weight_full_runs": 8.0,
         }
 
         try:
@@ -137,6 +144,36 @@ class FactorCalculator:
         gw /= thw
         hw /= thw
 
+        def _clip01(x):
+            try:
+                v = float(x)
+            except Exception:
+                v = 0.0
+            if v < 0.0:
+                v = 0.0
+            if v > 1.0:
+                v = 1.0
+            return v
+
+        def _safe_pos(x, default=0.0):
+            try:
+                v = float(x)
+            except Exception:
+                v = float(default)
+            if v < 0.0:
+                v = 0.0
+            return v
+
+        prior_win = _clip01(cfg.get("prior_win_rate"))
+        prior_place = _clip01(cfg.get("prior_place_rate"))
+        ps_g = _safe_pos(cfg.get("prior_strength_global"), default=12.0)
+        ps_h = _safe_pos(cfg.get("prior_strength_horse"), default=8.0)
+        cr_g = _safe_pos(cfg.get("confidence_runs_global"), default=12.0)
+        cr_h = _safe_pos(cfg.get("confidence_runs_horse"), default=8.0)
+        hw_full = _safe_pos(cfg.get("horse_weight_full_runs"), default=8.0)
+        if hw_full < 1.0:
+            hw_full = 1.0
+
         for _, row in self.df.iterrows():
             jockey = row.get("jockey_name", "")
             trainer = row.get("trainer_name", "")
@@ -162,20 +199,24 @@ class FactorCalculator:
                 hist_global = []
                 
             runs_global = len(hist_global)
-            score_global = 0.0
-            str_global = f"全庫不足({runs_global})"
-            
-            if runs_global >= 3:
-                w_g = sum(1 for h in hist_global if h.rank == 1)
-                p_g = sum(1 for h in hist_global if h.rank in (1, 2, 3))
-                wr_g = w_g / runs_global
-                pr_g = p_g / runs_global
-                score_global = (wr_g * cfg["global_win_w"]) + (pr_g * cfg["global_place_w"])
-                str_global = f"全({runs_global}次,勝{wr_g*100:.0f}%,位{pr_g*100:.0f}%)"
+            w_g = sum(1 for h in hist_global if h.rank == 1)
+            p_g = sum(1 for h in hist_global if h.rank in (1, 2, 3))
+            wr_g = (w_g / runs_global) if runs_global > 0 else None
+            pr_g = (p_g / runs_global) if runs_global > 0 else None
+            swr_g = (float(w_g) + prior_win * ps_g) / (float(runs_global) + ps_g) if (runs_global > 0 or ps_g > 0) else 0.0
+            spr_g = (float(p_g) + prior_place * ps_g) / (float(runs_global) + ps_g) if (runs_global > 0 or ps_g > 0) else 0.0
+            score_global_raw = (swr_g * float(cfg["global_win_w"])) + (spr_g * float(cfg["global_place_w"]))
+            conf_g = ((float(runs_global) + ps_g) / (float(runs_global) + ps_g + cr_g)) if (cr_g > 0) else 1.0
+            score_global = float(score_global_raw) * float(conf_g)
+            if runs_global > 0 and wr_g is not None and pr_g is not None:
+                str_global = f"全({runs_global}次,勝{wr_g*100:.0f}%,位{pr_g*100:.0f}%)→平滑(勝{swr_g*100:.0f}%,位{spr_g*100:.0f}%)×信{conf_g:.2f}"
+            else:
+                str_global = f"全庫0→先驗(勝{prior_win*100:.0f}%,位{prior_place*100:.0f}%)×信{conf_g:.2f}"
 
             # --- 2. 計算本駒合作 ---
             score_horse = 0.0
-            str_horse = "本駒無"
+            str_horse = "本駒0"
+            runs_horse = 0
             
             if horse_id:
                 q_horse = self.session.query(HorseHistory).filter(
@@ -193,20 +234,31 @@ class FactorCalculator:
                     hist_horse = []
                     
                 runs_horse = len(hist_horse)
-                str_horse = f"本駒不足({runs_horse})"
-                
-                if runs_horse >= 3:
-                    w_h = sum(1 for h in hist_horse if h.rank == 1)
-                    p_h = sum(1 for h in hist_horse if h.rank in (1, 2, 3))
-                    wr_h = w_h / runs_horse
-                    pr_h = p_h / runs_horse
-                    score_horse = (wr_h * cfg["horse_win_w"]) + (pr_h * cfg["horse_place_w"])
-                    str_horse = f"本({runs_horse}次,勝{wr_h*100:.0f}%,位{pr_h*100:.0f}%)"
+                w_h = sum(1 for h in hist_horse if h.rank == 1)
+                p_h = sum(1 for h in hist_horse if h.rank in (1, 2, 3))
+                wr_h = (w_h / runs_horse) if runs_horse > 0 else None
+                pr_h = (p_h / runs_horse) if runs_horse > 0 else None
+                swr_h = (float(w_h) + prior_win * ps_h) / (float(runs_horse) + ps_h) if (runs_horse > 0 or ps_h > 0) else 0.0
+                spr_h = (float(p_h) + prior_place * ps_h) / (float(runs_horse) + ps_h) if (runs_horse > 0 or ps_h > 0) else 0.0
+                score_horse_raw = (swr_h * float(cfg["horse_win_w"])) + (spr_h * float(cfg["horse_place_w"]))
+                conf_h = ((float(runs_horse) + ps_h) / (float(runs_horse) + ps_h + cr_h)) if (cr_h > 0) else 1.0
+                score_horse = float(score_horse_raw) * float(conf_h)
+                if runs_horse > 0 and wr_h is not None and pr_h is not None:
+                    str_horse = f"本({runs_horse}次,勝{wr_h*100:.0f}%,位{pr_h*100:.0f}%)→平滑(勝{swr_h*100:.0f}%,位{spr_h*100:.0f}%)×信{conf_h:.2f}"
+                else:
+                    str_horse = f"本駒0→先驗×信{conf_h:.2f}"
 
             # 綜合計分
-            bond_score = (score_global * gw) + (score_horse * hw)
+            scale_hw = min(1.0, (float(runs_horse) / float(hw_full))) if runs_horse > 0 else 0.0
+            hw_eff = float(hw) * float(scale_hw)
+            if hw_eff < 0.0:
+                hw_eff = 0.0
+            if hw_eff > 1.0:
+                hw_eff = 1.0
+            gw_eff = 1.0 - hw_eff
+            bond_score = (float(score_global) * float(gw_eff)) + (float(score_horse) * float(hw_eff))
             scores.append(bond_score)
-            displays.append(f"{str_global} | {str_horse}")
+            displays.append(f"{str_global} | {str_horse} | 合併(g={gw_eff:.2f},h={hw_eff:.2f})")
             
         return pd.Series(scores, index=self.df.index), pd.Series(displays, index=self.df.index)
     # 2. 馬匹分段時間＋完成時間 (Horse Time Perf)
