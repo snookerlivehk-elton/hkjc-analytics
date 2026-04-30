@@ -1029,7 +1029,13 @@ def main():
 
                         c_f1, c_f2, c_f3, c_f4 = st.columns(4)
                         venue_sel = c_f1.selectbox("地點", ["全部", "沙田", "跑馬地"], index=0, key="member_hit_venue")
-                        surface_sel = c_f2.selectbox("草/泥", ["全部", "草地", "泥地"], index=0, key="member_hit_surface")
+                        surface_sel = c_f2.selectbox(
+                            "草/泥",
+                            ["全部", "草地", "泥地"],
+                            index=0,
+                            key="member_hit_surface",
+                            format_func=lambda x: ("全天候" if str(x) == "泥地" else str(x)),
+                        )
                         course_rows = (
                             session.query(Race.course_type)
                             .filter(Race.course_type != None)
@@ -1195,7 +1201,13 @@ def main():
 
                         c_f1, c_f2, c_f3, c_f4 = st.columns(4)
                         venue_sel = c_f1.selectbox("地點", ["全部", "沙田", "跑馬地"], index=0, key="member_elim_venue")
-                        surface_sel = c_f2.selectbox("草/泥", ["全部", "草地", "泥地"], index=0, key="member_elim_surface")
+                        surface_sel = c_f2.selectbox(
+                            "草/泥",
+                            ["全部", "草地", "泥地"],
+                            index=0,
+                            key="member_elim_surface",
+                            format_func=lambda x: ("全天候" if str(x) == "泥地" else str(x)),
+                        )
                         course_rows = (
                             session.query(Race.course_type)
                             .filter(Race.course_type != None)
@@ -1487,7 +1499,13 @@ def main():
 
                     c_f1, c_f2, c_f3, c_f4 = st.columns(4)
                     venue_sel = c_f1.selectbox("地點", ["全部", "沙田", "跑馬地"], index=0, key="member_pq3_venue")
-                    surface_sel = c_f2.selectbox("草/泥", ["全部", "草地", "泥地"], index=0, key="member_pq3_surface")
+                    surface_sel = c_f2.selectbox(
+                        "草/泥",
+                        ["全部", "草地", "泥地"],
+                        index=0,
+                        key="member_pq3_surface",
+                        format_func=lambda x: ("全天候" if str(x) == "泥地" else str(x)),
+                    )
                     course_rows = (
                         session.query(Race.course_type)
                         .filter(Race.course_type != None)
@@ -1618,7 +1636,7 @@ def main():
                                         "賽日": (rdt.date().isoformat() if hasattr(rdt, "date") else str(rdt)),
                                         "場次": int(rno or 0),
                                         "地點": ("跑馬地" if str(v or "").upper() == "HV" else "沙田"),
-                                        "草/泥": (str(surf or "") or "-"),
+                                        "草/泥": (("全天候" if str(surf or "") == "泥地" else str(surf or "")) or "-"),
                                         "跑道": (str(course or "") or "-"),
                                         "場地狀況": (str(graw or "") or str(gcode or "") or "N/A"),
                                         "預測Top3": ",".join(str(x) for x in (stl.get("pred_top3") or [])),

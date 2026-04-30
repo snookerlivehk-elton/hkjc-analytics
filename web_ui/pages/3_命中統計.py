@@ -475,7 +475,7 @@ with tab_preset:
                         .all()
                     )
                     surface_opts = ["全部"] + [str(r[0]) for r in surface_rows if r and str(r[0] or "").strip()]
-                    surface_sel = st.selectbox("草/泥", surface_opts, index=0)
+                    surface_sel = st.selectbox("草/泥", surface_opts, index=0, format_func=lambda x: ("全天候" if str(x) == "泥地" else str(x)))
                     course_rows = (
                         session.query(Race.course_type)
                         .filter(Race.course_type != None)
