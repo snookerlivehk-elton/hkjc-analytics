@@ -63,14 +63,66 @@ class FactorCalculator:
             except ValueError:
                 return None
 
-        m = re.search(r'第\s*([三四五])\s*班', s)
+        m = re.search(r'第\s*([一二三四五])\s*班', s)
         if m:
-            return {"三": 3, "四": 4, "五": 5}.get(m.group(1))
+            return {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5}.get(m.group(1))
 
-        if str(s).strip() in {"3", "4", "5"}:
+        if str(s).strip() in {"1", "2", "3", "4", "5"}:
             return int(str(s).strip())
 
         return None
+
+    def _parse_class_info(self, s: str):
+        import re
+
+        raw = str(s or "").strip()
+        if not raw:
+            return {"kind": "unknown", "level": None, "raw": raw}
+
+        m = re.search(r'Class\s*([0-9]+)', raw, re.IGNORECASE)
+        if m:
+            try:
+                n = int(m.group(1))
+                if n in (1, 2, 3, 4, 5):
+                    return {"kind": "class", "level": n, "raw": raw}
+            except Exception:
+                pass
+
+        m = re.search(r'第\s*([0-9]+)\s*班', raw)
+        if m:
+            try:
+                n = int(m.group(1))
+                if n in (1, 2, 3, 4, 5):
+                    return {"kind": "class", "level": n, "raw": raw}
+            except Exception:
+                pass
+
+        m = re.search(r'第\s*([一二三四五])\s*班', raw)
+        if m:
+            n = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5}.get(m.group(1))
+            if n is not None:
+                return {"kind": "class", "level": n, "raw": raw}
+
+        if raw in {"1", "2", "3", "4", "5"}:
+            return {"kind": "class", "level": int(raw), "raw": raw}
+
+        m = re.search(r'(?:Group\s*([0-9]+)|\bG\s*([0-9]+)\b)', raw, re.IGNORECASE)
+        if m:
+            g = m.group(1) or m.group(2)
+            try:
+                n = int(g)
+                if n in (1, 2, 3):
+                    return {"kind": "grade", "level": n, "raw": raw}
+            except Exception:
+                pass
+
+        m = re.search(r'([一二三])\s*級\s*賽', raw)
+        if m:
+            n = {"一": 1, "二": 2, "三": 3}.get(m.group(1))
+            if n is not None:
+                return {"kind": "grade", "level": n, "raw": raw}
+
+        return {"kind": "unknown", "level": None, "raw": raw}
 
     # 1. 騎師＋練馬師合作 (J/T Bond)
     def _calculate_jockey_trainer_bond(self):
@@ -1271,64 +1323,128 @@ class FactorCalculator:
     # 12. 班次表現 (Class Performance)
     def _calculate_class_performance(self):
         from datetime import datetime
-        from database.models import HorseHistory, Race
+        import math
+        from database.models import HorseHistory, Race, SystemConfig
 
         race_id = self.df.iloc[0].get("race_id") if "race_id" in self.df.columns else None
         race_id = self._to_int(race_id, default=0)
         race = self.session.get(Race, race_id) if race_id else None
         current_class_str = getattr(race, "race_class", "") if race else ""
-        current_class_num = self._parse_class_num(current_class_str)
+        current_info = self._parse_class_info(current_class_str)
         race_date = getattr(race, "race_date", None) if race else None
         if not isinstance(race_date, datetime):
             race_date = datetime.now()
         cutoff_dt = self._race_cutoff_dt()
 
+        cfg = {
+            "lookback_races": 8,
+            "half_life_days": 45,
+            "max_gap_days": 120,
+            "grade_to_class_strength": 0.35,
+            "max_steps": 2,
+        }
+        try:
+            config = self.session.query(SystemConfig).filter_by(key="class_drop_signal_config").first()
+            if config and isinstance(config.value, dict):
+                v = config.value
+                if "lookback_races" in v:
+                    cfg["lookback_races"] = int(v["lookback_races"])
+                if "half_life_days" in v:
+                    cfg["half_life_days"] = int(v["half_life_days"])
+                if "max_gap_days" in v:
+                    cfg["max_gap_days"] = int(v["max_gap_days"])
+                if "grade_to_class_strength" in v:
+                    cfg["grade_to_class_strength"] = float(v["grade_to_class_strength"])
+                if "max_steps" in v:
+                    cfg["max_steps"] = int(v["max_steps"])
+        except Exception:
+            pass
+
+        if cfg["lookback_races"] <= 0:
+            cfg["lookback_races"] = 1
+        if cfg["lookback_races"] > 30:
+            cfg["lookback_races"] = 30
+        if cfg["half_life_days"] <= 0:
+            cfg["half_life_days"] = 45
+        if cfg["max_gap_days"] <= 0:
+            cfg["max_gap_days"] = 120
+        if cfg["grade_to_class_strength"] < 0:
+            cfg["grade_to_class_strength"] = 0.0
+        if cfg["grade_to_class_strength"] > 1:
+            cfg["grade_to_class_strength"] = 1.0
+        if cfg["max_steps"] <= 0:
+            cfg["max_steps"] = 1
+        if cfg["max_steps"] > 4:
+            cfg["max_steps"] = 4
+
         raw_scores = []
         displays = []
 
         cached_prev_class = {}
+        sig = f"LB{int(cfg['lookback_races'])}|HL{int(cfg['half_life_days'])}|MG{int(cfg['max_gap_days'])}|GS{float(cfg['grade_to_class_strength']):.2f}|MS{int(cfg['max_steps'])}"
 
         for _, row in self.df.iterrows():
             horse_id = self._to_int(row.get("horse_id", 0), default=0)
 
-            prev_class_num = None
-            prev_class_str = ""
+            prev_info = None
+            prev_dt = None
             if horse_id:
                 if horse_id in cached_prev_class:
-                    prev_class_num, prev_class_str = cached_prev_class[horse_id]
+                    prev_info, prev_dt = cached_prev_class[horse_id]
                 else:
                     hist = (
                         self.session.query(HorseHistory.race_class, HorseHistory.race_date)
                         .filter(HorseHistory.horse_id == horse_id)
                         .filter(HorseHistory.race_date < cutoff_dt)
                         .order_by(HorseHistory.race_date.desc())
-                        .limit(10)
+                        .limit(int(cfg["lookback_races"]))
                         .all()
                     )
                     for rc, _ in hist:
-                        n = self._parse_class_num(rc or "")
-                        if n is not None:
-                            prev_class_num = n
-                            prev_class_str = rc or ""
+                        info = self._parse_class_info(rc or "")
+                        if info.get("kind") != "unknown":
+                            prev_info = info
+                            prev_dt = _ if isinstance(_, datetime) else None
                             break
-                    cached_prev_class[horse_id] = (prev_class_num, prev_class_str)
+                    cached_prev_class[horse_id] = (prev_info, prev_dt)
 
-            class_drop = False
-            if current_class_num in (4, 5) and prev_class_num in (3, 4):
-                class_drop = (current_class_num == prev_class_num + 1)
+            strength = 0.0
+            drop_label = "無降班"
+            if prev_info and current_info.get("kind") == "class":
+                if prev_info.get("kind") == "class":
+                    steps = int(current_info.get("level") or 0) - int(prev_info.get("level") or 0)
+                    if steps > 0:
+                        if steps > int(cfg["max_steps"]):
+                            steps = int(cfg["max_steps"])
+                        strength = float(steps) / float(cfg["max_steps"])
+                        drop_label = f"降班{prev_info.get('level')}→{current_info.get('level')}"
+                elif prev_info.get("kind") == "grade":
+                    strength = float(cfg["grade_to_class_strength"])
+                    drop_label = f"級際{prev_info.get('raw')}→第{current_info.get('level')}班"
 
-            score = 1.0 if class_drop else 0.0
+            recency = 1.0
+            gap_days = None
+            if prev_dt is not None and isinstance(prev_dt, datetime):
+                gap_days = max((race_date - prev_dt).days, 0)
+                if gap_days > int(cfg["max_gap_days"]):
+                    recency = 0.0
+                else:
+                    recency = math.exp(-float(gap_days) / float(cfg["half_life_days"]))
+            score = float(strength) * float(recency)
             raw_scores.append(score)
 
             parts = []
-            if current_class_str:
-                parts.append(f"今班{current_class_str}")
-            if prev_class_str:
-                parts.append(f"上次班{prev_class_str}")
-            if class_drop and prev_class_num and current_class_num:
-                parts.append(f"降班{prev_class_num}→{current_class_num}")
+            parts.append(f"今班{current_class_str or 'N/A'}")
+            if prev_info:
+                parts.append(f"上次{prev_info.get('raw')}")
             else:
-                parts.append("無降班")
+                parts.append("上次N/A")
+            parts.append(drop_label)
+            if gap_days is not None:
+                parts.append(f"隔{gap_days}d")
+                parts.append(f"decay{recency:.2f}")
+            parts.append(f"raw{score:.2f}")
+            parts.append(sig)
             displays.append(" | ".join(parts) if parts else "無數據")
 
         return pd.Series(raw_scores, index=self.df.index), pd.Series(displays, index=self.df.index)

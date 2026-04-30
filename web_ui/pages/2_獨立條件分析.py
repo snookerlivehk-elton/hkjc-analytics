@@ -388,6 +388,49 @@ else:
                         engine.score_race(selected_race_id)
                         st.rerun()
 
+                if selected_factor == "班次表現":
+                    from database.models import SystemConfig, RaceEntry, ScoringFactor
+
+                    cfg = {"lookback_races": 8, "half_life_days": 45, "max_gap_days": 120, "grade_to_class_strength": 0.35, "max_steps": 2}
+                    config = session.query(SystemConfig).filter_by(key="class_drop_signal_config").first()
+                    if config and isinstance(config.value, dict):
+                        v = config.value
+                        if "lookback_races" in v:
+                            cfg["lookback_races"] = int(v["lookback_races"])
+                        if "half_life_days" in v:
+                            cfg["half_life_days"] = int(v["half_life_days"])
+                        if "max_gap_days" in v:
+                            cfg["max_gap_days"] = int(v["max_gap_days"])
+                        if "grade_to_class_strength" in v:
+                            cfg["grade_to_class_strength"] = float(v["grade_to_class_strength"])
+                        if "max_steps" in v:
+                            cfg["max_steps"] = int(v["max_steps"])
+
+                    expected = f"LB{int(cfg['lookback_races'])}|HL{int(cfg['half_life_days'])}|MG{int(cfg['max_gap_days'])}|GS{float(cfg['grade_to_class_strength']):.2f}|MS{int(cfg['max_steps'])}"
+                    sample = (
+                        session.query(ScoringFactor.raw_data_display)
+                        .join(RaceEntry, RaceEntry.id == ScoringFactor.entry_id)
+                        .filter(
+                            RaceEntry.race_id == selected_race_id,
+                            ScoringFactor.factor_name == "class_performance",
+                        )
+                        .first()
+                    )
+
+                    needs_rescore = False
+                    if not sample or not sample[0]:
+                        needs_rescore = True
+                    elif expected not in sample[0]:
+                        needs_rescore = True
+
+                    auto_key = f"auto_rescore_class_performance_{selected_race_id}_{expected}"
+                    if needs_rescore and not st.session_state.get(auto_key, False):
+                        st.session_state[auto_key] = True
+                        from scoring_engine.core import ScoringEngine
+                        engine = ScoringEngine(session)
+                        engine.score_race(selected_race_id)
+                        st.rerun()
+
                 if selected_factor == "馬匹分段時間＋完成時間 (同路程歷史)":
                     from database.models import SystemConfig, RaceEntry, ScoringFactor
 
@@ -740,6 +783,66 @@ else:
                                 new_cfg = {"rest_days": int(rest_days)}
                                 if not config:
                                     config = SystemConfig(key="debut_long_rest_config", description="初出／長休後表現：休息天數門檻")
+                                    session.add(config)
+                                config.value = new_cfg
+                                session.commit()
+
+                                from scoring_engine.core import ScoringEngine
+                                engine = ScoringEngine(session)
+                                engine.score_race(selected_race_id)
+                                st.success(f"參數已儲存：{new_cfg}，並已重新計分。")
+                                st.rerun()
+
+                elif selected_factor == "班次表現":
+                    st.markdown("---")
+                    st.markdown("### 💡 演算法說明：班次表現（降班訊號）")
+                    st.markdown("""
+                    這個條件用於捕捉「降班」帶來的對賽形勢改善，特別適合用於提高 Top4 覆蓋（出 5 匹推介但提升 Top4 命中）。
+
+                    - **班次解析**：優先辨識「第 1–5 班 / Class 1–5」；亦能辨識「一/二/三級賽、G1/2/3、Group 1/2/3」作為級際賽（grade）。
+                    - **降班強度**：
+                      - 班次賽：上仗班次 → 今班班次，若「今班數字更大」即屬降班（例如 3→4），降幅越大訊號越強（可設定最大計入步數）。
+                      - 級際賽 → 班次賽：視為「級際轉班」的輕量降班訊號（強度可調），避免把級際賽硬套成班次。
+                    - **時效性**：降班距離上一次可解析班次的賽事越久，訊號越弱（半衰期衰減）；超過最大間隔則不計。
+                    - **輸出**：raw 分數先於同場做百分位標準化成 0–10 分。
+                    """)
+                    with st.expander("⚙️ 調整 lookback/半衰期/最大間隔/級際轉班強度（調整後將即時儲存並重算）", expanded=False):
+                        from database.models import SystemConfig
+
+                        cfg = {"lookback_races": 8, "half_life_days": 45, "max_gap_days": 120, "grade_to_class_strength": 0.35, "max_steps": 2}
+                        config = session.query(SystemConfig).filter_by(key="class_drop_signal_config").first()
+                        if config and isinstance(config.value, dict):
+                            v = config.value
+                            if "lookback_races" in v:
+                                cfg["lookback_races"] = int(v["lookback_races"])
+                            if "half_life_days" in v:
+                                cfg["half_life_days"] = int(v["half_life_days"])
+                            if "max_gap_days" in v:
+                                cfg["max_gap_days"] = int(v["max_gap_days"])
+                            if "grade_to_class_strength" in v:
+                                cfg["grade_to_class_strength"] = float(v["grade_to_class_strength"])
+                            if "max_steps" in v:
+                                cfg["max_steps"] = int(v["max_steps"])
+
+                        with st.form("class_drop_signal_config_form"):
+                            c1, c2, c3, c4, c5 = st.columns(5)
+                            lookback = c1.number_input("回看最近幾仗", value=int(cfg["lookback_races"]), min_value=1, max_value=30, step=1)
+                            half_life = c2.number_input("半衰期(日)", value=int(cfg["half_life_days"]), min_value=7, max_value=365, step=1)
+                            max_gap = c3.number_input("最大間隔(日)", value=int(cfg["max_gap_days"]), min_value=14, max_value=730, step=1)
+                            max_steps = c4.number_input("最大計入降班步數", value=int(cfg["max_steps"]), min_value=1, max_value=4, step=1)
+                            g2c = c5.number_input("級際→班次 強度", value=float(cfg["grade_to_class_strength"]), min_value=0.0, max_value=1.0, step=0.05)
+
+                            submitted = st.form_submit_button("💾 儲存參數並為本場重新計分", type="primary")
+                            if submitted:
+                                new_cfg = {
+                                    "lookback_races": int(lookback),
+                                    "half_life_days": int(half_life),
+                                    "max_gap_days": int(max_gap),
+                                    "grade_to_class_strength": float(g2c),
+                                    "max_steps": int(max_steps),
+                                }
+                                if not config:
+                                    config = SystemConfig(key="class_drop_signal_config", description="班次表現：降班訊號參數")
                                     session.add(config)
                                 config.value = new_cfg
                                 session.commit()
