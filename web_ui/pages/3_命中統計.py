@@ -568,11 +568,12 @@ with tab_preset:
                             horses = horses_by_race.get(int(rid)) or []
                             rmap = score_map.get(int(rid)) or {}
                             items = []
+                            wkeys = sorted([str(k) for k in (weights or {}).keys() if str(k).strip()])
                             for hn in horses:
                                 m = rmap.get(int(hn)) or {}
                                 total = 0.0
-                                for fn, ww in (weights or {}).items():
-                                    total += float(m.get(str(fn), 0.0)) * float(ww or 0.0)
+                                for fn in wkeys:
+                                    total += float(m.get(str(fn), 0.0)) * float(weights.get(fn, 0.0) or 0.0)
                                 items.append((int(hn), float(total)))
                             items.sort(key=lambda x: (-x[1], x[0]))
                             return [hn for hn, _ in items]

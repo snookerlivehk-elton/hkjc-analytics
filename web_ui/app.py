@@ -288,8 +288,9 @@ def load_scoring_data(session: Session, race_id: int, weight_map: dict):
         )
         factor_map = {f.factor_name: float(f.score or 0.0) for f in factor_scores}
         total = 0.0
-        for k, w in weight_map.items():
-            total += float(factor_map.get(k, 0.0)) * float(w)
+        wkeys = sorted([str(k) for k in (weight_map or {}).keys() if str(k).strip()])
+        for k in wkeys:
+            total += float(factor_map.get(str(k), 0.0)) * float(weight_map.get(k, 0.0) or 0.0)
         row["總分"] = total
         for k, v in factor_map.items():
             row[k] = round(v, 1)
@@ -1154,11 +1155,12 @@ def main():
                                             horses = horses_by_race.get(int(rid)) or []
                                             rmap = score_map.get(int(rid)) or {}
                                             items = []
+                                            wkeys = sorted([str(k) for k in (weight_map or {}).keys() if str(k).strip()])
                                             for hn in horses:
                                                 m = rmap.get(int(hn)) or {}
                                                 total = 0.0
-                                                for fn, ww in (weight_map or {}).items():
-                                                    total += float(m.get(str(fn), 0.0)) * float(ww or 0.0)
+                                                for fn in wkeys:
+                                                    total += float(m.get(str(fn), 0.0)) * float(weight_map.get(fn, 0.0) or 0.0)
                                                 items.append((int(hn), float(total)))
                                             items.sort(key=lambda x: (-x[1], x[0]))
                                             return [hn for hn, _ in items]

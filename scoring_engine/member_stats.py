@@ -24,9 +24,10 @@ CURRENT_POLICY = {
     "start_date": STATS_START_DATE.date().isoformat(),
     "window_days": int(STATS_WINDOW_DAYS),
     "cmp": "date",
-    "v": 4,
+    "v": 5,
     "metrics": ["WIN", "P", "Q1", "PQ", "T3E", "T3", "F4", "F4Q", "B5W", "B5P"],
     "tie_break": ranking.TIE_BREAK,
+    "sum_order": "sorted_weight_keys",
 }
 
 METRIC_LABELS = {
@@ -57,11 +58,13 @@ CURRENT_ELIM_POLICY = {
     "start_date": STATS_START_DATE.date().isoformat(),
     "window_days": int(STATS_WINDOW_DAYS),
     "cmp": "date",
-    "v": 7,
+    "v": 8,
     "top_k": 4,
     "bottom_pcts": ELIM_BOTTOM_PCTS,
     "metrics": ["pred", "tn", "fp"],
     "daily": True,
+    "tie_break": ranking.TIE_BREAK,
+    "sum_order": "sorted_weight_keys",
 }
 
 
@@ -85,41 +88,7 @@ def _compute_elim_n(field_size: int, bottom_pct: float) -> int:
 
 
 def _ranked_horses_for_race(session: Session, race_id: int, weight_map: Dict[str, float]) -> List[int]:
-    weights = {str(k): float(v) for k, v in (weight_map or {}).items()}
-    if not weights:
-        return []
-
-    entries = session.query(RaceEntry.id, RaceEntry.horse_no).filter_by(race_id=race_id).all()
-    if not entries:
-        return []
-
-    entry_ids = [int(e[0]) for e in entries if int(e[0] or 0) > 0]
-    entry_id_to_no = {int(e[0]): int(e[1] or 0) for e in entries if int(e[0] or 0) > 0 and int(e[1] or 0) > 0}
-    if not entry_ids or not entry_id_to_no:
-        return []
-
-    factor_names = [str(x) for x in weights.keys()]
-    factors = (
-        session.query(ScoringFactor.entry_id, ScoringFactor.factor_name, ScoringFactor.score)
-        .filter(ScoringFactor.entry_id.in_(entry_ids))
-        .filter(ScoringFactor.factor_name.in_(factor_names))
-        .all()
-    )
-
-    totals: Dict[int, float] = {eid: 0.0 for eid in entry_ids}
-    for entry_id, factor_name, score in factors:
-        eid = int(entry_id or 0)
-        if eid in totals:
-            totals[eid] += float(score or 0.0) * float(weights.get(str(factor_name), 0.0))
-
-    items: List[tuple[int, float]] = []
-    for eid in entry_ids:
-        hn = entry_id_to_no.get(int(eid))
-        if hn is None or int(hn or 0) <= 0:
-            continue
-        items.append((int(hn), float(totals.get(int(eid), 0.0))))
-    ranking.sort_desc(items)
-    return [hn for hn, _ in items]
+    return ranking.ranked_horses_by_weights(session, int(race_id), weight_map)
 
 
 def load_member_preset_stats(session: Session, email: str) -> Dict[str, Any]:
@@ -551,37 +520,7 @@ def _predict_top4_for_race(session: Session, race_id: int, weight_map: Dict[str,
 
 
 def _predict_topk_for_race(session: Session, race_id: int, weight_map: Dict[str, float], k: int) -> List[int]:
-    weights = {k2: float(v2) for k2, v2 in (weight_map or {}).items()}
-    if not weights or k <= 0:
-        return []
-
-    entries = session.query(RaceEntry.id, RaceEntry.horse_no).filter_by(race_id=race_id).all()
-    if not entries:
-        return []
-
-    entry_ids = [e[0] for e in entries]
-    entry_id_to_no = {e[0]: int(e[1]) for e in entries}
-    factor_names = list(weights.keys())
-
-    factors = (
-        session.query(ScoringFactor.entry_id, ScoringFactor.factor_name, ScoringFactor.score)
-        .filter(ScoringFactor.entry_id.in_(entry_ids))
-        .filter(ScoringFactor.factor_name.in_(factor_names))
-        .all()
-    )
-
-    totals: Dict[int, float] = {eid: 0.0 for eid in entry_ids}
-    for entry_id, factor_name, score in factors:
-        totals[int(entry_id)] += float(score or 0.0) * float(weights.get(factor_name, 0.0))
-
-    items: List[tuple[int, float]] = []
-    for eid in entry_ids:
-        hn = entry_id_to_no.get(int(eid))
-        if hn is None or int(hn or 0) <= 0:
-            continue
-        items.append((int(hn), float(totals.get(int(eid), 0.0))))
-    ranking.sort_desc(items)
-    return [hn for hn, _ in items[: int(k or 0)]]
+    return ranking.topk_by_weights(session, int(race_id), weight_map, int(k or 0))
 
 
 def _actual_topk_for_race(session: Session, race_id: int, k: int) -> List[int]:

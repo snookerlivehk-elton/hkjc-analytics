@@ -110,14 +110,15 @@ def _ranked_by_factor(entry_ids: List[int], entry_id_to_no: Dict[int, int], scor
 
 def _topk_by_weights(entry_ids: List[int], entry_id_to_no: Dict[int, int], score_map: Dict[int, Dict[str, float]], weights: Dict[str, float], k: int = 5):
     items = []
+    wkeys = sorted([str(x) for x in (weights or {}).keys() if str(x).strip()])
     for eid in entry_ids:
         hn = entry_id_to_no.get(int(eid))
         if hn is None:
             continue
         m = score_map.get(int(eid), {})
         total = 0.0
-        for fn, w in weights.items():
-            total += float(m.get(fn, 0.0)) * float(w)
+        for fn in wkeys:
+            total += float(m.get(fn, 0.0)) * float(weights.get(fn, 0.0) or 0.0)
         items.append((hn, total))
     items.sort(key=lambda x: (-x[1], x[0]))
     return [hn for hn, _ in items[:k]]
@@ -125,14 +126,15 @@ def _topk_by_weights(entry_ids: List[int], entry_id_to_no: Dict[int, int], score
 
 def _ranked_by_weights(entry_ids: List[int], entry_id_to_no: Dict[int, int], score_map: Dict[int, Dict[str, float]], weights: Dict[str, float]):
     items = []
+    wkeys = sorted([str(x) for x in (weights or {}).keys() if str(x).strip()])
     for eid in entry_ids:
         hn = entry_id_to_no.get(int(eid))
         if hn is None:
             continue
         m = score_map.get(int(eid), {})
         total = 0.0
-        for fn, w in weights.items():
-            total += float(m.get(fn, 0.0)) * float(w)
+        for fn in wkeys:
+            total += float(m.get(fn, 0.0)) * float(weights.get(fn, 0.0) or 0.0)
         items.append((hn, total))
     items.sort(key=lambda x: (-x[1], x[0]))
     return [hn for hn, _ in items]
