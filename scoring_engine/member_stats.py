@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, or_
 
 from database.models import SystemConfig, Race, RaceEntry, RaceResult, ScoringFactor
+from scoring_engine import ranking
 
 
 STATS_START_DATE = datetime(2026, 4, 8)
@@ -25,7 +26,20 @@ CURRENT_POLICY = {
     "cmp": "date",
     "v": 4,
     "metrics": ["WIN", "P", "Q1", "PQ", "T3E", "T3", "F4", "F4Q", "B5W", "B5P"],
-    "tie_break": "horse_no",
+    "tie_break": ranking.TIE_BREAK,
+}
+
+METRIC_LABELS = {
+    "WIN": "獨贏(2)",
+    "P": "位置(3)",
+    "Q1": "正Q(2+3)",
+    "PQ": "PQ(3)",
+    "T3E": "三重(2+4)",
+    "T3": "三重(4)",
+    "F4": "四連(2+5)",
+    "F4Q": "四連(5)",
+    "B5W": "獨贏(45)",
+    "B5P": "位置(5)",
 }
 
 LEGACY_ELIM_BOTTOM_PCTS = [10, 15, 20, 25, 30, 35, 40, 50]
@@ -104,7 +118,7 @@ def _ranked_horses_for_race(session: Session, race_id: int, weight_map: Dict[str
         if hn is None or int(hn or 0) <= 0:
             continue
         items.append((int(hn), float(totals.get(int(eid), 0.0))))
-    items.sort(key=lambda x: (-x[1], x[0]))
+    ranking.sort_desc(items)
     return [hn for hn, _ in items]
 
 
@@ -566,7 +580,7 @@ def _predict_topk_for_race(session: Session, race_id: int, weight_map: Dict[str,
         if hn is None or int(hn or 0) <= 0:
             continue
         items.append((int(hn), float(totals.get(int(eid), 0.0))))
-    items.sort(key=lambda x: (-x[1], x[0]))
+    ranking.sort_desc(items)
     return [hn for hn, _ in items[: int(k or 0)]]
 
 

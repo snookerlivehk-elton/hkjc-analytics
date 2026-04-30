@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from database.models import RaceEntry, RaceResult, ScoringFactor, ScoringWeight
 from scoring_engine.constants import DISABLED_FACTORS
 from scoring_engine.factors import get_available_factors
+from scoring_engine.ranking import predicted_topk_by_total as _pred_topk_total, predicted_bottomk_by_total as _pred_bottomk_total
 
 
 def factor_label_map(session: Session) -> Dict[str, str]:
@@ -81,37 +82,11 @@ def actual_topk(session: Session, race_id: int, k: int) -> List[int]:
 
 
 def predicted_topk_by_total(session: Session, race_id: int, k: int) -> List[int]:
-    rows = (
-        session.query(RaceEntry.horse_no)
-        .filter(RaceEntry.race_id == int(race_id))
-        .order_by(RaceEntry.total_score.desc().nullslast(), RaceEntry.horse_no.asc().nullslast())
-        .limit(int(k or 0))
-        .all()
-    )
-    out: List[int] = []
-    for (hn,) in rows:
-        try:
-            out.append(int(hn or 0))
-        except Exception:
-            out.append(0)
-    return [x for x in out if x > 0]
+    return _pred_topk_total(session, race_id, k)
 
 
 def predicted_bottomk_by_total(session: Session, race_id: int, k: int) -> List[int]:
-    rows = (
-        session.query(RaceEntry.horse_no)
-        .filter(RaceEntry.race_id == int(race_id))
-        .order_by(RaceEntry.total_score.asc().nullsfirst(), RaceEntry.horse_no.desc().nullslast())
-        .limit(int(k or 0))
-        .all()
-    )
-    out: List[int] = []
-    for (hn,) in rows:
-        try:
-            out.append(int(hn or 0))
-        except Exception:
-            out.append(0)
-    return [x for x in out if x > 0]
+    return _pred_bottomk_total(session, race_id, k)
 
 
 def _factor_rows(session: Session, race_id: int, factor_name: str) -> List[Tuple[int, float]]:

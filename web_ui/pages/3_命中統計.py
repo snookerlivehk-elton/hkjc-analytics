@@ -27,6 +27,7 @@ from scoring_engine.diagnostics import (
     summarize_entry_reason_fields,
 )
 from scoring_engine.prediction_snapshots import finalize_prediction_top5_hits_for_race_date
+from scoring_engine.member_stats import METRIC_LABELS
 from web_ui.auth import require_superadmin
 from web_ui.nav import render_admin_nav
 
@@ -282,6 +283,16 @@ with tab_factor:
                             a[kk] += int(v)
 
                 rows = []
+                l_win = METRIC_LABELS.get("WIN", "WIN")
+                l_p = METRIC_LABELS.get("P", "P")
+                l_q1 = METRIC_LABELS.get("Q1", "Q1")
+                l_pq = METRIC_LABELS.get("PQ", "PQ")
+                l_t3e = METRIC_LABELS.get("T3E", "T3E")
+                l_t3 = METRIC_LABELS.get("T3", "T3")
+                l_f4 = METRIC_LABELS.get("F4", "F4")
+                l_f4q = METRIC_LABELS.get("F4Q", "F4Q")
+                l_b5w = METRIC_LABELS.get("B5W", "B5W")
+                l_b5p = METRIC_LABELS.get("B5P", "B5P")
                 for fn in factor_names:
                     a = agg[fn]
                     n = int(a["races"] or 0)
@@ -290,16 +301,16 @@ with tab_factor:
                             "條件": factor_desc.get(fn, fn),
                             "代號": fn,
                             "樣本(場)": n,
-                            "WIN%": round((a["win"] / n * 100.0), 1) if n else 0.0,
-                            "P%": round((a["p"] / n * 100.0), 1) if n else 0.0,
-                            "Q1%": round((a["q1"] / n * 100.0), 1) if n else 0.0,
-                            "PQ%": round((a["pq"] / n * 100.0), 1) if n else 0.0,
-                            "T3E%": round((a["t3e"] / n * 100.0), 1) if n else 0.0,
-                            "T3%": round((a["t3"] / n * 100.0), 1) if n else 0.0,
-                            "F4%": round((a["f4"] / n * 100.0), 1) if n else 0.0,
-                            "F4Q%": round((a["f4q"] / n * 100.0), 1) if n else 0.0,
-                            "B5W%": round((a["b5w"] / n * 100.0), 1) if n else 0.0,
-                            "B5P%": round((a["b5p"] / n * 100.0), 1) if n else 0.0,
+                            f"{l_win}%": round((a["win"] / n * 100.0), 1) if n else 0.0,
+                            f"{l_p}%": round((a["p"] / n * 100.0), 1) if n else 0.0,
+                            f"{l_q1}%": round((a["q1"] / n * 100.0), 1) if n else 0.0,
+                            f"{l_pq}%": round((a["pq"] / n * 100.0), 1) if n else 0.0,
+                            f"{l_t3e}%": round((a["t3e"] / n * 100.0), 1) if n else 0.0,
+                            f"{l_t3}%": round((a["t3"] / n * 100.0), 1) if n else 0.0,
+                            f"{l_f4}%": round((a["f4"] / n * 100.0), 1) if n else 0.0,
+                            f"{l_f4q}%": round((a["f4q"] / n * 100.0), 1) if n else 0.0,
+                            f"{l_b5w}%": round((a["b5w"] / n * 100.0), 1) if n else 0.0,
+                            f"{l_b5p}%": round((a["b5p"] / n * 100.0), 1) if n else 0.0,
                         }
                     )
                 st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
@@ -592,6 +603,16 @@ with tab_preset:
                                         a[kk] += int(mv or 0)
 
                         rows = []
+                        l_win = METRIC_LABELS.get("WIN", "WIN")
+                        l_p = METRIC_LABELS.get("P", "P")
+                        l_q1 = METRIC_LABELS.get("Q1", "Q1")
+                        l_pq = METRIC_LABELS.get("PQ", "PQ")
+                        l_t3e = METRIC_LABELS.get("T3E", "T3E")
+                        l_t3 = METRIC_LABELS.get("T3", "T3")
+                        l_f4 = METRIC_LABELS.get("F4", "F4")
+                        l_f4q = METRIC_LABELS.get("F4Q", "F4Q")
+                        l_b5w = METRIC_LABELS.get("B5W", "B5W")
+                        l_b5p = METRIC_LABELS.get("B5P", "B5P")
                         for (email_k, preset_k), a in agg.items():
                             n = int(a["races"] or 0)
                             rows.append(
@@ -599,16 +620,16 @@ with tab_preset:
                                     "Email": email_k,
                                     "組合": preset_k,
                                     "樣本(場)": n,
-                                    "WIN%": round((a["win"] / n * 100.0), 1) if n else 0.0,
-                                    "P%": round((a["p"] / n * 100.0), 1) if n else 0.0,
-                                    "Q1%": round((a["q1"] / n * 100.0), 1) if n else 0.0,
-                                    "PQ%": round((a["pq"] / n * 100.0), 1) if n else 0.0,
-                                    "T3E%": round((a["t3e"] / n * 100.0), 1) if n else 0.0,
-                                    "T3%": round((a["t3"] / n * 100.0), 1) if n else 0.0,
-                                    "F4%": round((a["f4"] / n * 100.0), 1) if n else 0.0,
-                                    "F4Q%": round((a["f4q"] / n * 100.0), 1) if n else 0.0,
-                                    "B5W%": round((a["b5w"] / n * 100.0), 1) if n else 0.0,
-                                    "B5P%": round((a["b5p"] / n * 100.0), 1) if n else 0.0,
+                                    f"{l_win}%": round((a["win"] / n * 100.0), 1) if n else 0.0,
+                                    f"{l_p}%": round((a["p"] / n * 100.0), 1) if n else 0.0,
+                                    f"{l_q1}%": round((a["q1"] / n * 100.0), 1) if n else 0.0,
+                                    f"{l_pq}%": round((a["pq"] / n * 100.0), 1) if n else 0.0,
+                                    f"{l_t3e}%": round((a["t3e"] / n * 100.0), 1) if n else 0.0,
+                                    f"{l_t3}%": round((a["t3"] / n * 100.0), 1) if n else 0.0,
+                                    f"{l_f4}%": round((a["f4"] / n * 100.0), 1) if n else 0.0,
+                                    f"{l_f4q}%": round((a["f4q"] / n * 100.0), 1) if n else 0.0,
+                                    f"{l_b5w}%": round((a["b5w"] / n * 100.0), 1) if n else 0.0,
+                                    f"{l_b5p}%": round((a["b5p"] / n * 100.0), 1) if n else 0.0,
                                 }
                             )
                         rows = [r for r in rows if int(r.get("樣本(場)") or 0) > 0]

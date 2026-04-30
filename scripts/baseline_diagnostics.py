@@ -15,6 +15,7 @@ from database.models import Race, RaceEntry, RaceResult, ScoringFactor, ScoringW
 from scoring_engine.constants import DISABLED_FACTORS
 from scoring_engine.member_stats import _calc_hits
 from scoring_engine.factors import get_available_factors
+from scoring_engine.ranking import order_by_total_desc
 
 
 def _parse_date(s: str) -> Optional[datetime]:
@@ -85,7 +86,7 @@ def _pred_topk(session, race_id: int, k: int = 5) -> List[int]:
     rows = (
         session.query(RaceEntry.horse_no)
         .filter(RaceEntry.race_id == race_id)
-        .order_by(RaceEntry.total_score.desc().nullslast(), RaceEntry.horse_no.asc().nullslast())
+        .order_by(*order_by_total_desc())
         .limit(k)
         .all()
     )

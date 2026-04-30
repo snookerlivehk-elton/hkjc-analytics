@@ -15,6 +15,7 @@ from database.models import Race, RaceEntry, ScoringFactor, ScoringWeight, Horse
 from scoring_engine.core import ScoringEngine
 from scoring_engine.constants import DISABLED_FACTORS
 from scoring_engine.utils import estimate_win_probability
+from scoring_engine import ranking
 from scoring_engine.member_stats import (
     update_member_preset_stats_incremental,
     load_member_preset_stats,
@@ -24,6 +25,7 @@ from scoring_engine.member_stats import (
     delete_member_preset_elim_stats,
     STATS_START_DATE,
     STATS_WINDOW_DAYS,
+    METRIC_LABELS,
 )
 from web_ui.ui_table import render_dividends
 from utils.logger import logger
@@ -251,7 +253,7 @@ def _predict_topk_for_race(session: Session, race_id: int, weight_map: dict, k: 
         if hn is None:
             continue
         items.append((int(hn), float(totals.get(int(eid), 0.0))))
-    items.sort(key=lambda x: (-x[1], x[0]))
+    ranking.sort_desc(items)
     return [hn for hn, _ in items[: int(k or 0)]]
 
 
@@ -812,40 +814,60 @@ def main():
                         f4q_n = int(stt.get("f4q") or 0)
                         b5w_n = int(stt.get("b5w") or 0)
                         b5p_n = int(stt.get("b5p") or 0)
+                        l_win = METRIC_LABELS.get("WIN", "WIN")
+                        l_p = METRIC_LABELS.get("P", "P")
+                        l_q1 = METRIC_LABELS.get("Q1", "Q1")
+                        l_pq = METRIC_LABELS.get("PQ", "PQ")
+                        l_t3e = METRIC_LABELS.get("T3E", "T3E")
+                        l_t3 = METRIC_LABELS.get("T3", "T3")
+                        l_f4 = METRIC_LABELS.get("F4", "F4")
+                        l_f4q = METRIC_LABELS.get("F4Q", "F4Q")
+                        l_b5w = METRIC_LABELS.get("B5W", "B5W")
+                        l_b5p = METRIC_LABELS.get("B5P", "B5P")
                         rows.append(
                             {
                                 "組合": p["name"],
                                 "樣本(場)": races_n,
-                                "WIN%": round((win_n / races_n * 100.0), 1) if races_n else 0.0,
-                                "P%": round((p_n / races_n * 100.0), 1) if races_n else 0.0,
-                                "Q1%": round((q1_n / races_n * 100.0), 1) if races_n else 0.0,
-                                "PQ%": round((pq_n / races_n * 100.0), 1) if races_n else 0.0,
-                                "T3E%": round((t3e_n / races_n * 100.0), 1) if races_n else 0.0,
-                                "T3%": round((t3_n / races_n * 100.0), 1) if races_n else 0.0,
-                                "F4%": round((f4_n / races_n * 100.0), 1) if races_n else 0.0,
-                                "F4Q%": round((f4q_n / races_n * 100.0), 1) if races_n else 0.0,
-                                "B5W%": round((b5w_n / races_n * 100.0), 1) if races_n else 0.0,
-                                "B5P%": round((b5p_n / races_n * 100.0), 1) if races_n else 0.0,
+                                f"{l_win}%": round((win_n / races_n * 100.0), 1) if races_n else 0.0,
+                                f"{l_p}%": round((p_n / races_n * 100.0), 1) if races_n else 0.0,
+                                f"{l_q1}%": round((q1_n / races_n * 100.0), 1) if races_n else 0.0,
+                                f"{l_pq}%": round((pq_n / races_n * 100.0), 1) if races_n else 0.0,
+                                f"{l_t3e}%": round((t3e_n / races_n * 100.0), 1) if races_n else 0.0,
+                                f"{l_t3}%": round((t3_n / races_n * 100.0), 1) if races_n else 0.0,
+                                f"{l_f4}%": round((f4_n / races_n * 100.0), 1) if races_n else 0.0,
+                                f"{l_f4q}%": round((f4q_n / races_n * 100.0), 1) if races_n else 0.0,
+                                f"{l_b5w}%": round((b5w_n / races_n * 100.0), 1) if races_n else 0.0,
+                                f"{l_b5p}%": round((b5p_n / races_n * 100.0), 1) if races_n else 0.0,
                                 "淘汰準確率(35%)": (round(elim_acc * 100.0, 1) if elim_acc is not None else None),
                                 "錯殺率(35%)": (round(elim_fp * 100.0, 1) if elim_fp is not None else None),
                             }
                         )
                     st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
                     with st.expander("📌 命中率統計口徑", expanded=False):
+                        l_win = METRIC_LABELS.get("WIN", "WIN")
+                        l_p = METRIC_LABELS.get("P", "P")
+                        l_q1 = METRIC_LABELS.get("Q1", "Q1")
+                        l_pq = METRIC_LABELS.get("PQ", "PQ")
+                        l_t3e = METRIC_LABELS.get("T3E", "T3E")
+                        l_t3 = METRIC_LABELS.get("T3", "T3")
+                        l_f4 = METRIC_LABELS.get("F4", "F4")
+                        l_f4q = METRIC_LABELS.get("F4Q", "F4Q")
+                        l_b5w = METRIC_LABELS.get("B5W", "B5W")
+                        l_b5p = METRIC_LABELS.get("B5P", "B5P")
                         st.markdown(f"""
                         - 統計起始：{STATS_START_DATE.date().isoformat()}（之前忽略）
                         - 統計窗口：最近 {STATS_WINDOW_DAYS} 天（若起始日更近，則以起始日為準）
                         - 命中定義：以模型 Top5/Top4/Top3/Top2 預測與賽果名次比較：
-                          - WIN：預測首2位包含冠軍
-                          - P：預測首3位包含三甲中任意一隻
-                          - Q1：預測首2位包含冠軍 且 預測首3位包含亞軍
-                          - PQ：預測首3位命中三甲其中兩隻或以上
-                          - T3E：預測首2位包含冠軍 且 預測首4位包含亞軍+季軍
-                          - T3：預測首4位包含三甲全部馬匹
-                          - F4：預測首2位包含冠軍 且 預測首5位包含2-4名
-                          - F4Q：預測首5位包含四甲全部馬匹
-                          - B5W：預測首5位包含冠軍
-                          - B5P：預測首5位包含三甲中任意一隻
+                          - {l_win}：預測首2位包含冠軍
+                          - {l_p}：預測首3位包含三甲中任意一隻
+                          - {l_q1}：預測首2位包含冠軍 且 預測首3位包含亞軍
+                          - {l_pq}：預測首3位命中三甲其中兩隻或以上
+                          - {l_t3e}：預測首2位包含冠軍 且 預測首4位包含亞軍+季軍
+                          - {l_t3}：預測首4位包含三甲全部馬匹
+                          - {l_f4}：預測首2位包含冠軍 且 預測首5位包含2-4名
+                          - {l_f4q}：預測首5位包含四甲全部馬匹
+                          - {l_b5w}：預測首5位包含冠軍
+                          - {l_b5p}：預測首5位包含三甲中任意一隻
                         """)
 
                     st.markdown("### 🧾 分享字段（會員組合 Top5）")
@@ -1333,6 +1355,16 @@ def main():
                                     a[kk] += int(v)
 
                         rows = []
+                        l_win = METRIC_LABELS.get("WIN", "WIN")
+                        l_p = METRIC_LABELS.get("P", "P")
+                        l_q1 = METRIC_LABELS.get("Q1", "Q1")
+                        l_pq = METRIC_LABELS.get("PQ", "PQ")
+                        l_t3e = METRIC_LABELS.get("T3E", "T3E")
+                        l_t3 = METRIC_LABELS.get("T3", "T3")
+                        l_f4 = METRIC_LABELS.get("F4", "F4")
+                        l_f4q = METRIC_LABELS.get("F4Q", "F4Q")
+                        l_b5w = METRIC_LABELS.get("B5W", "B5W")
+                        l_b5p = METRIC_LABELS.get("B5P", "B5P")
                         for fn in factor_names:
                             a = agg[fn]
                             n = int(a["races"] or 0)
@@ -1341,16 +1373,16 @@ def main():
                                     "條件": factor_desc.get(fn, fn),
                                     "代號": fn,
                                     "樣本(場)": n,
-                                    "WIN%": round((a["win"] / n * 100.0), 1) if n else 0.0,
-                                    "P%": round((a["p"] / n * 100.0), 1) if n else 0.0,
-                                    "Q1%": round((a["q1"] / n * 100.0), 1) if n else 0.0,
-                                    "PQ%": round((a["pq"] / n * 100.0), 1) if n else 0.0,
-                                    "T3E%": round((a["t3e"] / n * 100.0), 1) if n else 0.0,
-                                    "T3%": round((a["t3"] / n * 100.0), 1) if n else 0.0,
-                                    "F4%": round((a["f4"] / n * 100.0), 1) if n else 0.0,
-                                    "F4Q%": round((a["f4q"] / n * 100.0), 1) if n else 0.0,
-                                    "B5W%": round((a["b5w"] / n * 100.0), 1) if n else 0.0,
-                                    "B5P%": round((a["b5p"] / n * 100.0), 1) if n else 0.0,
+                                    f"{l_win}%": round((a["win"] / n * 100.0), 1) if n else 0.0,
+                                    f"{l_p}%": round((a["p"] / n * 100.0), 1) if n else 0.0,
+                                    f"{l_q1}%": round((a["q1"] / n * 100.0), 1) if n else 0.0,
+                                    f"{l_pq}%": round((a["pq"] / n * 100.0), 1) if n else 0.0,
+                                    f"{l_t3e}%": round((a["t3e"] / n * 100.0), 1) if n else 0.0,
+                                    f"{l_t3}%": round((a["t3"] / n * 100.0), 1) if n else 0.0,
+                                    f"{l_f4}%": round((a["f4"] / n * 100.0), 1) if n else 0.0,
+                                    f"{l_f4q}%": round((a["f4q"] / n * 100.0), 1) if n else 0.0,
+                                    f"{l_b5w}%": round((a["b5w"] / n * 100.0), 1) if n else 0.0,
+                                    f"{l_b5p}%": round((a["b5p"] / n * 100.0), 1) if n else 0.0,
                                 }
                             )
                         st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
