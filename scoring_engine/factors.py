@@ -558,9 +558,13 @@ class FactorCalculator:
             "window_days": 720,
             "half_life_days": 365,
             "min_samples": 3,
-            "confidence_runs": 8,
+            "confidence_runs": 12.0,
+            "prior_strength": 12.0,
+            "prior_win_rate": 0.08,
+            "prior_place_rate": 0.28,
             "win_w": 0.6,
             "place_w": 0.4,
+            "fallback_strategy": "A_B_C",
         }
         try:
             config = self.session.query(SystemConfig).filter_by(key="venue_dist_specialty_config").first()
@@ -573,11 +577,19 @@ class FactorCalculator:
                 if "min_samples" in v:
                     cfg["min_samples"] = int(v["min_samples"])
                 if "confidence_runs" in v:
-                    cfg["confidence_runs"] = int(v["confidence_runs"])
+                    cfg["confidence_runs"] = float(v["confidence_runs"])
+                if "prior_strength" in v:
+                    cfg["prior_strength"] = float(v["prior_strength"])
+                if "prior_win_rate" in v:
+                    cfg["prior_win_rate"] = float(v["prior_win_rate"])
+                if "prior_place_rate" in v:
+                    cfg["prior_place_rate"] = float(v["prior_place_rate"])
                 if "win_w" in v:
                     cfg["win_w"] = float(v["win_w"])
                 if "place_w" in v:
                     cfg["place_w"] = float(v["place_w"])
+                if "fallback_strategy" in v:
+                    cfg["fallback_strategy"] = str(v["fallback_strategy"])
         except Exception:
             pass
 
@@ -587,8 +599,28 @@ class FactorCalculator:
             cfg["half_life_days"] = 0
         if cfg["min_samples"] < 0:
             cfg["min_samples"] = 0
-        if cfg["confidence_runs"] <= 0:
-            cfg["confidence_runs"] = 1
+        if float(cfg["confidence_runs"] or 0.0) <= 0:
+            cfg["confidence_runs"] = 1.0
+        if float(cfg["prior_strength"] or 0.0) < 0:
+            cfg["prior_strength"] = 0.0
+        try:
+            pw = float(cfg["prior_win_rate"])
+        except Exception:
+            pw = 0.08
+        if pw < 0.0:
+            pw = 0.0
+        if pw > 1.0:
+            pw = 1.0
+        cfg["prior_win_rate"] = pw
+        try:
+            pp = float(cfg["prior_place_rate"])
+        except Exception:
+            pp = 0.28
+        if pp < 0.0:
+            pp = 0.0
+        if pp > 1.0:
+            pp = 1.0
+        cfg["prior_place_rate"] = pp
         if cfg["win_w"] < 0:
             cfg["win_w"] = 0.0
         if cfg["place_w"] < 0:
@@ -598,6 +630,8 @@ class FactorCalculator:
             cfg["win_w"], cfg["place_w"], tw = 0.6, 0.4, 1.0
         cfg["win_w"] /= tw
         cfg["place_w"] /= tw
+        if cfg["fallback_strategy"] not in ("A_B_C", "B_C", "C"):
+            cfg["fallback_strategy"] = "A_B_C"
 
         cutoff_date = (race_date - timedelta(days=cfg["window_days"])) if cfg["window_days"] > 0 else None
 
@@ -612,13 +646,13 @@ class FactorCalculator:
         for _, row in self.df.iterrows():
             horse_id = self._to_int(row.get("horse_id", 0), default=0)
             if not horse_id or not distance:
-                scores.append(0.0)
+                scores.append(None)
                 displays.append("無數據")
                 continue
 
-            key = (horse_id, track_key_norm, surface, distance, cfg["window_days"])
+            key = (horse_id, track_key_norm, surface, distance, cfg["window_days"], cfg["half_life_days"], cfg["fallback_strategy"])
             if key in cached:
-                runs, win_rate_w, place_rate_w, last_days = cached[key]
+                eff_runs, win_rate_w, place_rate_w, last_days, chosen_mode = cached[key]
             else:
                 q = (
                     self.session.query(HorseHistory.rank, HorseHistory.race_date, HorseHistory.venue, HorseHistory.surface)
@@ -634,28 +668,49 @@ class FactorCalculator:
                     q = q.filter(HorseHistory.race_date >= cutoff_date)
                 hist = q.all()
 
-                filtered = []
-                if track_key_norm:
-                    for rnk, dt, v, _sf in hist:
-                        if norm_track(v) == track_key_norm:
-                            filtered.append((rnk, dt))
-                elif surface in ("草地", "泥地"):
-                    for rnk, dt, _v, sf in hist:
-                        if sf == surface:
-                            filtered.append((rnk, dt))
+                mode_A = []
+                mode_B = []
+                mode_C = []
+                for rnk, dt, v, sf in hist:
+                    mode_C.append((rnk, dt))
+                    if surface and sf == surface:
+                        mode_B.append((rnk, dt))
+                    if track_key_norm and norm_track(v) == track_key_norm:
+                        mode_A.append((rnk, dt))
+
+                if cfg["fallback_strategy"] == "A_B_C":
+                    modes = [("A", mode_A), ("B", mode_B), ("C", mode_C)]
+                elif cfg["fallback_strategy"] == "B_C":
+                    modes = [("B", mode_B), ("C", mode_C)]
                 else:
-                    filtered = [(rnk, dt) for rnk, dt, _v, _sf in hist]
+                    modes = [("C", mode_C)]
 
-                runs = len(filtered)
+                chosen_mode = ""
+                chosen = []
+                for m, arr in modes:
+                    if len(arr) >= int(cfg["min_samples"] or 0):
+                        chosen_mode = m
+                        chosen = arr
+                        break
+                if not chosen:
+                    best_m = ""
+                    best_n = -1
+                    for m, arr in modes:
+                        if len(arr) > best_n:
+                            best_m = m
+                            best_n = len(arr)
+                            chosen = arr
+                            chosen_mode = best_m
+
                 last_days = None
-                if filtered and isinstance(filtered[0][1], datetime):
-                    last_days = max((race_date - filtered[0][1]).days, 0)
+                if chosen and isinstance(chosen[0][1], datetime):
+                    last_days = max((race_date - chosen[0][1]).days, 0)
 
-                if runs > 0 and cfg["half_life_days"] > 0:
+                if chosen and cfg["half_life_days"] > 0:
                     sum_w = 0.0
                     sum_win_w = 0.0
                     sum_place_w = 0.0
-                    for rnk, dt in filtered:
+                    for rnk, dt in chosen:
                         if isinstance(dt, datetime):
                             days = max((race_date - dt).days, 0)
                         else:
@@ -666,36 +721,52 @@ class FactorCalculator:
                             sum_win_w += w
                         if rnk in (1, 2, 3):
                             sum_place_w += w
+                    eff_runs = float(sum_w)
                     win_rate_w = (sum_win_w / sum_w) if sum_w > 0 else 0.0
                     place_rate_w = (sum_place_w / sum_w) if sum_w > 0 else 0.0
                 else:
-                    wins = sum(1 for rnk, _ in filtered if rnk == 1)
-                    places = sum(1 for rnk, _ in filtered if rnk in (1, 2, 3))
-                    win_rate_w = wins / runs if runs else 0.0
-                    place_rate_w = places / runs if runs else 0.0
+                    runs = len(chosen or [])
+                    wins = sum(1 for rnk, _ in (chosen or []) if rnk == 1)
+                    places = sum(1 for rnk, _ in (chosen or []) if rnk in (1, 2, 3))
+                    eff_runs = float(runs)
+                    win_rate_w = (wins / runs) if runs else 0.0
+                    place_rate_w = (places / runs) if runs else 0.0
 
-                cached[key] = (runs, win_rate_w, place_rate_w, last_days)
+                cached[key] = (eff_runs, win_rate_w, place_rate_w, last_days, chosen_mode)
 
-            if runs < cfg["min_samples"]:
-                scores.append(0.0)
-                head = track_key if track_key else surface
-                displays.append(f"{head}{distance}m 樣本不足({runs}<{cfg['min_samples']})")
-                continue
+            eff = float(eff_runs or 0.0)
+            ps = float(cfg["prior_strength"] or 0.0)
+            pw = float(cfg["prior_win_rate"] or 0.0)
+            pp = float(cfg["prior_place_rate"] or 0.0)
+            denom = eff + ps
+            if denom > 0:
+                swr = (float(win_rate_w) * eff + pw * ps) / denom
+                spr = (float(place_rate_w) * eff + pp * ps) / denom
+            else:
+                swr = pw
+                spr = pp
 
-            raw = (win_rate_w * cfg["win_w"]) + (place_rate_w * cfg["place_w"])
-            confidence = min(runs / float(cfg["confidence_runs"]), 1.0)
-            raw *= confidence
+            raw0 = (float(swr) * float(cfg["win_w"])) + (float(spr) * float(cfg["place_w"]))
+            cr = float(cfg["confidence_runs"] or 1.0)
+            conf = ((eff + ps) / (eff + ps + cr)) if (eff + ps + cr) > 0 else 0.0
+            raw = float(raw0) * float(conf)
 
-            scores.append(raw)
+            if eff <= 0.0:
+                scores.append(None)
+            else:
+                scores.append(raw)
 
-            param_label = f"W{cfg['window_days']}d | HL{cfg['half_life_days']}d | N{cfg['min_samples']} | C{cfg['confidence_runs']} | WW{cfg['win_w']:.2f} | PW{cfg['place_w']:.2f}"
+            param_label = f"W{cfg['window_days']}d | HL{cfg['half_life_days']}d | N{cfg['min_samples']} | PS{ps:.0f} | C{cr:.0f} | WW{cfg['win_w']:.2f} | PW{cfg['place_w']:.2f} | {cfg['fallback_strategy']}"
             last_label = f"@{last_days}d" if last_days is not None else ""
-            head = track_key if track_key else surface
+            head = track_key if chosen_mode == "A" else (surface if chosen_mode == "B" else "同程")
             displays.append(
-                f"{param_label} | {head}{distance}m | 勝{win_rate_w*100:.1f}% | 位{place_rate_w*100:.1f}% | n{runs} | conf{confidence:.2f}{last_label}"
+                f"{param_label} | {head}{distance}m | 勝{win_rate_w*100:.1f}%→{swr*100:.1f}% | 位{place_rate_w*100:.1f}%→{spr*100:.1f}% | eff{eff:.1f} | conf{conf:.2f}{last_label}"
             )
 
-        return pd.Series(scores, index=self.df.index), pd.Series(displays, index=self.df.index)
+        non_missing = [v for v in scores if v is not None]
+        mid = float(pd.Series(non_missing).median()) if non_missing else 0.0
+        out_scores = [mid if v is None else float(v) for v in scores]
+        return pd.Series(out_scores, index=self.df.index), pd.Series(displays, index=self.df.index)
 
     # 5. 檔位偏差 (Draw Stats) - 基於當日檔位統計
     def _calculate_draw_stats(self):
