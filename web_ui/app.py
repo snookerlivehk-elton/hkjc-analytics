@@ -974,11 +974,216 @@ def main():
                                     key="member_preset_share_json",
                                 )
 
+                    with st.expander("🎯 會員組合命中率（可篩選）", expanded=False):
+                        from sqlalchemy import func
+                        from datetime import date, timedelta
+                        from scoring_engine.member_stats import _calc_hits
+
+                        def _filtered_race_rows(d1: date, d2: date, venue_sel: str, surface_sel: str, course_sel: str, going_sel: str, min_results: int):
+                            q_races = (
+                                session.query(Race.id, Race.race_date, Race.race_no)
+                                .join(RaceEntry, RaceEntry.race_id == Race.id)
+                                .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
+                                .filter(RaceResult.rank != None)
+                                .filter(func.date(Race.race_date) >= d1.isoformat())
+                                .filter(func.date(Race.race_date) <= d2.isoformat())
+                            )
+                            if venue_sel != "全部":
+                                q_races = q_races.filter(Race.venue == ("HV" if venue_sel == "跑馬地" else "ST"))
+                            if surface_sel != "全部":
+                                q_races = q_races.filter(Race.surface == surface_sel)
+                            if course_sel != "全部":
+                                q_races = q_races.filter(Race.course_type == course_sel)
+                            if going_sel != "全部":
+                                q_races = q_races.join(RaceTrackCondition, RaceTrackCondition.race_id == Race.id).filter(RaceTrackCondition.going_code == going_sel)
+                            q_races = (
+                                q_races.group_by(Race.id, Race.race_date, Race.race_no)
+                                .having(func.count(RaceResult.id) >= int(min_results or 0))
+                                .order_by(func.date(Race.race_date).asc(), Race.race_no.asc(), Race.id.asc())
+                            )
+                            rows = q_races.all()
+                            race_ids = [int(r[0]) for r in (rows or []) if r and int(r[0] or 0) > 0]
+                            return rows, race_ids
+
+                        end_default = date.today()
+                        start_default = end_default - timedelta(days=30)
+                        d1, d2 = st.date_input("統計日期範圍", value=(start_default, end_default), key="member_hit_range")
+                        if isinstance(d1, date) and isinstance(d2, date) and d1 > d2:
+                            d1, d2 = d2, d1
+
+                        active_name = st.session_state.get("selected_preset_name", "（手動調整）")
+                        preset_options = [p.get("name") for p in (presets or []) if isinstance(p, dict) and p.get("name")]
+                        if active_name != "（手動調整）" and active_name in preset_options:
+                            preset_default = active_name
+                        elif preset_options:
+                            preset_default = str(preset_options[0])
+                        else:
+                            preset_default = ""
+
+                        preset_sel = st.selectbox(
+                            "組合",
+                            preset_options,
+                            index=(preset_options.index(preset_default) if preset_default in preset_options else 0),
+                            key="member_hit_preset",
+                        )
+
+                        c_f1, c_f2, c_f3, c_f4 = st.columns(4)
+                        venue_sel = c_f1.selectbox("地點", ["全部", "沙田", "跑馬地"], index=0, key="member_hit_venue")
+                        surface_sel = c_f2.selectbox("草/泥", ["全部", "草地", "泥地"], index=0, key="member_hit_surface")
+                        course_rows = (
+                            session.query(Race.course_type)
+                            .filter(Race.course_type != None)
+                            .distinct()
+                            .order_by(Race.course_type.asc())
+                            .all()
+                        )
+                        course_opts = ["全部"] + [str(r[0]) for r in course_rows if r and str(r[0] or "").strip()]
+                        course_sel = c_f3.selectbox("跑道", course_opts, index=0, key="member_hit_course")
+                        going_rows = (
+                            session.query(RaceTrackCondition.going_code)
+                            .distinct()
+                            .order_by(RaceTrackCondition.going_code.asc())
+                            .all()
+                        )
+                        going_opts = ["全部"] + [str(r[0]) for r in going_rows if r and str(r[0] or "").strip()]
+                        going_sel = c_f4.selectbox("場地狀況（賽後）", going_opts, index=0, key="member_hit_going")
+
+                        run_hit = st.button("計算命中率（依篩選）", width="stretch", key="member_hit_calc_btn")
+                        sig = (str(preset_sel), d1.isoformat(), d2.isoformat(), str(venue_sel), str(surface_sel), str(course_sel), str(going_sel))
+                        if run_hit:
+                            st.session_state["member_hit_calc_sig"] = sig
+                            st.session_state["member_hit_calc_res"] = None
+
+                        if not preset_sel:
+                            st.info("未找到任何已儲存權重組合。")
+                        elif st.session_state.get("member_hit_calc_sig") != sig:
+                            st.info("請按「計算命中率（依篩選）」開始統計。")
+                        elif st.session_state.get("member_hit_calc_res") is None:
+                            preset_weights = None
+                            for p in (presets or []):
+                                if isinstance(p, dict) and str(p.get("name") or "").strip() == str(preset_sel):
+                                    preset_weights = p.get("weights")
+                                    break
+                            weight_map = preset_weights if isinstance(preset_weights, dict) else {}
+                            w2 = ranking.normalize_weights(weight_map)
+                            used_factors = sorted(list(w2.keys()))
+                            if not used_factors:
+                                st.session_state["member_hit_calc_res"] = {"races": 0, "hits": {}}
+                            else:
+                                race_rows, race_ids = _filtered_race_rows(d1, d2, venue_sel, surface_sel, course_sel, going_sel, min_results=5)
+                                if not race_ids:
+                                    st.session_state["member_hit_calc_res"] = {"races": 0, "hits": {}}
+                                else:
+                                    entries = session.query(RaceEntry.race_id, RaceEntry.horse_no).filter(RaceEntry.race_id.in_(race_ids)).all()
+                                    horses_by_race = {}
+                                    for rid, hn in entries:
+                                        rid_i = int(rid or 0)
+                                        if rid_i <= 0:
+                                            continue
+                                        try:
+                                            hn_i = int(hn or 0)
+                                        except Exception:
+                                            hn_i = 0
+                                        if hn_i <= 0:
+                                            continue
+                                        horses_by_race.setdefault(rid_i, []).append(hn_i)
+
+                                    rr_rows = (
+                                        session.query(RaceEntry.race_id, RaceEntry.horse_no, RaceResult.rank)
+                                        .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
+                                        .filter(RaceEntry.race_id.in_(race_ids))
+                                        .filter(RaceResult.rank != None)
+                                        .order_by(RaceEntry.race_id.asc(), RaceResult.rank.asc())
+                                        .all()
+                                    )
+                                    actual_by_race = {}
+                                    for rid, hn, _rk in rr_rows:
+                                        rid_i = int(rid or 0)
+                                        if rid_i <= 0:
+                                            continue
+                                        if rid_i not in actual_by_race:
+                                            actual_by_race[rid_i] = []
+                                        if len(actual_by_race[rid_i]) >= 5:
+                                            continue
+                                        try:
+                                            hn_i = int(hn or 0)
+                                        except Exception:
+                                            hn_i = 0
+                                        if hn_i > 0:
+                                            actual_by_race[rid_i].append(hn_i)
+
+                                    sf_rows = (
+                                        session.query(RaceEntry.race_id, RaceEntry.horse_no, ScoringFactor.factor_name, ScoringFactor.score)
+                                        .join(ScoringFactor, ScoringFactor.entry_id == RaceEntry.id)
+                                        .filter(RaceEntry.race_id.in_(race_ids))
+                                        .filter(ScoringFactor.factor_name.in_(used_factors))
+                                        .all()
+                                    )
+                                    score_map = {}
+                                    for rid, hn, fn, sc in sf_rows:
+                                        rid_i = int(rid or 0)
+                                        if rid_i <= 0:
+                                            continue
+                                        try:
+                                            hn_i = int(hn or 0)
+                                        except Exception:
+                                            hn_i = 0
+                                        if hn_i <= 0:
+                                            continue
+                                        rmap = score_map.setdefault(rid_i, {})
+                                        hmap = rmap.setdefault(hn_i, {})
+                                        hmap[str(fn)] = float(sc or 0.0)
+
+                                    agg = {"races": 0, **{k: 0 for k in HIT_METRICS}}
+                                    wkeys = sorted(used_factors)
+                                    for rid, _rd, _rno in (race_rows or []):
+                                        rid_i = int(rid or 0)
+                                        if rid_i <= 0:
+                                            continue
+                                        act = actual_by_race.get(rid_i) or []
+                                        if len(act) < 5:
+                                            continue
+                                        horses = horses_by_race.get(rid_i) or []
+                                        rmap = score_map.get(rid_i) or {}
+                                        items = []
+                                        for hn in horses:
+                                            m = rmap.get(int(hn)) or {}
+                                            total = 0.0
+                                            for fn in wkeys:
+                                                total += float(m.get(fn, 0.0)) * float(w2.get(fn, 0.0) or 0.0)
+                                            items.append((int(hn), float(total)))
+                                        items.sort(key=lambda x: (-x[1], x[0]))
+                                        pred = [hn for hn, _ in items[:5]]
+                                        if len(pred) < 5:
+                                            continue
+                                        hits = _calc_hits(pred, act)
+                                        if not hits:
+                                            continue
+                                        agg["races"] += 1
+                                        for k, v in hits.items():
+                                            kk = str(k).lower()
+                                            if kk in agg:
+                                                agg[kk] += int(v or 0)
+
+                                    st.session_state["member_hit_calc_res"] = {"races": int(agg.get("races") or 0), "hits": agg}
+
+                        res = st.session_state.get("member_hit_calc_res") if st.session_state.get("member_hit_calc_sig") == sig else None
+                        if isinstance(res, dict):
+                            hits = res.get("hits") if isinstance(res.get("hits"), dict) else {}
+                            n = int(hits.get("races") or 0)
+                            if n <= 0:
+                                st.info("此範圍內沒有找到可用的賽果樣本（或不符合篩選條件 / 缺少因子分數）。")
+                            else:
+                                row = {"樣本(場)": n}
+                                for k in HIT_METRICS:
+                                    row[f"{METRIC_LABELS.get(k, k)}%"] = round((int(hits.get(k) or 0) / n * 100.0), 1) if n else 0.0
+                                st.dataframe(pd.DataFrame([row]), width="stretch", hide_index=True)
+
                     with st.expander("📉 會員組合反向表現（淘汰準確率）", expanded=False):
                         st.caption("以 Bottom35%（按每場參賽馬數計算 N）評估：你淘汰的馬匹是否真的不入 Top4。")
                         from sqlalchemy import func
                         from datetime import date, timedelta
-                        from scoring_engine.diagnostics import compute_elim_n, reverse_stats_for_race
+                        from scoring_engine.member_stats import _compute_elim_n
 
                         bottom_pct = 35.0
                         top_k = 4
@@ -987,6 +1192,27 @@ def main():
                         d1, d2 = st.date_input("統計日期範圍", value=(start_default, end_default), key="member_elim_range")
                         if isinstance(d1, date) and isinstance(d2, date) and d1 > d2:
                             d1, d2 = d2, d1
+
+                        c_f1, c_f2, c_f3, c_f4 = st.columns(4)
+                        venue_sel = c_f1.selectbox("地點", ["全部", "沙田", "跑馬地"], index=0, key="member_elim_venue")
+                        surface_sel = c_f2.selectbox("草/泥", ["全部", "草地", "泥地"], index=0, key="member_elim_surface")
+                        course_rows = (
+                            session.query(Race.course_type)
+                            .filter(Race.course_type != None)
+                            .distinct()
+                            .order_by(Race.course_type.asc())
+                            .all()
+                        )
+                        course_opts = ["全部"] + [str(r[0]) for r in course_rows if r and str(r[0] or "").strip()]
+                        course_sel = c_f3.selectbox("跑道", course_opts, index=0, key="member_elim_course")
+                        going_rows = (
+                            session.query(RaceTrackCondition.going_code)
+                            .distinct()
+                            .order_by(RaceTrackCondition.going_code.asc())
+                            .all()
+                        )
+                        going_opts = ["全部"] + [str(r[0]) for r in going_rows if r and str(r[0] or "").strip()]
+                        going_sel = c_f4.selectbox("場地狀況（賽後）", going_opts, index=0, key="member_elim_going")
 
                         active_name = st.session_state.get("selected_preset_name", "（手動調整）")
                         preset_options = [p.get("name") for p in (presets or []) if isinstance(p, dict) and p.get("name")]
@@ -1018,7 +1244,8 @@ def main():
                             total_races = 0
                             rows_day = []
 
-                            if days:
+                            is_unfiltered = (venue_sel == "全部" and surface_sel == "全部" and course_sel == "全部" and going_sel == "全部")
+                            if is_unfiltered and days:
                                 for day_s in sorted(days.keys(), reverse=True):
                                     if not day_s or not isinstance(day_s, str):
                                         continue
@@ -1056,7 +1283,9 @@ def main():
                             m3.metric("淘汰準確率(不入Top4, Bottom35%)", f"{(total_tn / total_pred):.1%}" if total_pred else "-")
                             m4.metric("錯殺率", f"{(total_fp / total_pred):.1%}" if total_pred else "-")
 
-                            if not rows_day:
+                            if not is_unfiltered:
+                                st.info("已選擇篩選條件，落庫日匯總暫不支援（只支持全量）。請用下方「即時計算（依篩選）」查看結果。")
+                            elif not rows_day:
                                 st.info("落庫統計未包含此日期範圍資料。可到後台「會員反向統計總表（回填/重建）」回填該範圍，或用下方即時計算核對。")
                             else:
                                 df_day = pd.DataFrame(rows_day)
@@ -1064,8 +1293,8 @@ def main():
                                 df_day["錯殺率"] = df_day["錯殺率"].map(lambda x: f"{float(x):.1%}" if x is not None else "-")
                                 st.dataframe(df_day.sort_values(["賽日"], ascending=[False]), width="stretch", hide_index=True)
 
-                            run_verify = st.button("🔎 即時計算核對", width="stretch", key="member_elim_verify_btn")
-                            sig = (str(preset_sel), str(pct_key), d1.isoformat(), d2.isoformat())
+                            run_verify = st.button("🔎 即時計算（依篩選）", width="stretch", key="member_elim_verify_btn")
+                            sig = (str(preset_sel), str(pct_key), d1.isoformat(), d2.isoformat(), str(venue_sel), str(surface_sel), str(course_sel), str(going_sel))
                             if run_verify:
                                 st.session_state["member_elim_verify_sig"] = sig
                                 st.session_state["member_elim_verify_res"] = None
@@ -1082,7 +1311,17 @@ def main():
                                         .filter(RaceResult.rank != None)
                                         .filter(func.date(Race.race_date) >= d1.isoformat())
                                         .filter(func.date(Race.race_date) <= d2.isoformat())
-                                        .group_by(Race.id, Race.race_date, Race.race_no)
+                                    )
+                                    if venue_sel != "全部":
+                                        race_rows = race_rows.filter(Race.venue == ("HV" if venue_sel == "跑馬地" else "ST"))
+                                    if surface_sel != "全部":
+                                        race_rows = race_rows.filter(Race.surface == surface_sel)
+                                    if course_sel != "全部":
+                                        race_rows = race_rows.filter(Race.course_type == course_sel)
+                                    if going_sel != "全部":
+                                        race_rows = race_rows.join(RaceTrackCondition, RaceTrackCondition.race_id == Race.id).filter(RaceTrackCondition.going_code == going_sel)
+                                    race_rows = (
+                                        race_rows.group_by(Race.id, Race.race_date, Race.race_no)
                                         .having(func.count(RaceResult.id) >= int(top_k or 0))
                                         .order_by(func.date(Race.race_date).asc(), Race.race_no.asc(), Race.id.asc())
                                         .all()
@@ -1180,14 +1419,15 @@ def main():
                                             if not ranked:
                                                 continue
                                             n_field = len(horses_by_race.get(rid_i) or [])
-                                            elim_n = compute_elim_n(int(n_field or 0), float(bottom_pct))
+                                            elim_n = _compute_elim_n(int(n_field or 0), float(bottom_pct))
                                             if elim_n <= 0:
                                                 continue
                                             pred_neg = ranked[-int(elim_n):]
-                                            rs = reverse_stats_for_race(actual_positive=actual_pos, predicted_negative=pred_neg)
-                                            pred_n = int(rs.get("pred_neg") or 0)
-                                            tn = int(rs.get("tn") or 0)
-                                            fp = int(rs.get("fp") or 0)
+                                            pred_set = set(int(x) for x in pred_neg if int(x or 0) > 0)
+                                            act_set = set(int(x) for x in actual_pos if int(x or 0) > 0)
+                                            pred_n = len(pred_set)
+                                            fp = len(pred_set.intersection(act_set))
+                                            tn = len(pred_set - act_set)
                                             if pred_n <= 0:
                                                 continue
                                             tot_pred += pred_n
