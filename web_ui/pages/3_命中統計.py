@@ -453,6 +453,7 @@ with tab_preset:
                     st.info("目前未找到任何會員已儲存組合。")
                 else:
                     from database.models import RaceTrackCondition
+                    from scoring_engine.track_conditions import going_code_label
 
                     going_rows = (
                         session.query(RaceTrackCondition.going_code)
@@ -464,7 +465,7 @@ with tab_preset:
                         .all()
                     )
                     going_opts = ["全部"] + [str(r[0]) for r in going_rows if r and str(r[0] or "").strip()]
-                    going_sel = st.selectbox("場地狀況（賽後）", going_opts, index=0)
+                    going_sel = st.selectbox("場地狀況（賽後）", going_opts, index=0, format_func=lambda x: ("全部" if str(x) == "全部" else going_code_label(str(x))))
 
                     venue_sel = st.selectbox("地點", ["全部", "沙田", "跑馬地"], index=0)
                     surface_rows = (

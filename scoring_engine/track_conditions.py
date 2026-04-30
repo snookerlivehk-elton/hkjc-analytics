@@ -28,3 +28,22 @@ def normalize_going(raw: str) -> Tuple[str, str]:
         return s, code
     return s, s
 
+
+GOING_CODE_LABELS = {
+    "G": "好地",
+    "GF": "好至快",
+    "F": "快地",
+    "Y": "黏地",
+    "YS": "黏至軟",
+    "S": "軟地",
+    "H": "大爛地",
+    "WET_FAST": "濕快",
+    "WET_SLOW": "濕慢",
+}
+
+
+def going_code_label(code: str) -> str:
+    c = str(code or "").strip()
+    if not c:
+        return ""
+    return str(GOING_CODE_LABELS.get(c) or c)

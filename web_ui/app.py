@@ -978,6 +978,7 @@ def main():
                         from sqlalchemy import func
                         from datetime import date, timedelta
                         from scoring_engine.member_stats import _calc_hits
+                        from scoring_engine.track_conditions import going_code_label
 
                         def _filtered_race_rows(d1: date, d2: date, venue_sel: str, surface_sel: str, course_sel: str, going_sel: str, min_results: int):
                             q_races = (
@@ -1052,7 +1053,13 @@ def main():
                             .all()
                         )
                         going_opts = ["全部"] + [str(r[0]) for r in going_rows if r and str(r[0] or "").strip()]
-                        going_sel = c_f4.selectbox("場地狀況（賽後）", going_opts, index=0, key="member_hit_going")
+                        going_sel = c_f4.selectbox(
+                            "場地狀況（賽後）",
+                            going_opts,
+                            index=0,
+                            key="member_hit_going",
+                            format_func=lambda x: ("全部" if str(x) == "全部" else going_code_label(str(x))),
+                        )
 
                         run_hit = st.button("計算命中率（依篩選）", width="stretch", key="member_hit_calc_btn")
                         sig = (str(preset_sel), d1.isoformat(), d2.isoformat(), str(venue_sel), str(surface_sel), str(course_sel), str(going_sel))
@@ -1190,6 +1197,7 @@ def main():
                         from sqlalchemy import func
                         from datetime import date, timedelta
                         from scoring_engine.member_stats import _compute_elim_n
+                        from scoring_engine.track_conditions import going_code_label
 
                         bottom_pct = 35.0
                         top_k = 4
@@ -1224,7 +1232,13 @@ def main():
                             .all()
                         )
                         going_opts = ["全部"] + [str(r[0]) for r in going_rows if r and str(r[0] or "").strip()]
-                        going_sel = c_f4.selectbox("場地狀況（賽後）", going_opts, index=0, key="member_elim_going")
+                        going_sel = c_f4.selectbox(
+                            "場地狀況（賽後）",
+                            going_opts,
+                            index=0,
+                            key="member_elim_going",
+                            format_func=lambda x: ("全部" if str(x) == "全部" else going_code_label(str(x))),
+                        )
 
                         active_name = st.session_state.get("selected_preset_name", "（手動調整）")
                         preset_options = [p.get("name") for p in (presets or []) if isinstance(p, dict) and p.get("name")]
@@ -1471,6 +1485,7 @@ def main():
                     from datetime import date, timedelta
                     from database.models import PredictionTop5
                     from scoring_engine.settlements import get_plugins
+                    from scoring_engine.track_conditions import going_code_label
 
                     plugin_key = "hkjc.place_quinella.pq3_v1"
                     plugins = {str(getattr(p, "plugin_key", "")): p for p in (get_plugins() or [])}
@@ -1522,7 +1537,13 @@ def main():
                         .all()
                     )
                     going_opts = ["全部"] + [str(r[0]) for r in going_rows if r and str(r[0] or "").strip()]
-                    going_sel = c_f4.selectbox("場地狀況（賽後）", going_opts, index=0, key="member_pq3_going")
+                    going_sel = c_f4.selectbox(
+                        "場地狀況（賽後）",
+                        going_opts,
+                        index=0,
+                        key="member_pq3_going",
+                        format_func=lambda x: ("全部" if str(x) == "全部" else going_code_label(str(x))),
+                    )
 
                     if not preset_sel:
                         st.info("未找到任何已儲存權重組合。")
@@ -1638,7 +1659,7 @@ def main():
                                         "地點": ("跑馬地" if str(v or "").upper() == "HV" else "沙田"),
                                         "草/泥": (("全天候" if str(surf or "") == "泥地" else str(surf or "")) or "-"),
                                         "跑道": (str(course or "") or "-"),
-                                        "場地狀況": (str(graw or "") or str(gcode or "") or "N/A"),
+                                        "場地狀況": (str(graw or "") or going_code_label(str(gcode or "")) or "N/A"),
                                         "預測Top3": ",".join(str(x) for x in (stl.get("pred_top3") or [])),
                                         "實際三甲": ",".join(str(x) for x in (stl.get("actual_top3") or [])),
                                         "命中注數": hit_count,
