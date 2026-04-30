@@ -85,7 +85,7 @@ def _pred_topk(session, race_id: int, k: int = 5) -> List[int]:
     rows = (
         session.query(RaceEntry.horse_no)
         .filter(RaceEntry.race_id == race_id)
-        .order_by(RaceEntry.total_score.desc().nullslast(), RaceEntry.id.asc())
+        .order_by(RaceEntry.total_score.desc().nullslast(), RaceEntry.horse_no.asc().nullslast())
         .limit(k)
         .all()
     )

@@ -245,8 +245,14 @@ def _predict_topk_for_race(session: Session, race_id: int, weight_map: dict, k: 
     for entry_id, factor_name, score in factors:
         totals[int(entry_id)] += float(score or 0.0) * float(weights.get(factor_name, 0.0))
 
-    ranked = sorted(totals.items(), key=lambda x: x[1], reverse=True)
-    return [entry_id_to_no[eid] for eid, _ in ranked[:k] if eid in entry_id_to_no]
+    items = []
+    for eid in entry_ids:
+        hn = entry_id_to_no.get(eid)
+        if hn is None:
+            continue
+        items.append((int(hn), float(totals.get(int(eid), 0.0))))
+    items.sort(key=lambda x: (-x[1], x[0]))
+    return [hn for hn, _ in items[: int(k or 0)]]
 
 
 def _predict_top4_for_race(session: Session, race_id: int, weight_map: dict):

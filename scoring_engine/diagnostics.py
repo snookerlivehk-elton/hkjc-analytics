@@ -84,7 +84,7 @@ def predicted_topk_by_total(session: Session, race_id: int, k: int) -> List[int]
     rows = (
         session.query(RaceEntry.horse_no)
         .filter(RaceEntry.race_id == int(race_id))
-        .order_by(RaceEntry.total_score.desc().nullslast(), RaceEntry.id.asc())
+        .order_by(RaceEntry.total_score.desc().nullslast(), RaceEntry.horse_no.asc().nullslast())
         .limit(int(k or 0))
         .all()
     )
@@ -101,7 +101,7 @@ def predicted_bottomk_by_total(session: Session, race_id: int, k: int) -> List[i
     rows = (
         session.query(RaceEntry.horse_no)
         .filter(RaceEntry.race_id == int(race_id))
-        .order_by(RaceEntry.total_score.asc().nullsfirst(), RaceEntry.id.desc())
+        .order_by(RaceEntry.total_score.asc().nullsfirst(), RaceEntry.horse_no.desc().nullslast())
         .limit(int(k or 0))
         .all()
     )
