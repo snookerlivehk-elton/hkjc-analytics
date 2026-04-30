@@ -391,7 +391,7 @@ else:
                 if selected_factor == "班次表現":
                     from database.models import SystemConfig, RaceEntry, ScoringFactor
 
-                    cfg = {"lookback_races": 8, "half_life_days": 45, "max_gap_days": 120, "grade_to_class_strength": 0.35, "max_steps": 2}
+                    cfg = {"lookback_races": 8, "half_life_days": 45, "max_gap_days": 120, "allowed_pairs": [[3, 4], [4, 5]]}
                     config = session.query(SystemConfig).filter_by(key="class_drop_signal_config").first()
                     if config and isinstance(config.value, dict):
                         v = config.value
@@ -401,12 +401,20 @@ else:
                             cfg["half_life_days"] = int(v["half_life_days"])
                         if "max_gap_days" in v:
                             cfg["max_gap_days"] = int(v["max_gap_days"])
-                        if "grade_to_class_strength" in v:
-                            cfg["grade_to_class_strength"] = float(v["grade_to_class_strength"])
-                        if "max_steps" in v:
-                            cfg["max_steps"] = int(v["max_steps"])
+                        if "allowed_pairs" in v:
+                            cfg["allowed_pairs"] = v["allowed_pairs"]
 
-                    expected = f"LB{int(cfg['lookback_races'])}|HL{int(cfg['half_life_days'])}|MG{int(cfg['max_gap_days'])}|GS{float(cfg['grade_to_class_strength']):.2f}|MS{int(cfg['max_steps'])}"
+                    pairs = cfg.get("allowed_pairs")
+                    ap = []
+                    if isinstance(pairs, list):
+                        for item in pairs:
+                            if isinstance(item, (list, tuple)) and len(item) == 2:
+                                ap.append(f"{int(item[0])}->{int(item[1])}")
+                            elif isinstance(item, str) and "->" in item:
+                                ap.append(item)
+                    if not ap:
+                        ap = ["3->4", "4->5"]
+                    expected = f"LB{int(cfg['lookback_races'])}|HL{int(cfg['half_life_days'])}|MG{int(cfg['max_gap_days'])}|AP{','.join(sorted(ap))}"
                     sample = (
                         session.query(ScoringFactor.raw_data_display)
                         .join(RaceEntry, RaceEntry.id == ScoringFactor.entry_id)
@@ -797,19 +805,18 @@ else:
                     st.markdown("---")
                     st.markdown("### 💡 演算法說明：班次表現（降班訊號）")
                     st.markdown("""
-                    這個條件用於捕捉「降班」帶來的對賽形勢改善，特別適合用於提高 Top4 覆蓋（出 5 匹推介但提升 Top4 命中）。
+                    這個條件專門用於捕捉「3→4」與「4→5」的降班訊號（依你提供的歷史觀察：這兩個降班類型的入位/勝出機率較高；其他班次降班不適用，會直接忽略）。
 
                     - **班次解析**：優先辨識「第 1–5 班 / Class 1–5」；亦能辨識「一/二/三級賽、G1/2/3、Group 1/2/3」作為級際賽（grade）。
                     - **降班強度**：
-                      - 班次賽：上仗班次 → 今班班次，若「今班數字更大」即屬降班（例如 3→4），降幅越大訊號越強（可設定最大計入步數）。
-                      - 級際賽 → 班次賽：視為「級際轉班」的輕量降班訊號（強度可調），避免把級際賽硬套成班次。
+                      - 只計算 **3→4** 與 **4→5**；其他變化一律視為「無降班」。
                     - **時效性**：降班距離上一次可解析班次的賽事越久，訊號越弱（半衰期衰減）；超過最大間隔則不計。
                     - **輸出**：raw 分數先於同場做百分位標準化成 0–10 分。
                     """)
-                    with st.expander("⚙️ 調整 lookback/半衰期/最大間隔/級際轉班強度（調整後將即時儲存並重算）", expanded=False):
+                    with st.expander("⚙️ 調整 lookback/半衰期/最大間隔／啟用的降班類型（調整後將即時儲存並重算）", expanded=False):
                         from database.models import SystemConfig
 
-                        cfg = {"lookback_races": 8, "half_life_days": 45, "max_gap_days": 120, "grade_to_class_strength": 0.35, "max_steps": 2}
+                        cfg = {"lookback_races": 8, "half_life_days": 45, "max_gap_days": 120, "allowed_pairs": [[3, 4], [4, 5]]}
                         config = session.query(SystemConfig).filter_by(key="class_drop_signal_config").first()
                         if config and isinstance(config.value, dict):
                             v = config.value
@@ -819,27 +826,40 @@ else:
                                 cfg["half_life_days"] = int(v["half_life_days"])
                             if "max_gap_days" in v:
                                 cfg["max_gap_days"] = int(v["max_gap_days"])
-                            if "grade_to_class_strength" in v:
-                                cfg["grade_to_class_strength"] = float(v["grade_to_class_strength"])
-                            if "max_steps" in v:
-                                cfg["max_steps"] = int(v["max_steps"])
+                            if "allowed_pairs" in v:
+                                cfg["allowed_pairs"] = v["allowed_pairs"]
 
                         with st.form("class_drop_signal_config_form"):
                             c1, c2, c3, c4, c5 = st.columns(5)
                             lookback = c1.number_input("回看最近幾仗", value=int(cfg["lookback_races"]), min_value=1, max_value=30, step=1)
                             half_life = c2.number_input("半衰期(日)", value=int(cfg["half_life_days"]), min_value=7, max_value=365, step=1)
                             max_gap = c3.number_input("最大間隔(日)", value=int(cfg["max_gap_days"]), min_value=14, max_value=730, step=1)
-                            max_steps = c4.number_input("最大計入降班步數", value=int(cfg["max_steps"]), min_value=1, max_value=4, step=1)
-                            g2c = c5.number_input("級際→班次 強度", value=float(cfg["grade_to_class_strength"]), min_value=0.0, max_value=1.0, step=0.05)
+                            cur_pairs = cfg.get("allowed_pairs")
+                            enabled = set()
+                            if isinstance(cur_pairs, list):
+                                for item in cur_pairs:
+                                    if isinstance(item, (list, tuple)) and len(item) == 2:
+                                        try:
+                                            enabled.add((int(item[0]), int(item[1])))
+                                        except Exception:
+                                            continue
+                            enable_34 = c4.checkbox("啟用 3→4", value=((3, 4) in enabled))
+                            enable_45 = c5.checkbox("啟用 4→5", value=((4, 5) in enabled))
 
                             submitted = st.form_submit_button("💾 儲存參數並為本場重新計分", type="primary")
                             if submitted:
+                                pairs = []
+                                if enable_34:
+                                    pairs.append([3, 4])
+                                if enable_45:
+                                    pairs.append([4, 5])
+                                if not pairs:
+                                    pairs = [[3, 4], [4, 5]]
                                 new_cfg = {
                                     "lookback_races": int(lookback),
                                     "half_life_days": int(half_life),
                                     "max_gap_days": int(max_gap),
-                                    "grade_to_class_strength": float(g2c),
-                                    "max_steps": int(max_steps),
+                                    "allowed_pairs": pairs,
                                 }
                                 if not config:
                                     config = SystemConfig(key="class_drop_signal_config", description="班次表現：降班訊號參數")

@@ -1340,8 +1340,7 @@ class FactorCalculator:
             "lookback_races": 8,
             "half_life_days": 45,
             "max_gap_days": 120,
-            "grade_to_class_strength": 0.35,
-            "max_steps": 2,
+            "allowed_pairs": [[3, 4], [4, 5]],
         }
         try:
             config = self.session.query(SystemConfig).filter_by(key="class_drop_signal_config").first()
@@ -1353,10 +1352,8 @@ class FactorCalculator:
                     cfg["half_life_days"] = int(v["half_life_days"])
                 if "max_gap_days" in v:
                     cfg["max_gap_days"] = int(v["max_gap_days"])
-                if "grade_to_class_strength" in v:
-                    cfg["grade_to_class_strength"] = float(v["grade_to_class_strength"])
-                if "max_steps" in v:
-                    cfg["max_steps"] = int(v["max_steps"])
+                if "allowed_pairs" in v:
+                    cfg["allowed_pairs"] = v["allowed_pairs"]
         except Exception:
             pass
 
@@ -1368,20 +1365,36 @@ class FactorCalculator:
             cfg["half_life_days"] = 45
         if cfg["max_gap_days"] <= 0:
             cfg["max_gap_days"] = 120
-        if cfg["grade_to_class_strength"] < 0:
-            cfg["grade_to_class_strength"] = 0.0
-        if cfg["grade_to_class_strength"] > 1:
-            cfg["grade_to_class_strength"] = 1.0
-        if cfg["max_steps"] <= 0:
-            cfg["max_steps"] = 1
-        if cfg["max_steps"] > 4:
-            cfg["max_steps"] = 4
+        allowed_pairs = set()
+        ap = cfg.get("allowed_pairs")
+        if isinstance(ap, list):
+            for item in ap:
+                if isinstance(item, (list, tuple)) and len(item) == 2:
+                    try:
+                        a = int(item[0])
+                        b = int(item[1])
+                        if a in (1, 2, 3, 4, 5) and b in (1, 2, 3, 4, 5):
+                            allowed_pairs.add((a, b))
+                    except Exception:
+                        continue
+                elif isinstance(item, str) and "->" in item:
+                    try:
+                        a, b = item.split("->", 1)
+                        a = int(a.strip())
+                        b = int(b.strip())
+                        if a in (1, 2, 3, 4, 5) and b in (1, 2, 3, 4, 5):
+                            allowed_pairs.add((a, b))
+                    except Exception:
+                        continue
+        if not allowed_pairs:
+            allowed_pairs = {(3, 4), (4, 5)}
+        cfg["allowed_pairs"] = [[a, b] for a, b in sorted(allowed_pairs)]
 
         raw_scores = []
         displays = []
 
         cached_prev_class = {}
-        sig = f"LB{int(cfg['lookback_races'])}|HL{int(cfg['half_life_days'])}|MG{int(cfg['max_gap_days'])}|GS{float(cfg['grade_to_class_strength']):.2f}|MS{int(cfg['max_steps'])}"
+        sig = f"LB{int(cfg['lookback_races'])}|HL{int(cfg['half_life_days'])}|MG{int(cfg['max_gap_days'])}|AP{','.join([f'{a}->{b}' for a,b in sorted(allowed_pairs)])}"
 
         for _, row in self.df.iterrows():
             horse_id = self._to_int(row.get("horse_id", 0), default=0)
@@ -1410,17 +1423,12 @@ class FactorCalculator:
 
             strength = 0.0
             drop_label = "無降班"
-            if prev_info and current_info.get("kind") == "class":
-                if prev_info.get("kind") == "class":
-                    steps = int(current_info.get("level") or 0) - int(prev_info.get("level") or 0)
-                    if steps > 0:
-                        if steps > int(cfg["max_steps"]):
-                            steps = int(cfg["max_steps"])
-                        strength = float(steps) / float(cfg["max_steps"])
-                        drop_label = f"降班{prev_info.get('level')}→{current_info.get('level')}"
-                elif prev_info.get("kind") == "grade":
-                    strength = float(cfg["grade_to_class_strength"])
-                    drop_label = f"級際{prev_info.get('raw')}→第{current_info.get('level')}班"
+            if prev_info and current_info.get("kind") == "class" and prev_info.get("kind") == "class":
+                a = int(prev_info.get("level") or 0)
+                b = int(current_info.get("level") or 0)
+                if (a, b) in allowed_pairs:
+                    strength = 1.0
+                    drop_label = f"降班{a}→{b}"
 
             recency = 1.0
             gap_days = None
