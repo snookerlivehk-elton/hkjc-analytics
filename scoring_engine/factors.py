@@ -771,6 +771,7 @@ class FactorCalculator:
     # 5. 檔位偏差 (Draw Stats) - 基於當日檔位統計
     def _calculate_draw_stats(self):
         from database.models import SystemConfig, Race
+        import math
         scores = []
         displays = []
         
@@ -810,13 +811,89 @@ class FactorCalculator:
                 if isinstance(stats_list, list):
                     for item in stats_list:
                         draw_stats_dict[item["draw"]] = item
+
+        cfg = {
+            "win_w": 0.4,
+            "place_w": 0.6,
+            "confidence_runs": 50.0,
+            "prior_strength": 50.0,
+            "prior_win_rate": 8.0,
+            "prior_place_rate": 28.0,
+            "use_top4_if_available": True,
+        }
+        try:
+            config = self.session.query(SystemConfig).filter_by(key="draw_stats_factor_config").first()
+            if config and isinstance(config.value, dict):
+                v = config.value
+                if "win_w" in v:
+                    cfg["win_w"] = float(v["win_w"])
+                if "place_w" in v:
+                    cfg["place_w"] = float(v["place_w"])
+                if "confidence_runs" in v:
+                    cfg["confidence_runs"] = float(v["confidence_runs"])
+                if "prior_strength" in v:
+                    cfg["prior_strength"] = float(v["prior_strength"])
+                if "prior_win_rate" in v:
+                    cfg["prior_win_rate"] = float(v["prior_win_rate"])
+                if "prior_place_rate" in v:
+                    cfg["prior_place_rate"] = float(v["prior_place_rate"])
+                if "use_top4_if_available" in v:
+                    cfg["use_top4_if_available"] = bool(v["use_top4_if_available"])
+        except Exception:
+            pass
+
+        if cfg["win_w"] < 0:
+            cfg["win_w"] = 0.0
+        if cfg["place_w"] < 0:
+            cfg["place_w"] = 0.0
+        tw = float(cfg["win_w"]) + float(cfg["place_w"])
+        if tw <= 0:
+            cfg["win_w"], cfg["place_w"], tw = 0.4, 0.6, 1.0
+        cfg["win_w"] = float(cfg["win_w"]) / tw
+        cfg["place_w"] = float(cfg["place_w"]) / tw
+        if float(cfg["confidence_runs"] or 0.0) <= 0:
+            cfg["confidence_runs"] = 1.0
+        if float(cfg["prior_strength"] or 0.0) < 0:
+            cfg["prior_strength"] = 0.0
+        if float(cfg["prior_win_rate"] or 0.0) < 0:
+            cfg["prior_win_rate"] = 0.0
+        if float(cfg["prior_place_rate"] or 0.0) < 0:
+            cfg["prior_place_rate"] = 0.0
         
         # 如果有讀取到檔位統計，則使用統計數據；否則回退到預設邏輯
         if draw_stats_dict:
-            # 找出最大勝出率作為基準
-            max_win_rate = max([float(item.get("win_rate", 0.0)) for item in draw_stats_dict.values()]) if draw_stats_dict else 0.0
-            # 找出最大上名率作為基準 (用於防呆或輔助)
-            max_place_rate = max([float(item.get("place_rate", 0.0)) for item in draw_stats_dict.values()]) if draw_stats_dict else 0.0
+            use_top4 = False
+            if cfg["use_top4_if_available"]:
+                for item in draw_stats_dict.values():
+                    if "top4_rate" in item:
+                        use_top4 = True
+                        break
+
+            per_draw = {}
+            for d, item in draw_stats_dict.items():
+                try:
+                    dd = int(d)
+                except Exception:
+                    continue
+                runs = float(item.get("total_runs", 0.0) or 0.0)
+                win_rate = float(item.get("win_rate", 0.0) or 0.0)
+                if use_top4:
+                    place_rate = float(item.get("top4_rate", 0.0) or 0.0)
+                else:
+                    place_rate = float(item.get("place_rate", 0.0) or 0.0)
+                ps = float(cfg["prior_strength"] or 0.0)
+                denom = runs + ps
+                sw = ((win_rate * runs) + (float(cfg["prior_win_rate"]) * ps)) / denom if denom > 0 else float(cfg["prior_win_rate"])
+                sp = ((place_rate * runs) + (float(cfg["prior_place_rate"]) * ps)) / denom if denom > 0 else float(cfg["prior_place_rate"])
+                conf = ((runs + ps) / (runs + ps + float(cfg["confidence_runs"]))) if (runs + ps + float(cfg["confidence_runs"])) > 0 else 0.0
+                per_draw[dd] = {"runs": runs, "win": win_rate, "place": place_rate, "sw": sw, "sp": sp, "conf": conf}
+
+            best_sw = max([v["sw"] for v in per_draw.values()]) if per_draw else 0.0
+            best_sp = max([v["sp"] for v in per_draw.values()]) if per_draw else 0.0
+            if best_sw <= 0:
+                best_sw = 1.0
+            if best_sp <= 0:
+                best_sp = 1.0
             
             for _, row in self.df.iterrows():
                 try:
@@ -824,37 +901,48 @@ class FactorCalculator:
                 except (ValueError, TypeError):
                     draw = 0
                     
-                if draw in draw_stats_dict:
-                    stat = draw_stats_dict[draw]
-                    win_rate = float(stat.get("win_rate", 0.0))
-                    place_rate = float(stat.get("place_rate", 0.0))
-                    runs = stat.get("total_runs", 0)
-                    
-                    # 混合得分: 70% 勝率 + 30% 上名率 (如果都有最大值基準)
-                    score = 0.0
-                    if max_win_rate > 0:
-                        score += (win_rate / max_win_rate) * 7.0
-                    if max_place_rate > 0:
-                        score += (place_rate / max_place_rate) * 3.0
-                        
+                if draw in per_draw:
+                    st = per_draw[draw]
+                    base = (float(cfg["win_w"]) * (st["sw"] / best_sw)) + (float(cfg["place_w"]) * (st["sp"] / best_sp))
+                    if base < 0.0:
+                        base = 0.0
+                    score = 10.0 * float(base) * float(st["conf"])
                     scores.append(score)
-                    displays.append(f"第 {draw} 檔 (勝率 {win_rate}%, 上名率 {place_rate}%, 樣本 {runs})")
+                    lab_p = "Top4" if use_top4 else "上名"
+                    displays.append(
+                        f"第{draw}檔 | 勝{st['win']:.1f}%→{st['sw']:.1f}% | {lab_p}{st['place']:.1f}%→{st['sp']:.1f}% | n{st['runs']:.0f} | conf{st['conf']:.2f}"
+                    )
                 else:
-                    # 該檔位無統計數據
-                    scores.append(0.0)
-                    displays.append(f"第 {draw} 檔 (無統計數據)")
+                    scores.append(None)
+                    displays.append(f"第{draw}檔 | 無統計數據")
         else:
             # 預設簡單邏輯：檔位越小，分數越高 (1檔 10分, 14檔 1分)
+            max_draw = 0
+            for _, row in self.df.iterrows():
+                try:
+                    d = int(row.get("draw", 0))
+                except (ValueError, TypeError):
+                    d = 0
+                if d > max_draw:
+                    max_draw = d
+            if max_draw <= 1:
+                max_draw = 14
             for _, row in self.df.iterrows():
                 try:
                     draw = int(row.get("draw", 0))
                 except (ValueError, TypeError):
                     draw = 0
-                score = float(max(11 - draw, 1)) if draw > 0 else 0.0
+                if draw > 0:
+                    score = 10.0 * float(max_draw - draw) / float(max_draw - 1)
+                else:
+                    score = 0.0
                 scores.append(score)
                 displays.append(f"第 {draw} 檔 (未載入官方統計)")
-                
-        return pd.Series(scores, index=self.df.index), pd.Series(displays, index=self.df.index)
+
+        non_missing = [v for v in scores if v is not None]
+        mid = float(pd.Series(non_missing).median()) if non_missing else 0.0
+        out_scores = [mid if v is None else float(v) for v in scores]
+        return pd.Series(out_scores, index=self.df.index), pd.Series(displays, index=self.df.index)
 
     # 6. 負磅／評分表現 (Weight/Rating Perf) - 真實邏輯：高評分馬通常實力較強
     def _calculate_weight_rating_perf(self):

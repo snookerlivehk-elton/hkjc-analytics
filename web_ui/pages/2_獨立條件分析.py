@@ -975,10 +975,11 @@ else:
                     這個條件用於評估馬匹排在該檔位是否具有統計上的優勢。
                     
                     - **數據來源**：系統於抓取當日排位時，會同步從馬會官方抓取當日各場次（同場地、同路程、同跑道）的檔位歷史統計數據。
-                    - **計分公式**：
-                      1. 從當場賽事的檔位統計中，找出**最高勝率**與**最高上名率**作為 100% 基準。
-                      2. 計算該馬匹所排檔位的相對表現：`(該檔位勝率 / 最高勝率) × 70% + (該檔位上名率 / 最高上名率) × 30%`。
-                      3. 若該檔位樣本數為 0 或尚未載入官方數據，則會退回簡單邏輯（內檔分數較高）。
+                    - **計分公式（偏保守、抗樣本不足）**：
+                      1. 先把該檔位的勝率/上名率（或 Top4% 如官方有提供）做先驗平滑：樣本越少越接近先驗。
+                      2. 再以本場各檔位的「平滑後最高值」作相對基準，得到相對分（勝率權重＋上名/Top4 權重）。
+                      3. 最後套用信心折扣（樣本越少折扣越大），避免小樣本爆分。
+                      4. 若該檔位缺少統計資料，則視為同場中性（避免被硬性打成 0）。
                     - **最後調整**：將上述綜合分數在同場賽事中進行百分位標準化，得出 0–10 分。
                     """)
 
@@ -1010,18 +1011,81 @@ else:
                             if "draw" in stats_df.columns:
                                 stats_df = stats_df.sort_values(by="draw")
 
-                            show_cols = [c for c in ["draw", "total_runs", "win", "win_rate", "place_rate"] if c in stats_df.columns]
+                            show_cols = [c for c in ["draw", "total_runs", "win", "win_rate", "place_rate", "top4_rate"] if c in stats_df.columns]
                             st.dataframe(stats_df[show_cols], width="stretch", hide_index=True)
 
-                            chart_df = stats_df.set_index("draw")[["win_rate", "place_rate"]] if all(
-                                c in stats_df.columns for c in ["draw", "win_rate", "place_rate"]
-                            ) else None
+                            chart_cols = [c for c in ["win_rate", "place_rate", "top4_rate"] if c in stats_df.columns]
+                            chart_df = stats_df.set_index("draw")[chart_cols] if ("draw" in stats_df.columns and chart_cols) else None
                             if chart_df is not None:
                                 st.bar_chart(chart_df, width="stretch")
                         else:
                             st.warning("找不到本場次的官方檔位統計（可能尚未爬取或 Key 不匹配）。")
                     else:
                         st.warning("尚未載入當日官方檔位統計，請先執行賽日資料抓取後再檢查。")
+
+                    st.markdown("---")
+                    st.markdown("#### ⚙️ 因子參數（偏保守，調整後將即時儲存並重算本場）")
+                    cfg = {
+                        "win_w": 0.4,
+                        "place_w": 0.6,
+                        "confidence_runs": 50.0,
+                        "prior_strength": 50.0,
+                        "prior_win_rate": 8.0,
+                        "prior_place_rate": 28.0,
+                        "use_top4_if_available": True,
+                    }
+                    config2 = session.query(SystemConfig).filter_by(key="draw_stats_factor_config").first()
+                    if config2 and isinstance(config2.value, dict):
+                        v2 = config2.value
+                        if "win_w" in v2:
+                            cfg["win_w"] = float(v2["win_w"])
+                        if "place_w" in v2:
+                            cfg["place_w"] = float(v2["place_w"])
+                        if "confidence_runs" in v2:
+                            cfg["confidence_runs"] = float(v2["confidence_runs"])
+                        if "prior_strength" in v2:
+                            cfg["prior_strength"] = float(v2["prior_strength"])
+                        if "prior_win_rate" in v2:
+                            cfg["prior_win_rate"] = float(v2["prior_win_rate"])
+                        if "prior_place_rate" in v2:
+                            cfg["prior_place_rate"] = float(v2["prior_place_rate"])
+                        if "use_top4_if_available" in v2:
+                            cfg["use_top4_if_available"] = bool(v2["use_top4_if_available"])
+
+                    with st.form("draw_stats_factor_config_form"):
+                        c1, c2, c3, c4 = st.columns(4)
+                        win_w = c1.number_input("勝率權重", value=float(cfg["win_w"]), min_value=0.0, max_value=1.0, step=0.05)
+                        place_w = c2.number_input("上名/Top4 權重", value=float(cfg["place_w"]), min_value=0.0, max_value=1.0, step=0.05)
+                        prior_strength = c3.number_input("先驗強度(等價樣本)", value=float(cfg["prior_strength"]), min_value=0.0, max_value=500.0, step=1.0)
+                        confidence_runs = c4.number_input("信心折扣(越大越保守)", value=float(cfg["confidence_runs"]), min_value=0.0, max_value=500.0, step=1.0)
+
+                        c5, c6, c7 = st.columns(3)
+                        prior_win_rate = c5.number_input("先驗勝率(%)", value=float(cfg["prior_win_rate"]), min_value=0.0, max_value=100.0, step=0.5)
+                        prior_place_rate = c6.number_input("先驗上名/Top4(%)", value=float(cfg["prior_place_rate"]), min_value=0.0, max_value=100.0, step=0.5)
+                        use_top4_if_available = c7.checkbox("若有 Top4% 則優先使用", value=bool(cfg["use_top4_if_available"]))
+
+                        submitted = st.form_submit_button("💾 儲存參數並為本場重新計分", type="primary")
+                        if submitted:
+                            new_cfg = {
+                                "win_w": float(win_w),
+                                "place_w": float(place_w),
+                                "confidence_runs": float(confidence_runs),
+                                "prior_strength": float(prior_strength),
+                                "prior_win_rate": float(prior_win_rate),
+                                "prior_place_rate": float(prior_place_rate),
+                                "use_top4_if_available": bool(use_top4_if_available),
+                            }
+                            if not config2:
+                                config2 = SystemConfig(key="draw_stats_factor_config", description="檔位偏差：先驗/信心/權重")
+                                session.add(config2)
+                            config2.value = new_cfg
+                            session.commit()
+
+                            from scoring_engine.core import ScoringEngine
+                            engine = ScoringEngine(session)
+                            engine.score_race(selected_race_id)
+                            st.success(f"參數已儲存：{new_cfg}，並已重新計分。")
+                            st.rerun()
                     
             else:
                 st.warning("未找到計分條件數據。")
