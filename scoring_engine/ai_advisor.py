@@ -21,6 +21,7 @@ def default_ai_system_prompt() -> str:
         "你是資深數據分析顧問，任務是根據輸入的系統統計（命中率、因子缺失、因子重要性）提出可執行的建議。"
         "只輸出 JSON，必須符合指定 schema。"
         "建議以省資源、可逐步驗證為前提，不要要求大型重訓或高成本資料工程。"
+        "嚴禁提供任何投注/賭博/提高博彩收益的建議；只可就資料品質、因子工程、權重調整與統計驗證提出建議。"
     )
 
 
@@ -389,6 +390,7 @@ def build_ai_user_prompt(payload: Dict[str, Any], extra_instructions: str = "") 
         "請根據以下 JSON 輸入，提出可執行的因子建議（新增/優化/刪減/調權/補數據）。",
         "輸出必須為 JSON，必須符合 schema_hint 的結構（可省略不適用欄位，但 key 名稱要一致）。",
         "每條建議都要包含 evidence、proposal、validation，並控制建議數量在 10 條以內。",
+        "注意：請勿提供投注/賭博/博彩策略或回報相關建議；只針對資料品質、缺失原因、因子設計與權重調整提出建議。",
     ]
     if str(extra_instructions or "").strip():
         lines.append(str(extra_instructions).strip())
