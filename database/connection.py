@@ -179,6 +179,40 @@ def init_db():
     except Exception:
         pass
 
+    try:
+        from database.models import RaceDividend, RaceTrackCondition
+        from scoring_engine.track_conditions import normalize_going
+
+        session3 = Session()
+        try:
+            divs = session3.query(RaceDividend.race_id, RaceDividend.meta).all()
+            changed = 0
+            for rid, meta in divs:
+                if not isinstance(meta, dict):
+                    continue
+                going_raw, going_code = normalize_going(str(meta.get("going") or ""))
+                track_raw = str(meta.get("track") or "").strip()
+                if not (going_raw or track_raw):
+                    continue
+                tc = session3.query(RaceTrackCondition).filter_by(race_id=int(rid)).first()
+                if not tc:
+                    tc = RaceTrackCondition(race_id=int(rid), source="HKJC_LOCALRESULTS")
+                    session3.add(tc)
+                    changed += 1
+                if going_raw and (not str(getattr(tc, "going_raw", "") or "").strip()):
+                    tc.going_raw = going_raw
+                    tc.going_code = going_code or going_raw
+                    changed += 1
+                if track_raw and (not str(getattr(tc, "track_raw", "") or "").strip()):
+                    tc.track_raw = track_raw
+                    changed += 1
+            if changed:
+                session3.commit()
+        finally:
+            session3.close()
+    except Exception:
+        pass
+
 def get_session():
     """獲取資料庫 Session"""
     return Session()

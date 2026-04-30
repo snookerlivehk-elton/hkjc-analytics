@@ -719,6 +719,53 @@ with tab_ops:
                 finally:
                     session_upd.close()
 
+        st.subheader("🌦️ 回填場地狀況（賽後）")
+        st.caption("用途：把已入庫的「賽果與派彩」中 meta.going/meta.track 回填到 RaceTrackCondition（可作篩選條件），不需重新爬網。")
+        c_confirm, c_btn = st.columns([2, 3])
+        ok = _confirm_run(c_confirm, "backfill_going", label="輸入 RUN 以回填")
+        if c_btn.button("🌦️ 回填該日場地狀況", width="stretch", disabled=not ok):
+            target_date_str = selected_date.strftime("%Y/%m/%d")
+            session_bf = get_session()
+            try:
+                from datetime import datetime
+                from database.models import Race, RaceDividend, RaceTrackCondition
+                from scoring_engine.track_conditions import normalize_going
+                from sqlalchemy import func
+
+                races = (
+                    session_bf.query(Race.id)
+                    .filter(func.date(Race.race_date) == datetime.strptime(target_date_str, "%Y/%m/%d").date().isoformat())
+                    .all()
+                )
+                race_ids = [int(r[0]) for r in races if r and int(r[0] or 0) > 0]
+                if not race_ids:
+                    st.info("該日沒有任何賽事資料。")
+                else:
+                    divs = session_bf.query(RaceDividend.race_id, RaceDividend.meta).filter(RaceDividend.race_id.in_(race_ids)).all()
+                    updated = 0
+                    for rid, meta in divs:
+                        if not isinstance(meta, dict):
+                            continue
+                        going_raw, going_code = normalize_going(str(meta.get("going") or ""))
+                        track_raw = str(meta.get("track") or "").strip()
+                        if not (going_raw or track_raw):
+                            continue
+                        tc = session_bf.query(RaceTrackCondition).filter_by(race_id=int(rid)).first()
+                        if not tc:
+                            tc = RaceTrackCondition(race_id=int(rid), source="HKJC_LOCALRESULTS")
+                            session_bf.add(tc)
+                        tc.going_raw = going_raw or tc.going_raw
+                        tc.going_code = (going_code or going_raw) or tc.going_code
+                        tc.track_raw = track_raw or tc.track_raw
+                        tc.updated_at = datetime.now()
+                        updated += 1
+                    session_bf.commit()
+                    st.success(f"✅ 已回填 {updated} 場（{target_date_str}）")
+            except Exception as e:
+                st.error(f"❌ 回填失敗：{e}")
+            finally:
+                session_bf.close()
+
         st.subheader("⚡ SpeedPRO 能量分（手動備用）")
         st.caption("用途：當 cron 未成功抓到 SpeedPRO（速勢能量評估/狀態評級）時可手動觸發一次。建議先選日期，再選場次。")
         target_date_str = selected_date.strftime("%Y/%m/%d")

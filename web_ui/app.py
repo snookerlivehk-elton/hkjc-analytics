@@ -11,7 +11,7 @@ if root_path not in sys.path:
     sys.path.append(root_path)
 
 from database.connection import get_session, init_db
-from database.models import Race, RaceEntry, ScoringFactor, ScoringWeight, Horse, SystemConfig, RaceResult, RaceDividend
+from database.models import Race, RaceEntry, ScoringFactor, ScoringWeight, Horse, SystemConfig, RaceResult, RaceDividend, RaceTrackCondition
 from scoring_engine.core import ScoringEngine
 from scoring_engine.constants import DISABLED_FACTORS
 from scoring_engine.utils import estimate_win_probability
@@ -772,12 +772,17 @@ def main():
     col1.metric("跑道資訊", race.track_type if race.track_type else race.venue)
     col2.metric("班次", race.race_class or "N/A")
     col3.metric("路程", f"{race.distance}m" if race.distance else "N/A")
-    going = str(race.going or "").strip()
-    if going in ("草地", "泥地", "全天候", "TURF", "AW", "A/W", "ALL WEATHER", ""):
-        going_display = "N/A"
-    else:
-        going_display = going
-    col4.metric("場地狀況", going_display)
+    going_display = None
+    tc = session.query(RaceTrackCondition).filter_by(race_id=int(selected_race_id)).first()
+    if tc and str(getattr(tc, "going_raw", "") or "").strip():
+        going_display = str(getattr(tc, "going_raw", "") or "").strip()
+    if not going_display:
+        div0 = session.query(RaceDividend).filter_by(race_id=int(selected_race_id)).first()
+        meta0 = div0.meta if (div0 and isinstance(div0.meta, dict)) else {}
+        g0 = str(meta0.get("going") or "").strip()
+        if g0:
+            going_display = g0
+    col4.metric("場地狀況", going_display or "N/A")
 
     # 數據加載與顯示
     weight_map = st.session_state.get("active_weight_map", {})
@@ -972,6 +977,7 @@ def main():
                     with st.expander("📉 會員組合反向表現（淘汰準確率）", expanded=False):
                         st.caption("以 Bottom35%（按每場參賽馬數計算 N）評估：你淘汰的馬匹是否真的不入 Top4。")
                         from sqlalchemy import func
+                        from datetime import date, timedelta
                         from scoring_engine.diagnostics import compute_elim_n, reverse_stats_for_race
 
                         bottom_pct = 35.0
@@ -1206,6 +1212,208 @@ def main():
                                 c2.metric("淘汰總匹數", vp)
                                 c3.metric("淘汰準確率", f"{(vtn / vp):.1%}" if vp else "-")
                                 c4.metric("錯殺率", f"{(vfp / vp):.1%}" if vp else "-")
+
+                with st.expander("💰 位置Q（PQ(3)）派彩回報率", expanded=False):
+                    st.caption("以會員組合 Top5 快照的 Top3 作為 3 注位置Q（A-B/A-C/B-C），每注 $10（每場成本 $30）。")
+                    from sqlalchemy import func
+                    from datetime import date, timedelta
+                    from database.models import PredictionTop5
+                    from scoring_engine.settlements import get_plugins
+
+                    plugin_key = "hkjc.place_quinella.pq3_v1"
+                    plugins = {str(getattr(p, "plugin_key", "")): p for p in (get_plugins() or [])}
+                    plugin = plugins.get(plugin_key)
+
+                    end_default = date.today()
+                    start_default = end_default - timedelta(days=30)
+                    d1, d2 = st.date_input("統計日期範圍", value=(start_default, end_default), key="member_pq3_range")
+                    if isinstance(d1, date) and isinstance(d2, date) and d1 > d2:
+                        d1, d2 = d2, d1
+
+                    active_name = st.session_state.get("selected_preset_name", "（手動調整）")
+                    preset_options = [p.get("name") for p in (presets or []) if isinstance(p, dict) and p.get("name")]
+                    if active_name != "（手動調整）" and active_name in preset_options:
+                        preset_default = active_name
+                    elif preset_options:
+                        preset_default = str(preset_options[0])
+                    else:
+                        preset_default = ""
+                    preset_sel = st.selectbox(
+                        "組合",
+                        preset_options,
+                        index=(preset_options.index(preset_default) if preset_default in preset_options else 0),
+                        key="member_pq3_preset",
+                    )
+
+                    c_f1, c_f2, c_f3, c_f4 = st.columns(4)
+                    venue_sel = c_f1.selectbox("地點", ["全部", "沙田", "跑馬地"], index=0, key="member_pq3_venue")
+                    surface_sel = c_f2.selectbox("草/泥", ["全部", "草地", "泥地"], index=0, key="member_pq3_surface")
+                    course_rows = (
+                        session.query(Race.course_type)
+                        .filter(Race.course_type != None)
+                        .distinct()
+                        .order_by(Race.course_type.asc())
+                        .all()
+                    )
+                    course_opts = ["全部"] + [str(r[0]) for r in course_rows if r and str(r[0] or "").strip()]
+                    course_sel = c_f3.selectbox("跑道", course_opts, index=0, key="member_pq3_course")
+                    going_rows = (
+                        session.query(RaceTrackCondition.going_code)
+                        .distinct()
+                        .order_by(RaceTrackCondition.going_code.asc())
+                        .all()
+                    )
+                    going_opts = ["全部"] + [str(r[0]) for r in going_rows if r and str(r[0] or "").strip()]
+                    going_sel = c_f4.selectbox("場地狀況（賽後）", going_opts, index=0, key="member_pq3_going")
+
+                    if not preset_sel:
+                        st.info("未找到任何已儲存權重組合。")
+                    elif plugin is None:
+                        st.error("位置Q 結算插件未載入。")
+                    else:
+                        q = (
+                            session.query(
+                                PredictionTop5.race_id,
+                                PredictionTop5.race_date,
+                                PredictionTop5.race_no,
+                                PredictionTop5.top5,
+                                PredictionTop5.meta,
+                                Race.venue,
+                                Race.surface,
+                                Race.course_type,
+                                RaceTrackCondition.going_code,
+                                RaceTrackCondition.going_raw,
+                            )
+                            .join(Race, Race.id == PredictionTop5.race_id)
+                            .outerjoin(RaceTrackCondition, RaceTrackCondition.race_id == Race.id)
+                            .filter(PredictionTop5.predictor_type == "preset")
+                            .filter(PredictionTop5.member_email == str(member_email).strip().lower())
+                            .filter(PredictionTop5.predictor_key == str(preset_sel))
+                            .filter(func.date(PredictionTop5.race_date) >= d1.isoformat())
+                            .filter(func.date(PredictionTop5.race_date) <= d2.isoformat())
+                        )
+                        if venue_sel != "全部":
+                            q = q.filter(Race.venue == ("HV" if venue_sel == "跑馬地" else "ST"))
+                        if surface_sel != "全部":
+                            q = q.filter(Race.surface == surface_sel)
+                        if course_sel != "全部":
+                            q = q.filter(Race.course_type == course_sel)
+                        if going_sel != "全部":
+                            q = q.filter(RaceTrackCondition.going_code == going_sel)
+
+                        snap_rows = q.order_by(PredictionTop5.race_date.asc(), PredictionTop5.race_no.asc()).all()
+                        if not snap_rows:
+                            st.info("此範圍內沒有找到可用的會員組合 Top5 快照（或不符合篩選條件）。")
+                        else:
+                            race_ids = [int(r[0]) for r in snap_rows]
+                            rr_rows = (
+                                session.query(RaceEntry.race_id, RaceEntry.horse_no, RaceResult.rank)
+                                .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
+                                .filter(RaceEntry.race_id.in_(race_ids))
+                                .filter(RaceResult.rank != None)
+                                .order_by(RaceEntry.race_id.asc(), RaceResult.rank.asc())
+                                .all()
+                            )
+                            actual_by_race = {}
+                            for rid, hn, rk in rr_rows:
+                                a = actual_by_race.get(int(rid))
+                                if a is None:
+                                    a = []
+                                    actual_by_race[int(rid)] = a
+                                if len(a) < 5:
+                                    a.append(int(hn or 0))
+
+                            div_rows = session.query(RaceDividend.race_id, RaceDividend.dividends).filter(RaceDividend.race_id.in_(race_ids)).all()
+                            dividends_by_race = {int(rid): divs for rid, divs in div_rows if isinstance(divs, list)}
+
+                            out_rows = []
+                            tot_payout = 0.0
+                            tot_cost = 0.0
+                            tot_profit = 0.0
+                            tot_hits = 0
+                            hit_races = 0
+                            stake_per_bet = 10.0
+
+                            for rid, rdt, rno, top5, meta, v, surf, course, gcode, graw in snap_rows:
+                                pred_top5 = [int(x) for x in (top5 or []) if str(x).strip().isdigit()]
+                                meta0 = meta if isinstance(meta, dict) else {}
+                                act = meta0.get("actual_top5") if isinstance(meta0.get("actual_top5"), list) else actual_by_race.get(int(rid), [])
+                                divs = dividends_by_race.get(int(rid))
+
+                                stl = None
+                                stl_map = meta0.get("settlements") if isinstance(meta0.get("settlements"), dict) else {}
+                                if isinstance(stl_map.get(plugin_key), dict):
+                                    stl = stl_map.get(plugin_key)
+                                if stl is None:
+                                    stl = plugin.settle(race_id=int(rid), pred_top5=pred_top5, actual_top5=act, dividends=divs, settled_at=datetime.now().isoformat())
+
+                                if not isinstance(stl, dict):
+                                    continue
+
+                                payout = float(stl.get("payout") or 0.0)
+                                cost = float(stl.get("cost") or (stake_per_bet * 3.0))
+                                profit = float(stl.get("profit") or (payout - cost))
+                                roi = stl.get("roi")
+                                hit_count = int(stl.get("hit_count") or 0)
+                                bets = stl.get("bets") if isinstance(stl.get("bets"), list) else []
+                                hits_desc = []
+                                for b in bets:
+                                    if not isinstance(b, dict):
+                                        continue
+                                    pair = str(b.get("pair") or "")
+                                    dv = b.get("dividend")
+                                    hit = bool(b.get("hit") is True)
+                                    if hit:
+                                        hits_desc.append(f"{pair}={dv}")
+
+                                tot_payout += payout
+                                tot_cost += cost
+                                tot_profit += profit
+                                tot_hits += hit_count
+                                if hit_count > 0:
+                                    hit_races += 1
+
+                                out_rows.append(
+                                    {
+                                        "賽日": (rdt.date().isoformat() if hasattr(rdt, "date") else str(rdt)),
+                                        "場次": int(rno or 0),
+                                        "地點": ("跑馬地" if str(v or "").upper() == "HV" else "沙田"),
+                                        "草/泥": (str(surf or "") or "-"),
+                                        "跑道": (str(course or "") or "-"),
+                                        "場地狀況": (str(graw or "") or str(gcode or "") or "N/A"),
+                                        "預測Top3": ",".join(str(x) for x in (stl.get("pred_top3") or [])),
+                                        "實際三甲": ",".join(str(x) for x in (stl.get("actual_top3") or [])),
+                                        "命中注數": hit_count,
+                                        "命中派彩": "; ".join(hits_desc) if hits_desc else "",
+                                        "回報(HK$)": round(payout, 1),
+                                        "成本(HK$)": round(cost, 1),
+                                        "淨回報(HK$)": round(profit, 1),
+                                        "ROI": (round(float(roi), 4) if isinstance(roi, float) else None),
+                                    }
+                                )
+
+                            if not out_rows:
+                                st.info("此範圍內沒有可結算的 PQ(3) 資料（可能缺賽果/派彩）。")
+                            else:
+                                m1, m2, m3, m4, m5 = st.columns(5)
+                                m1.metric("樣本(場)", len(out_rows))
+                                m2.metric("命中場數", hit_races)
+                                m3.metric("命中注數", tot_hits)
+                                m4.metric("累計回報(HK$)", f"{tot_payout:.1f}")
+                                roi_total = (tot_profit / tot_cost) if tot_cost > 0 else None
+                                m5.metric("回報率(淨/成本)", f"{roi_total:.1%}" if roi_total is not None else "-")
+
+                                df_pq3 = pd.DataFrame(out_rows)
+                                df_pq3["ROI"] = df_pq3["ROI"].map(lambda x: f"{float(x):.1%}" if x is not None else "-")
+                                st.dataframe(df_pq3, width="stretch", hide_index=True)
+                                st.download_button(
+                                    "下載 CSV",
+                                    data=df_pq3.to_csv(index=False).encode("utf-8"),
+                                    file_name=f"pq3_roi_{str(member_email).strip().lower()}_{str(preset_sel)}_{d1.isoformat()}_{d2.isoformat()}.csv",
+                                    mime="text/csv",
+                                    width="content",
+                                    key="member_pq3_csv",
+                                )
 
                 with st.expander("🔖 本場各組合 Top5 預測", expanded=False):
                     pr = []
