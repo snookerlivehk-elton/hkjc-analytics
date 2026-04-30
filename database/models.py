@@ -58,6 +58,7 @@ class Race(Base):
     distance = Column(Integer)
     track_type = Column(String(20))  # Turf, All Weather
     course_type = Column(String(10))  # A, B, C, C+3 etc.
+    surface = Column(String(20), index=True)  # 草地 / 泥地(全天候)
     going = Column(String(20))  # Good, Yielding, etc.
     prize_money = Column(Float)
     created_at = Column(DateTime, default=datetime.now)
@@ -65,6 +66,20 @@ class Race(Base):
     entries = relationship("RaceEntry", back_populates="race")
     
     __table_args__ = (UniqueConstraint('race_date', 'venue', 'race_no', name='_race_date_venue_no_uc'),)
+
+
+class RaceTrackCondition(Base):
+    __tablename__ = "race_track_conditions"
+    id = Column(Integer, primary_key=True)
+    race_id = Column(Integer, ForeignKey("races.id"), unique=True, index=True, nullable=False)
+    source = Column(String(30), default="HKJC_LOCALRESULTS")
+    going_raw = Column(String(50))
+    going_code = Column(String(20), index=True)
+    track_raw = Column(String(50))
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    race = relationship("Race")
 
 class RaceEntry(Base):
     """馬匹出賽排位資料"""

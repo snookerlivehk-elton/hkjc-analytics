@@ -85,7 +85,9 @@ async def run_daily_scraper():
                 race_class=race_info.get("race_class", ""),
                 distance=race_info.get("distance", 0),
                 going=race_info.get("going", ""),
-                track_type=race_info.get("track_type", "")
+                track_type=race_info.get("track_type", ""),
+                surface=race_info.get("surface", ""),
+                course_type=race_info.get("course_type", ""),
             )
             
             print(f">>> 正在同步場次 {race.race_no} ({venue} | {race.distance}m | {race.going}) 的馬匹數據...")

@@ -89,6 +89,20 @@ def init_db():
     except Exception:
         pass
     
+    try:
+        inspector = inspect(engine)
+        cols = {c["name"] for c in inspector.get_columns("races")}
+        if "surface" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE races ADD COLUMN surface VARCHAR(20)"))
+            try:
+                with engine.begin() as conn:
+                    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_races_surface ON races (surface)"))
+            except Exception:
+                pass
+    except Exception:
+        pass
+
     # 自動預填/補齊權重配置 (避免既有資料庫因新增/改名因子而無法顯示)
     from database.models import ScoringWeight
     session = Session()
@@ -127,6 +141,43 @@ def init_db():
         print(f"預填權重失敗: {e}")
     finally:
         session.close()
+
+    try:
+        from database.models import Race
+        import re
+
+        session2 = Session()
+        try:
+            q = session2.query(Race)
+            changed = 0
+            for r in q.all():
+                tt = str(getattr(r, "track_type", "") or "")
+                go = str(getattr(r, "going", "") or "")
+
+                if not (getattr(r, "surface", None) and str(getattr(r, "surface") or "").strip()):
+                    if any(x in tt for x in ["全天候", "ALL WEATHER", "A/W", "AW", "泥地"]):
+                        r.surface = "泥地"
+                        changed += 1
+                    elif any(x in tt for x in ["草地", "TURF"]):
+                        r.surface = "草地"
+                        changed += 1
+                    elif go in {"草地", "泥地"}:
+                        r.surface = go
+                        changed += 1
+
+                if not (getattr(r, "course_type", None) and str(getattr(r, "course_type") or "").strip()):
+                    if "草地" in tt:
+                        m = re.search(r"\"([A-Z0-9\\+]+)\"", tt)
+                        if m:
+                            r.course_type = str(m.group(1))
+                            changed += 1
+
+            if changed:
+                session2.commit()
+        finally:
+            session2.close()
+    except Exception:
+        pass
 
 def get_session():
     """獲取資料庫 Session"""

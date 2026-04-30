@@ -9,10 +9,11 @@ if root_path not in sys.path:
     sys.path.append(root_path)
 
 from database.connection import init_db, get_session
-from database.models import Race, RaceEntry, RaceResult, RaceDividend
+from database.models import Race, RaceEntry, RaceResult, RaceDividend, RaceTrackCondition
 from data_scraper.local_results import LocalResultsScraper
 from scoring_engine.member_stats import update_all_members_preset_stats_for_race_date
 from scoring_engine.prediction_snapshots import finalize_prediction_top5_hits_for_race_date
+from scoring_engine.track_conditions import normalize_going
 
 
 def parse_finish_time_to_seconds(s: str):
@@ -89,6 +90,18 @@ def main():
             session.add(div)
         div.meta = meta
         div.dividends = payload.get("dividends") or []
+
+        going_raw, going_code = normalize_going(str(meta.get("going") or ""))
+        track_raw = str(meta.get("track") or "").strip()
+        if going_raw or track_raw:
+            tc = session.query(RaceTrackCondition).filter_by(race_id=race.id).first()
+            if not tc:
+                tc = RaceTrackCondition(race_id=race.id, source="HKJC_LOCALRESULTS")
+                session.add(tc)
+            tc.going_raw = going_raw or None
+            tc.going_code = going_code or None
+            tc.track_raw = track_raw or None
+            tc.updated_at = datetime.now()
 
         results = payload.get("results") or []
         for r in results:

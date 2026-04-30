@@ -452,7 +452,41 @@ with tab_preset:
                 if not preset_defs:
                     st.info("目前未找到任何會員已儲存組合。")
                 else:
-                    race_rows = (
+                    from database.models import RaceTrackCondition
+
+                    going_rows = (
+                        session.query(RaceTrackCondition.going_code)
+                        .join(Race, Race.id == RaceTrackCondition.race_id)
+                        .filter(func.date(Race.race_date) >= d1.isoformat())
+                        .filter(func.date(Race.race_date) <= d2.isoformat())
+                        .distinct()
+                        .order_by(RaceTrackCondition.going_code.asc())
+                        .all()
+                    )
+                    going_opts = ["全部"] + [str(r[0]) for r in going_rows if r and str(r[0] or "").strip()]
+                    going_sel = st.selectbox("場地狀況（賽後）", going_opts, index=0)
+
+                    venue_sel = st.selectbox("地點", ["全部", "沙田", "跑馬地"], index=0)
+                    surface_rows = (
+                        session.query(Race.surface)
+                        .filter(Race.surface != None)
+                        .distinct()
+                        .order_by(Race.surface.asc())
+                        .all()
+                    )
+                    surface_opts = ["全部"] + [str(r[0]) for r in surface_rows if r and str(r[0] or "").strip()]
+                    surface_sel = st.selectbox("草/泥", surface_opts, index=0)
+                    course_rows = (
+                        session.query(Race.course_type)
+                        .filter(Race.course_type != None)
+                        .distinct()
+                        .order_by(Race.course_type.asc())
+                        .all()
+                    )
+                    course_opts = ["全部"] + [str(r[0]) for r in course_rows if r and str(r[0] or "").strip()]
+                    course_sel = st.selectbox("跑道", course_opts, index=0)
+
+                    q_races = (
                         session.query(Race.id, Race.race_date, Race.race_no)
                         .join(RaceEntry, RaceEntry.race_id == Race.id)
                         .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
@@ -460,9 +494,18 @@ with tab_preset:
                         .filter(func.date(Race.race_date) >= d1.isoformat())
                         .filter(func.date(Race.race_date) <= d2.isoformat())
                         .distinct()
-                        .order_by(Race.race_date.asc(), Race.race_no.asc(), Race.id.asc())
-                        .all()
                     )
+                    if going_sel != "全部":
+                        q_races = q_races.join(RaceTrackCondition, RaceTrackCondition.race_id == Race.id).filter(
+                            RaceTrackCondition.going_code == going_sel
+                        )
+                    if venue_sel != "全部":
+                        q_races = q_races.filter(Race.venue == ("HV" if venue_sel == "跑馬地" else "ST"))
+                    if surface_sel != "全部":
+                        q_races = q_races.filter(Race.surface == surface_sel)
+                    if course_sel != "全部":
+                        q_races = q_races.filter(Race.course_type == course_sel)
+                    race_rows = q_races.order_by(Race.race_date.asc(), Race.race_no.asc(), Race.id.asc()).all()
                     race_ids = [int(r[0]) for r in race_rows if r and int(r[0] or 0) > 0]
                     if not race_ids:
                         st.info("選定範圍內沒有任何已抓取賽果的場次。")

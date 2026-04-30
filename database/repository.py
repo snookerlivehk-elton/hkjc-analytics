@@ -39,7 +39,18 @@ class RacingRepository:
             self.session.flush()
         return trainer
 
-    def create_race(self, race_date: datetime, venue: str, race_no: int, race_class: str = "", distance: int = 0, going: str = "", track_type: str = "") -> Race:
+    def create_race(
+        self,
+        race_date: datetime,
+        venue: str,
+        race_no: int,
+        race_class: str = "",
+        distance: int = 0,
+        going: str = "",
+        track_type: str = "",
+        surface: str = "",
+        course_type: str = "",
+    ) -> Race:
         race_id = f"{race_date.strftime('%Y%m%d')}-{race_no}"
         race = self.session.query(Race).filter_by(race_id=race_id).first()
         if not race:
@@ -51,7 +62,9 @@ class RacingRepository:
                 race_class=race_class,
                 distance=distance,
                 going=going,
-                track_type=track_type
+                track_type=track_type,
+                surface=str(surface or "").strip() or None,
+                course_type=str(course_type or "").strip() or None,
             )
             self.session.add(race)
             self.session.flush()
@@ -59,8 +72,14 @@ class RacingRepository:
             # 如果賽事已存在，更新細節
             race.race_class = race_class
             race.distance = distance
-            race.going = going
-            race.track_type = track_type
+            if str(going or "").strip():
+                race.going = going
+            if str(track_type or "").strip():
+                race.track_type = track_type
+            if str(surface or "").strip():
+                race.surface = str(surface).strip()
+            if str(course_type or "").strip():
+                race.course_type = str(course_type).strip()
             self.session.flush()
         return race
 
