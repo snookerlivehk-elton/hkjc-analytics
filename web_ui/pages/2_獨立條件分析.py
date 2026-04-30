@@ -733,16 +733,29 @@ else:
                     with st.expander("⚙️ 調整樣本下限/可信度與 fallback 規則 (調整後將即時儲存並重算)", expanded=False):
                         from database.models import SystemConfig
 
-                        cfg = {"min_samples": 3, "confidence_runs": 8, "fallback_strategy": "A_B_C"}
+                        cfg = {
+                            "min_samples": 3,
+                            "confidence_runs": 12.0,
+                            "prior_strength": 12.0,
+                            "fallback_strategy": "A_B_C",
+                            "use_quantile": 0.2,
+                            "pct_tau": 0.012,
+                        }
                         config = session.query(SystemConfig).filter_by(key="horse_time_perf_config").first()
                         if config and isinstance(config.value, dict):
                             v = config.value
                             if "min_samples" in v:
                                 cfg["min_samples"] = int(v["min_samples"])
                             if "confidence_runs" in v:
-                                cfg["confidence_runs"] = int(v["confidence_runs"])
+                                cfg["confidence_runs"] = float(v["confidence_runs"])
+                            if "prior_strength" in v:
+                                cfg["prior_strength"] = float(v["prior_strength"])
                             if "fallback_strategy" in v:
                                 cfg["fallback_strategy"] = str(v["fallback_strategy"])
+                            if "use_quantile" in v:
+                                cfg["use_quantile"] = float(v["use_quantile"])
+                            if "pct_tau" in v:
+                                cfg["pct_tau"] = float(v["pct_tau"])
 
                         fs_map = {
                             "A→B→C": "A_B_C",
@@ -752,17 +765,26 @@ else:
                         cur_fs_label = next((k for k, v in fs_map.items() if v == cfg["fallback_strategy"]), "A→B→C")
 
                         with st.form("horse_time_perf_config_form"):
-                            c1, c2, c3 = st.columns(3)
+                            st.caption("本因子會以同程完成時間的 P20（較保守）作代表值；並以 gap_pct（相對差距）轉換成分數，避免不同路程用固定秒差造成失真。")
+                            c1, c2, c3, c4 = st.columns(4)
                             min_samples = c1.number_input("樣本下限 N", value=int(cfg["min_samples"]), min_value=0, max_value=30, step=1)
-                            confidence_runs = c2.number_input("可信度滿分樣本", value=int(cfg["confidence_runs"]), min_value=1, max_value=50, step=1)
-                            fs_label = c3.selectbox("Fallback 規則", list(fs_map.keys()), index=list(fs_map.keys()).index(cur_fs_label))
+                            use_q = c2.number_input("代表值分位數", value=float(cfg["use_quantile"]), min_value=0.0, max_value=1.0, step=0.05)
+                            pct_tau = c3.number_input("gap_pct 衰減尺度", value=float(cfg["pct_tau"]), min_value=0.001, max_value=0.050, step=0.001, format="%.3f")
+                            fs_label = c4.selectbox("Fallback 規則", list(fs_map.keys()), index=list(fs_map.keys()).index(cur_fs_label))
+
+                            c5, c6 = st.columns(2)
+                            prior_strength = c5.number_input("先驗強度(等價場數，越大越保守)", value=float(cfg["prior_strength"]), min_value=0.0, max_value=200.0, step=1.0)
+                            confidence_runs = c6.number_input("信心折扣(越大越保守)", value=float(cfg["confidence_runs"]), min_value=0.0, max_value=200.0, step=1.0)
 
                             submitted = st.form_submit_button("💾 儲存參數並為本場重新計分", type="primary")
                             if submitted:
                                 new_cfg = {
                                     "min_samples": int(min_samples),
-                                    "confidence_runs": int(confidence_runs),
+                                    "confidence_runs": float(confidence_runs),
+                                    "prior_strength": float(prior_strength),
                                     "fallback_strategy": str(fs_map[fs_label]),
+                                    "use_quantile": float(use_q),
+                                    "pct_tau": float(pct_tau),
                                 }
                                 if not config:
                                     config = SystemConfig(key="horse_time_perf_config", description="馬匹完成時間(同路程)：樣本/可信度/fallback")

@@ -341,7 +341,15 @@ class FactorCalculator:
             race_date = datetime.now()
         cutoff_dt = self._race_cutoff_dt()
 
-        cfg = {"min_samples": 3, "confidence_runs": 8, "fallback_strategy": "A_B_C", "window_days": 720}
+        cfg = {
+            "min_samples": 3,
+            "confidence_runs": 12.0,
+            "prior_strength": 12.0,
+            "fallback_strategy": "A_B_C",
+            "window_days": 720,
+            "use_quantile": 0.2,
+            "pct_tau": 0.012,
+        }
         try:
             config = self.session.query(SystemConfig).filter_by(key="horse_time_perf_config").first()
             if config and isinstance(config.value, dict):
@@ -349,22 +357,64 @@ class FactorCalculator:
                 if "min_samples" in v:
                     cfg["min_samples"] = int(v["min_samples"])
                 if "confidence_runs" in v:
-                    cfg["confidence_runs"] = int(v["confidence_runs"])
+                    cfg["confidence_runs"] = float(v["confidence_runs"])
+                if "prior_strength" in v:
+                    cfg["prior_strength"] = float(v["prior_strength"])
                 if "fallback_strategy" in v:
                     cfg["fallback_strategy"] = str(v["fallback_strategy"])
                 if "window_days" in v:
                     cfg["window_days"] = int(v["window_days"])
+                if "use_quantile" in v:
+                    cfg["use_quantile"] = float(v["use_quantile"])
+                if "pct_tau" in v:
+                    cfg["pct_tau"] = float(v["pct_tau"])
         except Exception:
             pass
 
         if cfg["min_samples"] < 0:
             cfg["min_samples"] = 0
-        if cfg["confidence_runs"] <= 0:
-            cfg["confidence_runs"] = 1
+        if float(cfg["confidence_runs"] or 0.0) <= 0:
+            cfg["confidence_runs"] = 1.0
+        if float(cfg["prior_strength"] or 0.0) < 0:
+            cfg["prior_strength"] = 0.0
         if cfg["window_days"] < 0:
             cfg["window_days"] = 0
         if cfg["fallback_strategy"] not in ("A_B_C", "B_C", "C"):
             cfg["fallback_strategy"] = "A_B_C"
+        try:
+            qv = float(cfg["use_quantile"])
+        except Exception:
+            qv = 0.2
+        if qv < 0.0:
+            qv = 0.0
+        if qv > 1.0:
+            qv = 1.0
+        cfg["use_quantile"] = qv
+        try:
+            pct_tau = float(cfg["pct_tau"])
+        except Exception:
+            pct_tau = 0.012
+        if pct_tau <= 0:
+            pct_tau = 0.012
+        cfg["pct_tau"] = pct_tau
+
+        def _quantile(sorted_vals, q: float):
+            n = len(sorted_vals or [])
+            if n <= 0:
+                return None
+            if n == 1:
+                return float(sorted_vals[0])
+            pos = float(q) * float(n - 1)
+            lo = int(math.floor(pos))
+            hi = int(math.ceil(pos))
+            if lo < 0:
+                lo = 0
+            if hi >= n:
+                hi = n - 1
+            if lo == hi:
+                return float(sorted_vals[lo])
+            w = pos - float(lo)
+            return float(sorted_vals[lo]) * (1.0 - float(w)) + float(sorted_vals[hi]) * float(w)
 
         cutoff_date = (race_date - timedelta(days=cfg["window_days"])) if cfg["window_days"] > 0 else None
 
@@ -422,7 +472,8 @@ class FactorCalculator:
             chosen_mode = ""
             for m, ts in modes:
                 if len(ts) >= cfg["min_samples"]:
-                    chosen = min(ts)
+                    tss = sorted([float(x) for x in ts])
+                    chosen = _quantile(tss, float(cfg["use_quantile"]))
                     chosen_n = len(ts)
                     chosen_mode = m
                     break
@@ -432,7 +483,7 @@ class FactorCalculator:
                 best_n[i] = chosen_n
                 best_mode[i] = chosen_mode
 
-        sig = f"N{cfg['min_samples']}|C{cfg['confidence_runs']}|{cfg['fallback_strategy']}"
+        sig = f"Q{int(float(cfg['use_quantile']) * 100)}|N{cfg['min_samples']}|PS{float(cfg['prior_strength']):.0f}|C{float(cfg['confidence_runs']):.0f}|T{float(cfg['pct_tau']):.4f}|{cfg['fallback_strategy']}"
 
         avail = [v for v in best_secs if v is not None]
         if not avail:
@@ -441,7 +492,6 @@ class FactorCalculator:
             return raw_scores, display
 
         t_min = min(avail)
-        tau = 1.0
 
         raw_vals = []
         displays = []
@@ -452,15 +502,21 @@ class FactorCalculator:
                 displays.append(f"無賽績參考 | {sig}")
                 continue
 
-            gap = t - t_min
-            base = math.exp(-gap / tau) if gap >= 0 else 1.0
-            conf = min(best_n[i] / float(cfg["confidence_runs"]), 1.0)
-            raw = base * conf
+            gap = float(t) - float(t_min)
+            gap_pct = (gap / float(t_min)) if float(t_min) > 0 else 0.0
+            if gap_pct < 0.0:
+                gap_pct = 0.0
+            base = math.exp(-float(gap_pct) / float(cfg["pct_tau"])) if float(cfg["pct_tau"]) > 0 else 1.0
+            n_eff = float(best_n[i] or 0)
+            ps = float(cfg["prior_strength"] or 0.0)
+            cr = float(cfg["confidence_runs"] or 1.0)
+            conf = ((n_eff + ps) / (n_eff + ps + cr)) if (n_eff + ps + cr) > 0 else 0.0
+            raw = float(base) * float(conf)
             raw_vals.append(raw)
 
             head = track_key if best_mode[i] == "A" else (surface if best_mode[i] == "B" else "同程")
             displays.append(
-                f"{head}{distance}m | best{t:.2f}s | gap+{gap:.2f}s | n{best_n[i]} | conf{conf:.2f} | {best_mode[i]} | {sig}"
+                f"{head}{distance}m | p{int(float(cfg['use_quantile'])*100)}={t:.2f}s | gap+{gap:.2f}s({gap_pct*100:.2f}%) | n{best_n[i]} | conf{conf:.2f} | {best_mode[i]} | {sig}"
             )
 
         non_missing = [v for v in raw_vals if v is not None]
