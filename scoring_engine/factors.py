@@ -21,13 +21,6 @@ class FactorCalculator:
             return pd.Series(0.0, index=self.df.index), pd.Series("無數據", index=self.df.index)
 
 
-def get_available_factors():
-    out = set()
-    for name in dir(FactorCalculator):
-        if name.startswith("_calculate_"):
-            out.add(name.replace("_calculate_", "", 1))
-    return out
-
     def _to_int(self, v, default=0):
         try:
             if v is None:
@@ -216,7 +209,6 @@ def get_available_factors():
             displays.append(f"{str_global} | {str_horse}")
             
         return pd.Series(scores, index=self.df.index), pd.Series(displays, index=self.df.index)
-
     # 2. 馬匹分段時間＋完成時間 (Horse Time Perf)
     def _calculate_horse_time_perf(self):
         from datetime import datetime, timedelta
@@ -1286,3 +1278,11 @@ def get_available_factors():
             )
 
         return pd.Series(scores, index=self.df.index), pd.Series(displays, index=self.df.index)
+
+
+def get_available_factors():
+    out = set()
+    for name in dir(FactorCalculator):
+        if name.startswith("_calculate_"):
+            out.add(name.replace("_calculate_", "", 1))
+    return out
