@@ -12,12 +12,20 @@ from database.models import SystemConfig, Race, RaceEntry, RaceResult, ScoringFa
 
 STATS_START_DATE = datetime(2026, 4, 8)
 STATS_WINDOW_DAYS = 720
-CURRENT_POLICY = {
+LEGACY_POLICY = {
     "start_date": STATS_START_DATE.date().isoformat(),
     "window_days": int(STATS_WINDOW_DAYS),
     "cmp": "date",
     "v": 3,
     "metrics": ["WIN", "P", "Q1", "PQ", "T3E", "T3", "F4", "F4Q", "B5W", "B5P"],
+}
+CURRENT_POLICY = {
+    "start_date": STATS_START_DATE.date().isoformat(),
+    "window_days": int(STATS_WINDOW_DAYS),
+    "cmp": "date",
+    "v": 4,
+    "metrics": ["WIN", "P", "Q1", "PQ", "T3E", "T3", "F4", "F4Q", "B5W", "B5P"],
+    "tie_break": "horse_no",
 }
 
 LEGACY_ELIM_BOTTOM_PCTS = [10, 15, 20, 25, 30, 35, 40, 50]
@@ -90,13 +98,14 @@ def _ranked_horses_for_race(session: Session, race_id: int, weight_map: Dict[str
         if eid in totals:
             totals[eid] += float(score or 0.0) * float(weights.get(str(factor_name), 0.0))
 
-    ranked = sorted(totals.items(), key=lambda x: (-x[1], x[0]))
-    out = []
-    for eid, _ in ranked:
+    items: List[tuple[int, float]] = []
+    for eid in entry_ids:
         hn = entry_id_to_no.get(int(eid))
-        if hn is not None and int(hn or 0) > 0:
-            out.append(int(hn))
-    return out
+        if hn is None or int(hn or 0) <= 0:
+            continue
+        items.append((int(hn), float(totals.get(int(eid), 0.0))))
+    items.sort(key=lambda x: (-x[1], x[0]))
+    return [hn for hn, _ in items]
 
 
 def load_member_preset_stats(session: Session, email: str) -> Dict[str, Any]:
@@ -108,7 +117,7 @@ def load_member_preset_stats(session: Session, email: str) -> Dict[str, Any]:
     if cfg and isinstance(cfg.value, dict):
         out = {}
         for k, v in cfg.value.items():
-            if isinstance(v, dict) and v.get("policy") == CURRENT_POLICY:
+            if isinstance(v, dict) and v.get("policy") in (CURRENT_POLICY, LEGACY_POLICY):
                 out[k] = v
         return out
     return {}
@@ -135,6 +144,75 @@ def delete_member_preset_stats(session: Session, email: str, preset_name: str) -
     if n in stats:
         stats.pop(n, None)
         save_member_preset_stats(session, e, stats)
+
+
+def rebuild_member_preset_stats(
+    session: Session,
+    email: str,
+    presets: List[Dict[str, Any]],
+    d1: datetime,
+    d2: datetime,
+) -> Dict[str, Any]:
+    e = str(email or "").strip().lower()
+    if not e:
+        return {}
+    now = datetime.now().isoformat()
+
+    races = (
+        session.query(Race)
+        .join(RaceEntry, RaceEntry.race_id == Race.id)
+        .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
+        .filter(RaceResult.rank != None)
+        .filter(func.date(Race.race_date) >= d1.date().isoformat())
+        .filter(func.date(Race.race_date) <= d2.date().isoformat())
+        .group_by(Race.id)
+        .having(func.count(RaceResult.id) >= 5)
+        .order_by(func.date(Race.race_date).asc(), Race.race_no.asc(), Race.id.asc())
+        .all()
+    )
+
+    out: Dict[str, Any] = {}
+    for p in (presets or [])[:3]:
+        name = str(p.get("name") or "").strip()
+        weights = p.get("weights") if isinstance(p.get("weights"), dict) else {}
+        if not name:
+            continue
+        st = {
+            "races": 0,
+            "win": 0,
+            "p": 0,
+            "q1": 0,
+            "pq": 0,
+            "t3e": 0,
+            "t3": 0,
+            "f4": 0,
+            "f4q": 0,
+            "b5w": 0,
+            "b5p": 0,
+            "last_date": None,
+            "last_race_no": None,
+            "last_race_id": None,
+            "updated_at": now,
+            "policy": CURRENT_POLICY,
+        }
+
+        for race in races:
+            act = _actual_topk_for_race(session, race.id, 5)
+            pred = _predict_topk_for_race(session, race.id, weights, 5)
+            hits = _calc_hits(pred, act)
+            if not hits:
+                continue
+            st["races"] = int(st.get("races") or 0) + 1
+            for k2, v2 in hits.items():
+                st[k2] = int(st.get(k2) or 0) + int(v2)
+            st["last_date"] = race.race_date.date().isoformat() if hasattr(race.race_date, "date") else str(race.race_date)
+            st["last_race_no"] = int(race.race_no or 0)
+            st["last_race_id"] = int(race.id)
+
+        out[name] = st
+
+    save_member_preset_stats(session, e, out)
+    return out
 
 
 def load_member_preset_elim_stats(session: Session, email: str) -> Dict[str, Any]:
@@ -455,32 +533,7 @@ def _list_completed_races(
 
 
 def _predict_top4_for_race(session: Session, race_id: int, weight_map: Dict[str, float]) -> List[int]:
-    weights = {k: float(v) for k, v in (weight_map or {}).items()}
-    if not weights:
-        return []
-
-    entries = session.query(RaceEntry.id, RaceEntry.horse_no).filter_by(race_id=race_id).all()
-    if not entries:
-        return []
-
-    entry_ids = [e[0] for e in entries]
-    entry_id_to_no = {e[0]: int(e[1]) for e in entries}
-    factor_names = list(weights.keys())
-
-    factors = (
-        session.query(ScoringFactor.entry_id, ScoringFactor.factor_name, ScoringFactor.score)
-        .filter(ScoringFactor.entry_id.in_(entry_ids))
-        .filter(ScoringFactor.factor_name.in_(factor_names))
-        .all()
-    )
-
-    totals: Dict[int, float] = {eid: 0.0 for eid in entry_ids}
-    for entry_id, factor_name, score in factors:
-        totals[int(entry_id)] += float(score or 0.0) * float(weights.get(factor_name, 0.0))
-
-    ranked = sorted(totals.items(), key=lambda x: x[1], reverse=True)
-    top4 = [entry_id_to_no[eid] for eid, _ in ranked[:4] if eid in entry_id_to_no]
-    return top4
+    return _predict_topk_for_race(session, race_id, weight_map, 4)
 
 
 def _predict_topk_for_race(session: Session, race_id: int, weight_map: Dict[str, float], k: int) -> List[int]:
@@ -507,8 +560,14 @@ def _predict_topk_for_race(session: Session, race_id: int, weight_map: Dict[str,
     for entry_id, factor_name, score in factors:
         totals[int(entry_id)] += float(score or 0.0) * float(weights.get(factor_name, 0.0))
 
-    ranked = sorted(totals.items(), key=lambda x: x[1], reverse=True)
-    return [entry_id_to_no[eid] for eid, _ in ranked[:k] if eid in entry_id_to_no]
+    items: List[tuple[int, float]] = []
+    for eid in entry_ids:
+        hn = entry_id_to_no.get(int(eid))
+        if hn is None or int(hn or 0) <= 0:
+            continue
+        items.append((int(hn), float(totals.get(int(eid), 0.0))))
+    items.sort(key=lambda x: (-x[1], x[0]))
+    return [hn for hn, _ in items[: int(k or 0)]]
 
 
 def _actual_topk_for_race(session: Session, race_id: int, k: int) -> List[int]:
@@ -568,7 +627,18 @@ def update_member_preset_stats_incremental(
     changed_any = False
     policy = CURRENT_POLICY
 
-    for p in (presets or [])[:3]:
+    preset_list = [p for p in (presets or [])[:3] if isinstance(p, dict) and str(p.get("name") or "").strip()]
+    need_rebuild = False
+    for p in preset_list:
+        name = str(p.get("name") or "").strip()
+        st0 = stats.get(name)
+        if not isinstance(st0, dict) or st0.get("policy") != policy:
+            need_rebuild = True
+            break
+    if need_rebuild and preset_list:
+        return rebuild_member_preset_stats(session, email, preset_list, d1=cutoff, d2=datetime.now())
+
+    for p in preset_list:
         name = str(p.get("name") or "").strip()
         weights = p.get("weights") if isinstance(p.get("weights"), dict) else {}
         if not name:
@@ -737,24 +807,7 @@ def update_all_members_preset_stats_for_race_date(session: Session, race_date_st
 
             st = stats.get(name)
             if not isinstance(st, dict) or st.get("policy") != CURRENT_POLICY:
-                st = {
-                    "races": 0,
-                    "win": 0,
-                    "p": 0,
-                    "q1": 0,
-                    "pq": 0,
-                    "t3e": 0,
-                    "t3": 0,
-                    "f4": 0,
-                    "f4q": 0,
-                    "b5w": 0,
-                    "b5p": 0,
-                    "last_date": None,
-                    "last_race_no": None,
-                    "last_race_id": None,
-                    "updated_at": None,
-                    "policy": CURRENT_POLICY,
-                }
+                continue
 
             last_date = None
             if st.get("last_date"):
