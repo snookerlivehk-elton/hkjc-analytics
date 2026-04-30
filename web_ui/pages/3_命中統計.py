@@ -139,7 +139,7 @@ with tab_factor:
                 format_func=lambda x: f"{factor_desc.get(str(x), str(x))} ({x})",
             )
 
-            if share_c3.button("生成分享字段", width="stretch", key="share_factor_text_only"):
+            if share_c3.button("生成分享字段", use_container_width=True, key="share_factor_text_only"):
                 rows = (
                     session.query(PredictionTop5.race_no, PredictionTop5.top5)
                     .filter(PredictionTop5.predictor_type == "factor")
@@ -206,16 +206,16 @@ with tab_factor:
                 st.session_state[range_key] = (start_default, end_default)
 
             b1, b2, b3, b4 = st.columns(4)
-            if b1.button("前30日", width="stretch"):
+            if b1.button("前30日", use_container_width=True):
                 st.session_state[range_key] = (max(end_default - timedelta(days=30), min(available_dates)), end_default)
                 st.rerun()
-            if b2.button("前60日", width="stretch"):
+            if b2.button("前60日", use_container_width=True):
                 st.session_state[range_key] = (max(end_default - timedelta(days=60), min(available_dates)), end_default)
                 st.rerun()
-            if b3.button("前180日", width="stretch"):
+            if b3.button("前180日", use_container_width=True):
                 st.session_state[range_key] = (max(end_default - timedelta(days=180), min(available_dates)), end_default)
                 st.rerun()
-            if b4.button("最長日子", width="stretch"):
+            if b4.button("最長日子", use_container_width=True):
                 st.session_state[range_key] = (min(available_dates), end_default)
                 st.rerun()
 
@@ -288,7 +288,7 @@ with tab_factor:
                     for k in HIT_METRICS:
                         row[f"{METRIC_LABELS.get(k, k)}%"] = round((int(a.get(k) or 0) / n * 100.0), 1) if n else 0.0
                     rows.append(row)
-                st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, column_config={"條件": st.column_config.TextColumn(width="medium"), "代號": st.column_config.TextColumn(width="medium"), "組合": st.column_config.TextColumn(width="medium")})
     finally:
         session.close()
 
@@ -334,7 +334,7 @@ with tab_preset:
                 share_email = s2.selectbox("會員 Email", emails, index=0, key="preset_share_email")
                 share_preset = s3.selectbox("組合名稱", presets, index=0, key="preset_share_preset")
 
-                if s4.button("生成分享字段", width="stretch", key="preset_share_text"):
+                if s4.button("生成分享字段", use_container_width=True, key="preset_share_text"):
                     rows = (
                         session.query(PredictionTop5.race_no, PredictionTop5.top5)
                         .filter(PredictionTop5.predictor_type == "preset")
@@ -636,7 +636,7 @@ with tab_preset:
                         if not rows:
                             st.info("目前未有足夠資料計算命中率（可能尚未抓賽果或未重新計分）。")
                         else:
-                            st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+                            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, column_config={"條件": st.column_config.TextColumn(width="medium"), "代號": st.column_config.TextColumn(width="medium"), "組合": st.column_config.TextColumn(width="medium")})
 
                         st.markdown("### 📉 會員組合反向表現（淘汰準確率）")
                         pct = 35.0
@@ -693,7 +693,14 @@ with tab_preset:
                         if not rows2:
                             st.info("目前未有足夠資料計算淘汰統計（可能尚未抓賽果或未重新計分）。")
                         else:
-                            st.dataframe(pd.DataFrame(rows2).sort_values(["淘汰準確率(不入Top4)", "錯殺率"], ascending=[False, True]), width="stretch", hide_index=True)
+                            st.dataframe(
+                                pd.DataFrame(rows2).sort_values(["淘汰準確率(不入Top4)", "錯殺率"], ascending=[False, True]), 
+                                use_container_width=True, 
+                                hide_index=True,
+                                column_config={
+                                    "組合": st.column_config.TextColumn(width="medium"),
+                                }
+                            )
     finally:
         session.close()
 
@@ -896,7 +903,15 @@ with tab_range:
                         )
                         out["淘汰準確率"] = out["淘汰準確率"].map(lambda x: f"{float(x):.1%}")
                         out["錯殺率"] = out["錯殺率"].map(lambda x: f"{float(x):.1%}")
-                        st.dataframe(out, width="stretch", hide_index=True)
+                        st.dataframe(
+                            out, 
+                            use_container_width=True, 
+                            hide_index=True,
+                            column_config={
+                                "條件": st.column_config.TextColumn(width="medium"),
+                                "代號": st.column_config.TextColumn(width="medium")
+                            }
+                        )
 
                     st.markdown("### 場次明細（按錯殺率排序）")
                     df_show = df.copy()
@@ -933,7 +948,7 @@ with tab_range:
                                 "錯殺(匹)",
                             ]
                         ],
-                        width="stretch",
+                        use_container_width=True,
                         hide_index=True,
                     )
     finally:
@@ -1084,7 +1099,7 @@ with tab_diag:
                                 "預測淘汰": bool(int(hn) in pred_b_set),
                             }
                         )
-                    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+                    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, column_config={"條件": st.column_config.TextColumn(width="medium"), "代號": st.column_config.TextColumn(width="medium"), "組合": st.column_config.TextColumn(width="medium")})
 
                     q_cfg = session.query(SystemConfig).filter_by(key=f"factor_quality:{rid}").first()
                     qv = q_cfg.value if q_cfg and isinstance(q_cfg.value, dict) else {}
@@ -1123,7 +1138,7 @@ with tab_diag:
                             )
                         if qrows:
                             qdf = pd.DataFrame(qrows).sort_values(["已忽略", "覆蓋率"], ascending=[False, True])
-                            st.dataframe(qdf, width="stretch", hide_index=True)
+                            st.dataframe(qdf, use_container_width=True, hide_index=True)
                             if abs(float(eff_sum or 0.0)) < 1e-9:
                                 st.warning("本場所有因子有效權重合計為 0（策略=自動忽略 + 覆蓋不足）→ total_score 會全部相同，Top5/淘汰結果將退化並重疊。")
 
@@ -1161,7 +1176,7 @@ with tab_diag:
                                         "缺資料(項)": miss,
                                     }
                                 )
-                            st.dataframe(pd.DataFrame(rows2), width="stretch", hide_index=True)
+                            st.dataframe(pd.DataFrame(rows2), use_container_width=True, hide_index=True)
                     with right:
                         st.markdown("**漏網馬（實際Top4但未入預測Top4）**")
                         if not fn:
@@ -1191,6 +1206,6 @@ with tab_diag:
                                         "缺資料(項)": miss,
                                     }
                                 )
-                            st.dataframe(pd.DataFrame(rows3), width="stretch", hide_index=True)
+                            st.dataframe(pd.DataFrame(rows3), use_container_width=True, hide_index=True)
     finally:
         session.close()

@@ -146,7 +146,7 @@ else:
                 # 當前選中的場次使用 primary 顏色
                 btn_type = "primary" if st.session_state.factor_selected_race_id == r.id else "secondary"
                 
-                if cols[j].button(btn_label, key=f"factor_race_btn_{r.id}", type=btn_type, width="stretch"):
+                if cols[j].button(btn_label, key=f"factor_race_btn_{r.id}", type=btn_type, use_container_width=True):
                     st.session_state.factor_selected_race_id = r.id
                     st.rerun()
 
@@ -188,7 +188,7 @@ else:
                             factor = available_factors[i + j]
                             # 如果是當前選中的因子，使用 primary 顏色標示
                             button_type = "primary" if st.session_state.selected_factor == factor else "secondary"
-                            if cols[j].button(factor, key=f"btn_{factor}", type=button_type, width="stretch"):
+                            if cols[j].button(factor, key=f"btn_{factor}", type=button_type, use_container_width=True):
                                 st.session_state.selected_factor = factor
                                 st.rerun()
 
@@ -521,7 +521,15 @@ else:
                 # 加上名次標籤
                 factor_df = factor_df.reset_index(drop=True)
                 factor_df.insert(0, "該項排名", range(1, len(factor_df) + 1))
-                st.dataframe(factor_df, width="stretch", hide_index=True)
+                st.dataframe(
+                    factor_df, 
+                    use_container_width=True, 
+                    hide_index=True,
+                    column_config={
+                        "原始數據 (分析基礎)": st.column_config.TextColumn(width="large"),
+                        "馬名": st.column_config.TextColumn(width="medium"),
+                    }
+                )
                 
                 # 針對特定因子顯示詳細說明與參數調整
                 if selected_factor == "近期狀態 (Last 6 Runs)":
@@ -1294,12 +1302,12 @@ else:
                                 stats_df = stats_df.sort_values(by="draw")
 
                             show_cols = [c for c in ["draw", "total_runs", "win", "win_rate", "place_rate", "top4_rate"] if c in stats_df.columns]
-                            st.dataframe(stats_df[show_cols], width="stretch", hide_index=True)
+                            st.dataframe(stats_df[show_cols], use_container_width=True, hide_index=True)
 
                             chart_cols = [c for c in ["win_rate", "place_rate", "top4_rate"] if c in stats_df.columns]
                             chart_df = stats_df.set_index("draw")[chart_cols] if ("draw" in stats_df.columns and chart_cols) else None
                             if chart_df is not None:
-                                st.bar_chart(chart_df, width="stretch")
+                                st.bar_chart(chart_df, use_container_width=True)
                         else:
                             st.warning("找不到本場次的官方檔位統計（可能尚未爬取或 Key 不匹配）。")
                     else:
@@ -1392,6 +1400,6 @@ else:
             head_cols = [c for c in preferred_cols if c in full_df.columns]
             tail_cols = [c for c in full_df.columns if c not in head_cols]
             full_df = full_df[head_cols + tail_cols]
-            st.dataframe(full_df, width="stretch", hide_index=True)
+            st.dataframe(full_df, use_container_width=True, hide_index=True)
 
 session.close()

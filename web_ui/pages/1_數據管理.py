@@ -286,7 +286,7 @@ with tab_ops:
 
             cols = st.columns([2, 3])
             ok = _confirm_run(cols[0], "admin_elim_rebuild", label="輸入 RUN 以回填/重建")
-            if cols[1].button("📉 回填會員反向統計（覆寫）", width="stretch", disabled=not ok):
+            if cols[1].button("📉 回填會員反向統計（覆寫）", use_container_width=True, disabled=not ok):
                 progress = st.progress(0)
                 done = 0
                 for i, em in enumerate(emails):
@@ -344,7 +344,7 @@ with tab_ops:
         st.caption("用途：更新「本月＋下月」有賽事的日期清單，供系統決定下一賽日與排程目標。若已設定 fixture cron（每日 HK 06:00），通常不需手動按。")
         c_confirm, c_btn = st.columns([2, 3])
         ok = _confirm_run(c_confirm, "fixture", label="輸入 RUN 以更新賽期表")
-        if c_btn.button("📅 更新賽期表 (本月+下月)", width="stretch", disabled=not ok):
+        if c_btn.button("📅 更新賽期表 (本月+下月)", use_container_width=True, disabled=not ok):
             if trigger_fixture_fetch():
                 st.success("✅ 賽期表已更新！")
 
@@ -448,7 +448,7 @@ with tab_ops:
                 df_edit = pd.DataFrame(factor_rows)
                 edited = st.data_editor(
                     df_edit,
-                    width="stretch",
+                    use_container_width=True,
                     hide_index=True,
                     column_config={
                         "模式": st.column_config.SelectboxColumn("模式", options=["default", "warn", "ignore"], help="default=跟預設；warn=只提示；ignore=自動忽略"),
@@ -526,7 +526,7 @@ with tab_ops:
                 dfw = pd.DataFrame(items)
                 edited_w = st.data_editor(
                     dfw,
-                    width="stretch",
+                    use_container_width=True,
                     hide_index=True,
                     column_config={
                         "權重": st.column_config.NumberColumn("權重", step=0.1, help="留空會視作 0；建議一般保持 >0"),
@@ -536,7 +536,7 @@ with tab_ops:
                     key="global_weight_editor",
                 )
                 c_save, c_hint = st.columns([2, 3])
-                save_w = c_save.button("💾 儲存全局權重", width="stretch", key="save_global_weights")
+                save_w = c_save.button("💾 儲存全局權重", use_container_width=True, key="save_global_weights")
                 c_hint.caption("儲存後需重算相關場次，才會寫回 RaceEntry.total_score。")
 
                 if save_w and isinstance(edited_w, pd.DataFrame):
@@ -600,7 +600,7 @@ with tab_ops:
                 c1, c2 = st.columns([2, 3])
                 do_rescore = c1.checkbox("同時重算所選範圍", value=False, key="calib_rescore")
                 ok = _confirm_run(c1, "calib_train", label="輸入 RUN 以訓練/保存")
-                run = c2.button("訓練並保存 temperature", width="stretch", key="calib_train_btn", disabled=not ok)
+                run = c2.button("訓練並保存 temperature", use_container_width=True, key="calib_train_btn", disabled=not ok)
 
                 if run:
                     res = fit_winprob_temperature(session_cal, d1=d1, d2=d2)
@@ -631,7 +631,7 @@ with tab_ops:
         st.caption("會依序完成：抓排位 → 回填該日涉及馬匹往績 → 重算該日所有場次 → 生成 Top5 快照（factor + preset）。每一步會等待上一個完成。")
         c_confirm, c_btn = st.columns([2, 3])
         ok = _confirm_run(c_confirm, "oneclick_update", label="輸入 RUN 以執行一鍵完整更新")
-        if c_btn.button("⚡ 一鍵：抓排位 → 回填馬匹往績 → 重算當日 → 生成Top5快照", width="stretch", disabled=not ok):
+        if c_btn.button("⚡ 一鍵：抓排位 → 回填馬匹往績 → 重算當日 → 生成Top5快照", use_container_width=True, disabled=not ok):
             target_date_str = selected_date.strftime("%Y/%m/%d")
             ok1 = trigger_scraper(target_date=target_date_str)
             if not ok1:
@@ -680,7 +680,7 @@ with tab_ops:
         st.caption("只做「抓排位/即時數據 + 計分（不包含回填往績/重算）」；如要產生更完整的條件結果與 Top5 快照，建議使用上方「一鍵完整更新」。")
         c_confirm, c_btn = st.columns([2, 3])
         ok = _confirm_run(c_confirm, "scrape_day", label="輸入 RUN 以開始抓取")
-        if c_btn.button("🔄 開始抓取該日賽事", width="stretch", disabled=not ok):
+        if c_btn.button("🔄 開始抓取該日賽事", use_container_width=True, disabled=not ok):
             target_date_str = selected_date.strftime("%Y/%m/%d")
             if trigger_scraper(target_date=target_date_str):
                 st.success(f"✅ {target_date_str} 數據更新成功！")
@@ -689,7 +689,7 @@ with tab_ops:
         st.caption("只生成 Top5 快照（落庫 PredictionTop5）。需要先完成該日計分/重算，否則快照會反映不完整數據。")
         c_confirm, c_btn = st.columns([2, 3])
         ok = _confirm_run(c_confirm, "snapshot_day", label="輸入 RUN 以生成快照")
-        if c_btn.button("🧾 生成當日 Top5 預測快照", width="stretch", disabled=not ok):
+        if c_btn.button("🧾 生成當日 Top5 預測快照", use_container_width=True, disabled=not ok):
             target_date_str = selected_date.strftime("%Y/%m/%d")
             if trigger_predictions_snapshot(target_date_str):
                 st.success(f"✅ 已生成 {target_date_str} Top5 預測快照！")
@@ -698,7 +698,7 @@ with tab_ops:
         st.caption("抓取賽果/派彩入庫後，會自動結算：會員組合命中率 + Top5 快照命中（回寫 hits/actual_top5）。若已設定賽果 cron（每日 HK 23:55）通常不需手動按。")
         c_confirm, c_btn = st.columns([2, 3])
         ok = _confirm_run(c_confirm, "fetch_results", label="輸入 RUN 以抓取賽果")
-        if c_btn.button("🏁 抓取該日賽果與派彩", width="stretch", disabled=not ok):
+        if c_btn.button("🏁 抓取該日賽果與派彩", use_container_width=True, disabled=not ok):
             target_date_str = selected_date.strftime("%Y/%m/%d")
             if trigger_race_results_fetch(target_date=target_date_str):
                 st.success(f"✅ 已完成 {target_date_str} 賽果與派彩同步！")
@@ -723,7 +723,7 @@ with tab_ops:
         st.caption("用途：把已入庫的「賽果與派彩」中 meta.going/meta.track 回填到 RaceTrackCondition（可作篩選條件），不需重新爬網。")
         c_confirm, c_btn = st.columns([2, 3])
         ok = _confirm_run(c_confirm, "backfill_going", label="輸入 RUN 以回填")
-        if c_btn.button("🌦️ 回填該日場地狀況", width="stretch", disabled=not ok):
+        if c_btn.button("🌦️ 回填該日場地狀況", use_container_width=True, disabled=not ok):
             target_date_str = selected_date.strftime("%Y/%m/%d")
             session_bf = get_session()
             try:
@@ -803,14 +803,14 @@ with tab_ops:
                     }
                 )
             if rows:
-                st.dataframe(pd.DataFrame(rows).sort_values(["race_no"]), width="stretch", hide_index=True)
+                st.dataframe(pd.DataFrame(rows).sort_values(["race_no"]), use_container_width=True, hide_index=True)
         finally:
             session_sp.close()
 
         race_nos_str = ",".join([str(int(x)) for x in selected_races if str(x).isdigit()])
         c_confirm, c_btn = st.columns([2, 3])
         ok = _confirm_run(c_confirm, "speedpro_fetch", label="輸入 RUN 以抓取 SpeedPRO")
-        if c_btn.button("⚡ 立即抓取 SpeedPRO", width="stretch", disabled=not ok):
+        if c_btn.button("⚡ 立即抓取 SpeedPRO", use_container_width=True, disabled=not ok):
             ok = trigger_speedpro_fetch(target_date=target_date_str, race_nos=race_nos_str, retry_minutes=int(retry_minutes), force=True)
             if ok:
                 st.success("✅ 已觸發 SpeedPRO 抓取（詳情見上方日誌/狀態表）。")
@@ -822,14 +822,14 @@ with tab_ops:
         col_h1, col_h2 = st.columns(2)
         with col_h1:
             ok = _confirm_run(col_h1, "backfill_date", label="輸入 RUN 以回填（所選日期）")
-            if st.button("📚 回填所選日期馬匹往績", width="stretch", disabled=not ok):
+            if st.button("📚 回填所選日期馬匹往績", use_container_width=True, disabled=not ok):
                 target_date_str = selected_date.strftime("%Y/%m/%d")
                 if trigger_history_backfill(target_date=target_date_str, mode="date"):
                     st.success(f"✅ 已完成 {target_date_str} 所需馬匹之歷史往績回填！")
         with col_h2:
             with st.expander("完整回填 (較慢)"):
                 ok = _confirm_run(st, "backfill_all", label="輸入 RUN 以回填（全部）")
-                if st.button("📚 回填所有馬匹往績", width="stretch", disabled=not ok):
+                if st.button("📚 回填所有馬匹往績", use_container_width=True, disabled=not ok):
                     if trigger_history_backfill(mode="all"):
                         st.success("✅ 已完成所有馬匹之歷史往績回填！")
 
@@ -838,7 +838,7 @@ with tab_ops:
         st.caption("只做「重算所選日期」所有場次（不包含回填/快照）。適合你已完成回填但想再重算一次。")
         c_confirm, c_btn = st.columns([2, 3])
         ok = _confirm_run(c_confirm, "rescore_date", label="輸入 RUN 以重算所選日期")
-        if c_btn.button("🚀 重算所選日期所有賽事", width="stretch", disabled=not ok):
+        if c_btn.button("🚀 重算所選日期所有賽事", use_container_width=True, disabled=not ok):
             session = get_session()
             try:
                 from database.models import Race
@@ -878,7 +878,7 @@ with tab_ops:
         with st.expander("清理已移除因子舊記錄", expanded=False):
             st.markdown("此操作只會刪除已移除因子在資料庫中的舊計分結果與設定，不會影響賽事、馬匹、往績等核心數據。")
             confirm = st.checkbox("我明白此操作會刪除舊因子資料", value=False)
-            if st.button("🧹 清理 trainer_horse_bond 舊記錄", width="stretch", disabled=not confirm):
+            if st.button("🧹 清理 trainer_horse_bond 舊記錄", use_container_width=True, disabled=not confirm):
                 session = get_session()
                 deleted_sf, deleted_sw, deleted_cfg = cleanup_removed_factor_data(session)
                 session.close()
@@ -886,7 +886,7 @@ with tab_ops:
 
         st.subheader("🔌 系統測試與升級")
         st.caption("用於排查連線/結構問題。一般日常不用操作。")
-        if st.button("🔌 測試資料庫連線", width="stretch"):
+        if st.button("🔌 測試資料庫連線", use_container_width=True):
             session = get_session()
             try:
                 from database.models import ScoringWeight
@@ -898,7 +898,7 @@ with tab_ops:
             
         c_confirm, c_btn = st.columns([2, 3])
         ok = _confirm_run(c_confirm, "db_upgrade", label="輸入 RUN 以執行升級")
-        if c_btn.button("🆙 執行資料庫欄位升級 (新增原始數據欄位)", width="stretch", disabled=not ok):
+        if c_btn.button("🆙 執行資料庫欄位升級 (新增原始數據欄位)", use_container_width=True, disabled=not ok):
             try:
                 env = os.environ.copy()
                 process = subprocess.Popen(
@@ -971,7 +971,16 @@ with tab_members:
                 rr = dict(r)
                 rr.pop("_weights", None)
                 df_overview.append(rr)
-            st.dataframe(pd.DataFrame(df_overview), width="stretch", hide_index=True)
+            st.dataframe(
+                pd.DataFrame(df_overview), 
+                use_container_width=True, 
+                hide_index=True,
+                column_config={
+                    "條件": st.column_config.TextColumn(width="medium"),
+                    "描述": st.column_config.TextColumn(width="large"),
+                    "代號": st.column_config.TextColumn(width="medium"),
+                }
+            )
 
             st.markdown("---")
             st.markdown("### 🔎 組合權重參數")
@@ -988,7 +997,7 @@ with tab_members:
                             items.append({"條件": factor_desc[k], "代號": k, "權重": round(float(v), 2), "佔比%": round(share, 1)})
                     items = sorted(items, key=lambda x: x["佔比%"], reverse=True)
                     if items:
-                        st.dataframe(pd.DataFrame(items), width="stretch", hide_index=True)
+                        st.dataframe(pd.DataFrame(items), use_container_width=True, hide_index=True)
                     else:
                         st.info("此組合沒有可用的權重資料。")
     finally:
@@ -1109,7 +1118,7 @@ with tab_hits:
                     for k in HIT_METRICS:
                         row[f"{METRIC_LABELS.get(k, k)}%"] = round((int(a.get(k) or 0) / n * 100.0), 1) if n else 0.0
                     rows.append(row)
-                st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, column_config={"條件": st.column_config.TextColumn(width="medium"), "代號": st.column_config.TextColumn(width="medium"), "組合": st.column_config.TextColumn(width="medium")})
 
                 with st.expander("🧩 因子缺資料統計（所選日期範圍）", expanded=False):
                     st.caption("用途：檢查各因子在所選範圍內「無數據/空白」比例，幫你判斷要補數據、降低權重或暫時忽略。")
@@ -1166,7 +1175,7 @@ with tab_hits:
                         else:
                             st.dataframe(
                                 pd.DataFrame(rowsq).sort_values(["缺失顯示(%)", "缺失原始(%)"], ascending=[False, False]),
-                                width="stretch",
+                                use_container_width=True,
                                 hide_index=True,
                             )
                             st.markdown("---")
@@ -1341,7 +1350,7 @@ with tab_hits:
                                                 "佔缺失(%)": round((int(n or 0) / total_missing * 100.0), 1) if total_missing else 0.0,
                                             }
                                         )
-                                    st.dataframe(pd.DataFrame(rr), width="stretch", hide_index=True)
+                                    st.dataframe(pd.DataFrame(rr), use_container_width=True, hide_index=True)
 
             elif available_dates:
                 st.info("選定範圍內沒有任何獨立條件 Top5 快照。")
@@ -1379,7 +1388,7 @@ with tab_hits:
                     c1, c2, c3 = st.columns([2, 2, 3])
                     max_w = float(c1.selectbox("建議權重上限", [2.0, 3.0, 4.0, 5.0], index=1, key="tune_max_w"))
                     top_k = int(c2.selectbox("TopK 定義", [5], index=0, key="tune_topk"))
-                    run = c3.button("生成建議", width="stretch", key="tune_run_btn")
+                    run = c3.button("生成建議", use_container_width=True, key="tune_run_btn")
 
                     if run:
                         res = tune_weights_topk(
@@ -1417,7 +1426,15 @@ with tab_hits:
                                 }
                             )
                         df_out = pd.DataFrame(out_rows).sort_values(["建議權重", "目前權重"], ascending=[False, False])
-                        st.dataframe(df_out, width="stretch", hide_index=True)
+                        st.dataframe(
+                            df_out, 
+                            use_container_width=True, 
+                            hide_index=True,
+                            column_config={
+                                "條件": st.column_config.TextColumn(width="medium"),
+                                "代號": st.column_config.TextColumn(width="medium")
+                            }
+                        )
 
                         payload = {
                             "top_k": int(res.get("top_k") or 0),
@@ -1430,7 +1447,7 @@ with tab_hits:
                             data=json.dumps(payload, ensure_ascii=False, indent=2),
                             file_name=f"tuned_weights_top{int(top_k)}_{d1.isoformat()}_{d2.isoformat()}.json",
                             mime="application/json",
-                            width="stretch",
+                            use_container_width=True,
                             key="tune_download_btn",
                         )
                     elif isinstance(res, dict) and res.get("ok") is False and res.get("reason"):
@@ -1488,7 +1505,7 @@ with tab_hits:
                         save_db = st.checkbox("將 API Key 儲存到資料庫（不建議）", value=False, key="ai_save_key_db")
                         if save_db:
                             ok_save = _confirm_run(st, "ai_save_key", label="輸入 RUN 以儲存 API Key")
-                            btn_save = st.button("💾 儲存 API Key 到資料庫", width="stretch", disabled=not ok_save)
+                            btn_save = st.button("💾 儲存 API Key 到資料庫", use_container_width=True, disabled=not ok_save)
                             if btn_save:
                                 key_to_save = str(api_key_input or "").strip()
                                 if not key_to_save:
@@ -1506,7 +1523,7 @@ with tab_hits:
                         ai_max_w = float(c1.selectbox("建議權重上限", [2.0, 3.0, 4.0, 5.0], index=1, key="ai_tune_max_w"))
                         ai_top_k = int(c2.selectbox("TopK 定義", [5], index=0, key="ai_topk"))
                         ok_run = _confirm_run(c1, "ai_run", label="輸入 RUN 以呼叫 AI")
-                        run_ai = c3.button("🤖 呼叫 AI 生成建議", width="stretch", key="ai_run_btn", disabled=not ok_run)
+                        run_ai = c3.button("🤖 呼叫 AI 生成建議", use_container_width=True, key="ai_run_btn", disabled=not ok_run)
 
                         if run_ai:
                             key_used = ""
@@ -1563,7 +1580,7 @@ with tab_hits:
                                             }
                                         )
                                     if rows:
-                                        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+                                        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, column_config={"條件": st.column_config.TextColumn(width="medium"), "代號": st.column_config.TextColumn(width="medium"), "組合": st.column_config.TextColumn(width="medium")})
                                 else:
                                     st.info("AI 未輸出 recommendations。")
                             else:
@@ -1581,12 +1598,12 @@ with tab_hits:
                                 data=json.dumps(payload_out, ensure_ascii=False, indent=2),
                                 file_name=f"ai_factor_advice_{d1.isoformat()}_{d2.isoformat()}.json",
                                 mime="application/json",
-                                width="stretch",
+                                use_container_width=True,
                                 key="ai_advice_download_btn",
                             )
 
                             ok_save2 = _confirm_run(st, "ai_save_report", label="輸入 RUN 以保存為最新 AI 建議")
-                            if st.button("💾 保存為最新 AI 建議（供後續執行方案）", width="stretch", disabled=not ok_save2):
+                            if st.button("💾 保存為最新 AI 建議（供後續執行方案）", use_container_width=True, disabled=not ok_save2):
                                 cfg2 = session_hit.query(SystemConfig).filter_by(key="ai_last_advice").first()
                                 if not cfg2:
                                     cfg2 = SystemConfig(key="ai_last_advice", description="最新 AI 因子建議（摘要）")
@@ -1678,6 +1695,14 @@ with tab_hits:
                     if not rows:
                         st.info("目前未有任何已結算（已抓賽果）的會員組合命中資料。")
                     else:
-                        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+                        st.dataframe(
+                            pd.DataFrame(rows), 
+                            use_container_width=True, 
+                            hide_index=True, 
+                            column_config={
+                                "Email": st.column_config.TextColumn(width="medium"), 
+                                "組合": st.column_config.TextColumn(width="medium")
+                            }
+                        )
         finally:
             session_p.close()
