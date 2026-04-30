@@ -788,7 +788,9 @@ def main():
     weight_map = st.session_state.get("active_weight_map", {})
     df = load_scoring_data(session, selected_race_id, weight_map)
     if df.empty:
-        st.info("本場賽事尚未進行計分運算，請先於「數據管理後台」執行抓取與計分。")
+        st.warning("⚠️ 本場尚未計分，所有條件分數均為 0。")
+        st.info("👉 請到左側導航「🔧 數據管理」頁，選擇同日 期並點擊 **⚡ 一鍵完整更新**（抓排位→回填→計分→生成Top5）後再回本頁。")
+        st.info("⚠️ 獨立條件分析頁同理，計分完成後即可正常顯示。")
         
     if not df.empty:
         member_email = st.session_state.get("member_email")

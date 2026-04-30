@@ -155,7 +155,8 @@ else:
     result = load_factor_data(session, selected_race_id)
     
     if not result or result[0].empty:
-        st.info("本場賽事尚未進行計分運算，請先回主頁面點擊「立即執行計分」。")
+        st.warning("⚠️ 本場尚未計分，各條件分數均無法計算。")
+        st.info("👉 請到左側導航「🔧 數據管理」頁，選擇同日期並點擊 **⚡ 一鍵完整更新**（抓排位→回填→計分→生成Top5）後再回本頁。")
     else:
         df, factor_columns = result
         
