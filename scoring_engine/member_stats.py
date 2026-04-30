@@ -24,23 +24,29 @@ CURRENT_POLICY = {
     "start_date": STATS_START_DATE.date().isoformat(),
     "window_days": int(STATS_WINDOW_DAYS),
     "cmp": "date",
-    "v": 6,
-    "metrics": ["WIN", "P", "Q1", "PQ", "T3E", "T3", "F4", "F4Q", "B5W", "B5P"],
+    "v": 7,
+    "metrics": ["w1", "w2", "w3", "p1", "p2", "p3", "q2", "q3", "pq2", "pq3", "t3e", "t3", "f4", "f4q"],
     "tie_break": ranking.TIE_BREAK,
     "sum_order": "sorted_weight_keys",
 }
 
+HIT_METRICS = ["w1", "w2", "w3", "p1", "p2", "p3", "q2", "q3", "pq2", "pq3", "t3e", "t3", "f4", "f4q"]
+
 METRIC_LABELS = {
-    "WIN": "獨贏(2)",
-    "P": "位置(3)",
-    "Q1": "正Q(2+3)",
-    "PQ": "PQ(3)",
-    "T3E": "三重(2+4)",
-    "T3": "三重(4)",
-    "F4": "四連(2+5)",
-    "F4Q": "四連(5)",
-    "B5W": "獨贏(45)",
-    "B5P": "位置(5)",
+    "w1": "獨贏(1)",
+    "w2": "獨贏(2)",
+    "w3": "獨贏(3)",
+    "p1": "位置(1)",
+    "p2": "位置(2)",
+    "p3": "位置(3)",
+    "q2": "正Q(2)",
+    "q3": "正Q(3)",
+    "pq2": "PQ(2)",
+    "pq3": "PQ(3)",
+    "t3e": "三重(2+4)",
+    "t3": "三重(4)",
+    "f4": "四連(2+5)",
+    "f4q": "四連(5)",
 }
 
 LEGACY_ELIM_BOTTOM_PCTS = [10, 15, 20, 25, 30, 35, 40, 50]
@@ -162,16 +168,20 @@ def rebuild_member_preset_stats(
             continue
         st = {
             "races": 0,
-            "win": 0,
-            "p": 0,
-            "q1": 0,
-            "pq": 0,
+            "w1": 0,
+            "w2": 0,
+            "w3": 0,
+            "p1": 0,
+            "p2": 0,
+            "p3": 0,
+            "q2": 0,
+            "q3": 0,
+            "pq2": 0,
+            "pq3": 0,
             "t3e": 0,
             "t3": 0,
             "f4": 0,
             "f4q": 0,
-            "b5w": 0,
-            "b5p": 0,
             "last_date": None,
             "last_race_no": None,
             "last_race_id": None,
@@ -553,18 +563,23 @@ def _calc_hits(pred: List[int], act: List[int]) -> Dict[str, int]:
     runner_up = a2[1]
     top3 = set(a3)
     top4 = set(a4)
+    top2 = set(a2)
 
     return {
-        "win": int(winner in p2),
-        "p": int(len(set(p3) & top3) >= 1),
-        "q1": int((winner in p2) and (runner_up in p3)),
-        "pq": int(len(set(p3) & top3) >= 2),
+        "w1": int(winner in pred[:1]),
+        "w2": int(winner in p2),
+        "w3": int(winner in p3),
+        "p1": int(len(set(pred[:1]) & top3) >= 1),
+        "p2": int(len(set(p2) & top3) >= 1),
+        "p3": int(len(set(p3) & top3) >= 1),
+        "q2": int(set(p2) == top2),
+        "q3": int(top2.issubset(set(p3))),
+        "pq2": int(len(set(p2) & top3) >= 2),
+        "pq3": int(len(set(p3) & top3) >= 2),
         "t3e": int((winner in p2) and (a2[1] in p4) and (a3[2] in p4)),
         "t3": int(set(a3).issubset(set(p4))),
         "f4": int((winner in p2) and (a2[1] in p5) and (a3[2] in p5) and (a4[3] in p5)),
         "f4q": int(top4.issubset(set(p5))),
-        "b5w": int(winner in p5),
-        "b5p": int(len(set(p5) & top3) >= 1),
     }
 
 
@@ -601,16 +616,20 @@ def update_member_preset_stats_incremental(
         if not isinstance(st, dict):
             st = {
                 "races": 0,
-                "win": 0,
-                "p": 0,
-                "q1": 0,
-                "pq": 0,
+                "w1": 0,
+                "w2": 0,
+                "w3": 0,
+                "p1": 0,
+                "p2": 0,
+                "p3": 0,
+                "q2": 0,
+                "q3": 0,
+                "pq2": 0,
+                "pq3": 0,
                 "t3e": 0,
                 "t3": 0,
                 "f4": 0,
                 "f4q": 0,
-                "b5w": 0,
-                "b5p": 0,
                 "last_date": None,
                 "last_race_no": None,
                 "last_race_id": None,
@@ -622,16 +641,20 @@ def update_member_preset_stats_incremental(
             if st.get("policy") != policy:
                 st = {
                     "races": 0,
-                    "win": 0,
-                    "p": 0,
-                    "q1": 0,
-                    "pq": 0,
+                    "w1": 0,
+                    "w2": 0,
+                    "w3": 0,
+                    "p1": 0,
+                    "p2": 0,
+                    "p3": 0,
+                    "q2": 0,
+                    "q3": 0,
+                    "pq2": 0,
+                    "pq3": 0,
                     "t3e": 0,
                     "t3": 0,
                     "f4": 0,
                     "f4q": 0,
-                    "b5w": 0,
-                    "b5p": 0,
                     "last_date": None,
                     "last_race_no": None,
                     "last_race_id": None,
@@ -651,16 +674,20 @@ def update_member_preset_stats_incremental(
 
         if last_date is not None and last_date < cutoff:
             st["races"] = 0
-            st["win"] = 0
-            st["p"] = 0
-            st["q1"] = 0
-            st["pq"] = 0
+            st["w1"] = 0
+            st["w2"] = 0
+            st["w3"] = 0
+            st["p1"] = 0
+            st["p2"] = 0
+            st["p3"] = 0
+            st["q2"] = 0
+            st["q3"] = 0
+            st["pq2"] = 0
+            st["pq3"] = 0
             st["t3e"] = 0
             st["t3"] = 0
             st["f4"] = 0
             st["f4q"] = 0
-            st["b5w"] = 0
-            st["b5p"] = 0
             st["last_date"] = None
             st["last_race_no"] = None
             st["last_race_id"] = None

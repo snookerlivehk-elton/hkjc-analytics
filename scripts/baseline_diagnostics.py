@@ -135,7 +135,7 @@ def main():
 
         factors = _active_factor_names(session)
 
-        totals: Dict[str, int] = {"races": 0, "win": 0, "t3": 0, "f4": 0, "b5w": 0}
+        totals: Dict[str, int] = {"races": 0, "w2": 0, "t3": 0, "f4": 0}
         seg: Dict[str, Dict[str, int]] = {}
 
         for race_id, race_date, venue, dist in races:
@@ -148,31 +148,28 @@ def main():
 
             h = _calc_hits(pred_top5, actual_top5)
             totals["races"] += 1
-            totals["win"] += int(h.get("win") or 0)
+            totals["w2"] += int(h.get("w2") or 0)
             totals["t3"] += int(h.get("t3") or 0)
             totals["f4"] += int(h.get("f4") or 0)
-            totals["b5w"] += int(h.get("b5w") or 0)
 
             key = f"{_venue_label(str(venue or ''))}|{_distance_bucket(int(dist or 0))}"
             g = seg.get(key)
             if g is None:
-                g = {"races": 0, "win": 0, "t3": 0, "f4": 0, "b5w": 0}
+                g = {"races": 0, "w2": 0, "t3": 0, "f4": 0}
                 seg[key] = g
             g["races"] += 1
-            g["win"] += int(h.get("win") or 0)
+            g["w2"] += int(h.get("w2") or 0)
             g["t3"] += int(h.get("t3") or 0)
             g["f4"] += int(h.get("f4") or 0)
-            g["b5w"] += int(h.get("b5w") or 0)
 
         print("=== Baseline (總分排序) 命中率 ===")
         print(f"Range: {start.date().isoformat()} ~ {end.date().isoformat()}")
         print(f"Races: {totals['races']}")
         if totals["races"]:
             r = float(totals["races"])
-            print(f"Win: {totals['win']}/{totals['races']} ({totals['win']/r:.1%})")
+            print(f"Win(2): {totals['w2']}/{totals['races']} ({totals['w2']/r:.1%})")
             print(f"Top3: {totals['t3']}/{totals['races']} ({totals['t3']/r:.1%})")
             print(f"Top4: {totals['f4']}/{totals['races']} ({totals['f4']/r:.1%})")
-            print(f"Top5: {totals['b5w']}/{totals['races']} ({totals['b5w']/r:.1%})")
 
         if seg:
             print("\n=== 分桶 (venue|distance) ===")
@@ -181,7 +178,7 @@ def main():
                 if not g["races"]:
                     continue
                 r = float(g["races"])
-                print(f"{k} races={g['races']} win={g['win']/r:.1%} t3={g['t3']/r:.1%} f4={g['f4']/r:.1%} t5={g['b5w']/r:.1%}")
+                print(f"{k} races={g['races']} win2={g['w2']/r:.1%} t3={g['t3']/r:.1%} f4={g['f4']/r:.1%}")
 
         if factors:
             print("\n=== 因子覆蓋率（ScoringFactor） ===")

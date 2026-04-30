@@ -27,7 +27,7 @@ from scoring_engine.diagnostics import (
     summarize_entry_reason_fields,
 )
 from scoring_engine.prediction_snapshots import finalize_prediction_top5_hits_for_race_date
-from scoring_engine.member_stats import METRIC_LABELS
+from scoring_engine.member_stats import HIT_METRICS, METRIC_LABELS
 from scoring_engine import ranking
 from web_ui.auth import require_superadmin
 from web_ui.nav import render_admin_nav
@@ -246,10 +246,7 @@ with tab_factor:
             else:
                 from scoring_engine.member_stats import _calc_hits
 
-                agg = {
-                    fn: {"races": 0, "win": 0, "p": 0, "q1": 0, "pq": 0, "t3e": 0, "t3": 0, "f4": 0, "f4q": 0, "b5w": 0, "b5p": 0}
-                    for fn in factor_names
-                }
+                agg = {fn: {"races": 0, **{k: 0 for k in HIT_METRICS}} for fn in factor_names}
                 cache_act = {}
 
                 for race_id, factor_name, top5, meta in preds:
@@ -284,36 +281,13 @@ with tab_factor:
                             a[kk] += int(v)
 
                 rows = []
-                l_win = METRIC_LABELS.get("WIN", "WIN")
-                l_p = METRIC_LABELS.get("P", "P")
-                l_q1 = METRIC_LABELS.get("Q1", "Q1")
-                l_pq = METRIC_LABELS.get("PQ", "PQ")
-                l_t3e = METRIC_LABELS.get("T3E", "T3E")
-                l_t3 = METRIC_LABELS.get("T3", "T3")
-                l_f4 = METRIC_LABELS.get("F4", "F4")
-                l_f4q = METRIC_LABELS.get("F4Q", "F4Q")
-                l_b5w = METRIC_LABELS.get("B5W", "B5W")
-                l_b5p = METRIC_LABELS.get("B5P", "B5P")
                 for fn in factor_names:
                     a = agg[fn]
                     n = int(a["races"] or 0)
-                    rows.append(
-                        {
-                            "條件": factor_desc.get(fn, fn),
-                            "代號": fn,
-                            "樣本(場)": n,
-                            f"{l_win}%": round((a["win"] / n * 100.0), 1) if n else 0.0,
-                            f"{l_p}%": round((a["p"] / n * 100.0), 1) if n else 0.0,
-                            f"{l_q1}%": round((a["q1"] / n * 100.0), 1) if n else 0.0,
-                            f"{l_pq}%": round((a["pq"] / n * 100.0), 1) if n else 0.0,
-                            f"{l_t3e}%": round((a["t3e"] / n * 100.0), 1) if n else 0.0,
-                            f"{l_t3}%": round((a["t3"] / n * 100.0), 1) if n else 0.0,
-                            f"{l_f4}%": round((a["f4"] / n * 100.0), 1) if n else 0.0,
-                            f"{l_f4q}%": round((a["f4q"] / n * 100.0), 1) if n else 0.0,
-                            f"{l_b5w}%": round((a["b5w"] / n * 100.0), 1) if n else 0.0,
-                            f"{l_b5p}%": round((a["b5p"] / n * 100.0), 1) if n else 0.0,
-                        }
-                    )
+                    row = {"條件": factor_desc.get(fn, fn), "代號": fn, "樣本(場)": n}
+                    for k in HIT_METRICS:
+                        row[f"{METRIC_LABELS.get(k, k)}%"] = round((int(a.get(k) or 0) / n * 100.0), 1) if n else 0.0
+                    rows.append(row)
                 st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
     finally:
         session.close()
@@ -566,15 +540,18 @@ with tab_preset:
                                 hmap[str(fn)] = float(sc or 0.0)
 
                         def _ranked_horses_for_preset(rid: int, weights: dict):
+                            w_norm = ranking.normalize_weights(weights or {})
+                            if not w_norm:
+                                return []
                             horses = horses_by_race.get(int(rid)) or []
                             rmap = score_map.get(int(rid)) or {}
                             items = []
-                            wkeys = sorted([str(k) for k in (weights or {}).keys() if str(k).strip()])
+                            wkeys = sorted([str(k) for k in (w_norm or {}).keys() if str(k).strip()])
                             for hn in horses:
                                 m = rmap.get(int(hn)) or {}
                                 total = 0.0
                                 for fn in wkeys:
-                                    total += float(m.get(str(fn), 0.0)) * float(weights.get(fn, 0.0) or 0.0)
+                                    total += float(m.get(str(fn), 0.0)) * float(w_norm.get(fn, 0.0) or 0.0)
                                 items.append((int(hn), float(total)))
                             items.sort(key=lambda x: (-x[1], x[0]))
                             return [hn for hn, _ in items]
@@ -585,7 +562,7 @@ with tab_preset:
                             key = (email_k, preset_k)
                             a = agg.get(key)
                             if a is None:
-                                a = {"races": 0, "win": 0, "p": 0, "q1": 0, "pq": 0, "t3e": 0, "t3": 0, "f4": 0, "f4q": 0, "b5w": 0, "b5p": 0}
+                                a = {"races": 0, **{k: 0 for k in HIT_METRICS}}
                                 agg[key] = a
                             for rid in race_ids:
                                 act = actual_by_race.get(int(rid)) or []
@@ -605,35 +582,12 @@ with tab_preset:
                                         a[kk] += int(mv or 0)
 
                         rows = []
-                        l_win = METRIC_LABELS.get("WIN", "WIN")
-                        l_p = METRIC_LABELS.get("P", "P")
-                        l_q1 = METRIC_LABELS.get("Q1", "Q1")
-                        l_pq = METRIC_LABELS.get("PQ", "PQ")
-                        l_t3e = METRIC_LABELS.get("T3E", "T3E")
-                        l_t3 = METRIC_LABELS.get("T3", "T3")
-                        l_f4 = METRIC_LABELS.get("F4", "F4")
-                        l_f4q = METRIC_LABELS.get("F4Q", "F4Q")
-                        l_b5w = METRIC_LABELS.get("B5W", "B5W")
-                        l_b5p = METRIC_LABELS.get("B5P", "B5P")
                         for (email_k, preset_k), a in agg.items():
                             n = int(a["races"] or 0)
-                            rows.append(
-                                {
-                                    "Email": email_k,
-                                    "組合": preset_k,
-                                    "樣本(場)": n,
-                                    f"{l_win}%": round((a["win"] / n * 100.0), 1) if n else 0.0,
-                                    f"{l_p}%": round((a["p"] / n * 100.0), 1) if n else 0.0,
-                                    f"{l_q1}%": round((a["q1"] / n * 100.0), 1) if n else 0.0,
-                                    f"{l_pq}%": round((a["pq"] / n * 100.0), 1) if n else 0.0,
-                                    f"{l_t3e}%": round((a["t3e"] / n * 100.0), 1) if n else 0.0,
-                                    f"{l_t3}%": round((a["t3"] / n * 100.0), 1) if n else 0.0,
-                                    f"{l_f4}%": round((a["f4"] / n * 100.0), 1) if n else 0.0,
-                                    f"{l_f4q}%": round((a["f4q"] / n * 100.0), 1) if n else 0.0,
-                                    f"{l_b5w}%": round((a["b5w"] / n * 100.0), 1) if n else 0.0,
-                                    f"{l_b5p}%": round((a["b5p"] / n * 100.0), 1) if n else 0.0,
-                                }
-                            )
+                            row = {"Email": email_k, "組合": preset_k, "樣本(場)": n}
+                            for k in HIT_METRICS:
+                                row[f"{METRIC_LABELS.get(k, k)}%"] = round((int(a.get(k) or 0) / n * 100.0), 1) if n else 0.0
+                            rows.append(row)
                         rows = [r for r in rows if int(r.get("樣本(場)") or 0) > 0]
                         if not rows:
                             st.info("目前未有足夠資料計算命中率（可能尚未抓賽果或未重新計分）。")

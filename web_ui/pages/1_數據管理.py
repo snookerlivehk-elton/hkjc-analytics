@@ -12,7 +12,7 @@ if root_path not in sys.path:
 
 from database.connection import get_session, init_db
 from scoring_engine.core import ScoringEngine
-from scoring_engine.member_stats import METRIC_LABELS
+from scoring_engine.member_stats import HIT_METRICS, METRIC_LABELS
 from web_ui.nav import render_admin_nav
 
 st.set_page_config(page_title="數據管理 - HKJC Analytics", page_icon="🛠️", layout="wide")
@@ -891,16 +891,6 @@ with tab_members:
         )
 
         rows = []
-        l_win = METRIC_LABELS.get("WIN", "WIN")
-        l_p = METRIC_LABELS.get("P", "P")
-        l_q1 = METRIC_LABELS.get("Q1", "Q1")
-        l_pq = METRIC_LABELS.get("PQ", "PQ")
-        l_t3e = METRIC_LABELS.get("T3E", "T3E")
-        l_t3 = METRIC_LABELS.get("T3", "T3")
-        l_f4 = METRIC_LABELS.get("F4", "F4")
-        l_f4q = METRIC_LABELS.get("F4Q", "F4Q")
-        l_b5w = METRIC_LABELS.get("B5W", "B5W")
-        l_b5p = METRIC_LABELS.get("B5P", "B5P")
         for cfg in cfgs:
             if not isinstance(cfg.value, list):
                 continue
@@ -913,35 +903,18 @@ with tab_members:
                 weights_map = p.get("weights") if isinstance(p.get("weights"), dict) else {}
                 stt = stats_map.get(name, {}) if isinstance(stats_map, dict) else {}
                 races_n = int(stt.get("races") or 0)
-                win_n = int(stt.get("win") or 0)
-                p_n = int(stt.get("p") or 0)
-                q1_n = int(stt.get("q1") or 0)
-                pq_n = int(stt.get("pq") or 0)
-                t3e_n = int(stt.get("t3e") or 0)
-                t3_n = int(stt.get("t3") or 0)
-                f4_n = int(stt.get("f4") or 0)
-                f4q_n = int(stt.get("f4q") or 0)
-                b5w_n = int(stt.get("b5w") or 0)
-                b5p_n = int(stt.get("b5p") or 0)
-                rows.append(
-                    {
-                        "Email": email,
-                        "組合": name,
-                        "更新時間": str(p.get("updated_at") or ""),
-                        "樣本(場)": races_n,
-                        f"{l_win}%": round((win_n / races_n * 100.0), 1) if races_n else 0.0,
-                        f"{l_p}%": round((p_n / races_n * 100.0), 1) if races_n else 0.0,
-                        f"{l_q1}%": round((q1_n / races_n * 100.0), 1) if races_n else 0.0,
-                        f"{l_pq}%": round((pq_n / races_n * 100.0), 1) if races_n else 0.0,
-                        f"{l_t3e}%": round((t3e_n / races_n * 100.0), 1) if races_n else 0.0,
-                        f"{l_t3}%": round((t3_n / races_n * 100.0), 1) if races_n else 0.0,
-                        f"{l_f4}%": round((f4_n / races_n * 100.0), 1) if races_n else 0.0,
-                        f"{l_f4q}%": round((f4q_n / races_n * 100.0), 1) if races_n else 0.0,
-                        f"{l_b5w}%": round((b5w_n / races_n * 100.0), 1) if races_n else 0.0,
-                        f"{l_b5p}%": round((b5p_n / races_n * 100.0), 1) if races_n else 0.0,
-                        "_weights": weights_map,
-                    }
-                )
+                row = {
+                    "Email": email,
+                    "組合": name,
+                    "更新時間": str(p.get("updated_at") or ""),
+                    "樣本(場)": races_n,
+                    "_weights": weights_map,
+                }
+                for k in HIT_METRICS:
+                    col = f"{METRIC_LABELS.get(k, k)}%"
+                    v = int(stt.get(k) or 0)
+                    row[col] = round((v / races_n * 100.0), 1) if races_n else 0.0
+                rows.append(row)
 
         if not rows:
             st.info("目前沒有任何會員儲存組合。")
@@ -1047,10 +1020,7 @@ with tab_hits:
                     )
                     return [int(r[0]) for r in rows]
 
-                agg = {
-                    fn: {"races": 0, "win": 0, "p": 0, "q1": 0, "pq": 0, "t3e": 0, "t3": 0, "f4": 0, "f4q": 0, "b5w": 0, "b5p": 0}
-                    for fn in factor_names
-                }
+                agg = {fn: {"races": 0, **{k: 0 for k in HIT_METRICS}} for fn in factor_names}
                 cache_act = {}
 
                 for race_id, factor_name, top5, meta in preds:
@@ -1085,36 +1055,13 @@ with tab_hits:
                             a[kk] += int(v)
 
                 rows = []
-                l_win = METRIC_LABELS.get("WIN", "WIN")
-                l_p = METRIC_LABELS.get("P", "P")
-                l_q1 = METRIC_LABELS.get("Q1", "Q1")
-                l_pq = METRIC_LABELS.get("PQ", "PQ")
-                l_t3e = METRIC_LABELS.get("T3E", "T3E")
-                l_t3 = METRIC_LABELS.get("T3", "T3")
-                l_f4 = METRIC_LABELS.get("F4", "F4")
-                l_f4q = METRIC_LABELS.get("F4Q", "F4Q")
-                l_b5w = METRIC_LABELS.get("B5W", "B5W")
-                l_b5p = METRIC_LABELS.get("B5P", "B5P")
                 for fn in factor_names:
                     a = agg[fn]
                     n = int(a["races"] or 0)
-                    rows.append(
-                        {
-                            "條件": factor_desc.get(fn, fn),
-                            "代號": fn,
-                            "樣本(場)": n,
-                            f"{l_win}%": round((a["win"] / n * 100.0), 1) if n else 0.0,
-                            f"{l_p}%": round((a["p"] / n * 100.0), 1) if n else 0.0,
-                            f"{l_q1}%": round((a["q1"] / n * 100.0), 1) if n else 0.0,
-                            f"{l_pq}%": round((a["pq"] / n * 100.0), 1) if n else 0.0,
-                            f"{l_t3e}%": round((a["t3e"] / n * 100.0), 1) if n else 0.0,
-                            f"{l_t3}%": round((a["t3"] / n * 100.0), 1) if n else 0.0,
-                            f"{l_f4}%": round((a["f4"] / n * 100.0), 1) if n else 0.0,
-                            f"{l_f4q}%": round((a["f4q"] / n * 100.0), 1) if n else 0.0,
-                            f"{l_b5w}%": round((a["b5w"] / n * 100.0), 1) if n else 0.0,
-                            f"{l_b5p}%": round((a["b5p"] / n * 100.0), 1) if n else 0.0,
-                        }
-                    )
+                    row = {"條件": factor_desc.get(fn, fn), "代號": fn, "樣本(場)": n}
+                    for k in HIT_METRICS:
+                        row[f"{METRIC_LABELS.get(k, k)}%"] = round((int(a.get(k) or 0) / n * 100.0), 1) if n else 0.0
+                    rows.append(row)
                 st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
                 with st.expander("🧩 因子缺資料統計（所選日期範圍）", expanded=False):
@@ -1666,7 +1613,7 @@ with tab_hits:
                         key = (email_k, preset_k)
                         a = agg.get(key)
                         if a is None:
-                            a = {"races": 0, "win": 0, "p": 0, "q1": 0, "pq": 0, "t3e": 0, "t3": 0, "f4": 0, "f4q": 0, "b5w": 0, "b5p": 0}
+                            a = {"races": 0, **{k: 0 for k in HIT_METRICS}}
                             agg[key] = a
                         a["races"] += 1
                         for mk, mv in h.items():
@@ -1675,35 +1622,12 @@ with tab_hits:
                                 a[kk] += int(mv or 0)
 
                     rows = []
-                    l_win = METRIC_LABELS.get("WIN", "WIN")
-                    l_p = METRIC_LABELS.get("P", "P")
-                    l_q1 = METRIC_LABELS.get("Q1", "Q1")
-                    l_pq = METRIC_LABELS.get("PQ", "PQ")
-                    l_t3e = METRIC_LABELS.get("T3E", "T3E")
-                    l_t3 = METRIC_LABELS.get("T3", "T3")
-                    l_f4 = METRIC_LABELS.get("F4", "F4")
-                    l_f4q = METRIC_LABELS.get("F4Q", "F4Q")
-                    l_b5w = METRIC_LABELS.get("B5W", "B5W")
-                    l_b5p = METRIC_LABELS.get("B5P", "B5P")
                     for (email_k, preset_k), a in agg.items():
                         n = int(a["races"] or 0)
-                        rows.append(
-                            {
-                                "Email": email_k,
-                                "組合": preset_k,
-                                "樣本(場)": n,
-                                f"{l_win}%": round((a["win"] / n * 100.0), 1) if n else 0.0,
-                                f"{l_p}%": round((a["p"] / n * 100.0), 1) if n else 0.0,
-                                f"{l_q1}%": round((a["q1"] / n * 100.0), 1) if n else 0.0,
-                                f"{l_pq}%": round((a["pq"] / n * 100.0), 1) if n else 0.0,
-                                f"{l_t3e}%": round((a["t3e"] / n * 100.0), 1) if n else 0.0,
-                                f"{l_t3}%": round((a["t3"] / n * 100.0), 1) if n else 0.0,
-                                f"{l_f4}%": round((a["f4"] / n * 100.0), 1) if n else 0.0,
-                                f"{l_f4q}%": round((a["f4q"] / n * 100.0), 1) if n else 0.0,
-                                f"{l_b5w}%": round((a["b5w"] / n * 100.0), 1) if n else 0.0,
-                                f"{l_b5p}%": round((a["b5p"] / n * 100.0), 1) if n else 0.0,
-                            }
-                        )
+                        row = {"Email": email_k, "組合": preset_k, "樣本(場)": n}
+                        for k in HIT_METRICS:
+                            row[f"{METRIC_LABELS.get(k, k)}%"] = round((int(a.get(k) or 0) / n * 100.0), 1) if n else 0.0
+                        rows.append(row)
                     if not rows:
                         st.info("目前未有任何已結算（已抓賽果）的會員組合命中資料。")
                     else:

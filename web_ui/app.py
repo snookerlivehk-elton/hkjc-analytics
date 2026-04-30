@@ -26,6 +26,7 @@ from scoring_engine.member_stats import (
     STATS_START_DATE,
     STATS_WINDOW_DAYS,
     METRIC_LABELS,
+    HIT_METRICS,
 )
 from web_ui.ui_table import render_dividends
 from utils.logger import logger
@@ -805,70 +806,66 @@ def main():
                         elim_acc = (tn_n / pred_n) if pred_n else None
                         elim_fp = (fp_n / pred_n) if pred_n else None
                         races_n = int(stt.get("races") or 0)
-                        win_n = int(stt.get("win") or 0)
-                        p_n = int(stt.get("p") or 0)
-                        q1_n = int(stt.get("q1") or 0)
-                        pq_n = int(stt.get("pq") or 0)
                         t3e_n = int(stt.get("t3e") or 0)
                         t3_n = int(stt.get("t3") or 0)
                         f4_n = int(stt.get("f4") or 0)
                         f4q_n = int(stt.get("f4q") or 0)
-                        b5w_n = int(stt.get("b5w") or 0)
-                        b5p_n = int(stt.get("b5p") or 0)
-                        l_win = METRIC_LABELS.get("WIN", "WIN")
-                        l_p = METRIC_LABELS.get("P", "P")
-                        l_q1 = METRIC_LABELS.get("Q1", "Q1")
-                        l_pq = METRIC_LABELS.get("PQ", "PQ")
-                        l_t3e = METRIC_LABELS.get("T3E", "T3E")
-                        l_t3 = METRIC_LABELS.get("T3", "T3")
-                        l_f4 = METRIC_LABELS.get("F4", "F4")
-                        l_f4q = METRIC_LABELS.get("F4Q", "F4Q")
-                        l_b5w = METRIC_LABELS.get("B5W", "B5W")
-                        l_b5p = METRIC_LABELS.get("B5P", "B5P")
+                        l_t3e = METRIC_LABELS.get("t3e", "t3e")
+                        l_t3 = METRIC_LABELS.get("t3", "t3")
+                        l_f4 = METRIC_LABELS.get("f4", "f4")
+                        l_f4q = METRIC_LABELS.get("f4q", "f4q")
                         rows.append(
                             {
                                 "組合": p["name"],
                                 "樣本(場)": races_n,
-                                f"{l_win}%": round((win_n / races_n * 100.0), 1) if races_n else 0.0,
-                                f"{l_p}%": round((p_n / races_n * 100.0), 1) if races_n else 0.0,
-                                f"{l_q1}%": round((q1_n / races_n * 100.0), 1) if races_n else 0.0,
-                                f"{l_pq}%": round((pq_n / races_n * 100.0), 1) if races_n else 0.0,
-                                f"{l_t3e}%": round((t3e_n / races_n * 100.0), 1) if races_n else 0.0,
-                                f"{l_t3}%": round((t3_n / races_n * 100.0), 1) if races_n else 0.0,
-                                f"{l_f4}%": round((f4_n / races_n * 100.0), 1) if races_n else 0.0,
-                                f"{l_f4q}%": round((f4q_n / races_n * 100.0), 1) if races_n else 0.0,
-                                f"{l_b5w}%": round((b5w_n / races_n * 100.0), 1) if races_n else 0.0,
-                                f"{l_b5p}%": round((b5p_n / races_n * 100.0), 1) if races_n else 0.0,
                                 "淘汰準確率(35%)": (round(elim_acc * 100.0, 1) if elim_acc is not None else None),
                                 "錯殺率(35%)": (round(elim_fp * 100.0, 1) if elim_fp is not None else None),
                             }
                         )
+                        for k in HIT_METRICS:
+                            if k in {"t3e", "t3", "f4", "f4q"}:
+                                continue
+                            col = f"{METRIC_LABELS.get(k, k)}%"
+                            v = int(stt.get(k) or 0)
+                            rows[-1][col] = round((v / races_n * 100.0), 1) if races_n else 0.0
+                        rows[-1][f"{l_t3e}%"] = round((t3e_n / races_n * 100.0), 1) if races_n else 0.0
+                        rows[-1][f"{l_t3}%"] = round((t3_n / races_n * 100.0), 1) if races_n else 0.0
+                        rows[-1][f"{l_f4}%"] = round((f4_n / races_n * 100.0), 1) if races_n else 0.0
+                        rows[-1][f"{l_f4q}%"] = round((f4q_n / races_n * 100.0), 1) if races_n else 0.0
                     st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
                     with st.expander("📌 命中率統計口徑", expanded=False):
-                        l_win = METRIC_LABELS.get("WIN", "WIN")
-                        l_p = METRIC_LABELS.get("P", "P")
-                        l_q1 = METRIC_LABELS.get("Q1", "Q1")
-                        l_pq = METRIC_LABELS.get("PQ", "PQ")
-                        l_t3e = METRIC_LABELS.get("T3E", "T3E")
-                        l_t3 = METRIC_LABELS.get("T3", "T3")
-                        l_f4 = METRIC_LABELS.get("F4", "F4")
-                        l_f4q = METRIC_LABELS.get("F4Q", "F4Q")
-                        l_b5w = METRIC_LABELS.get("B5W", "B5W")
-                        l_b5p = METRIC_LABELS.get("B5P", "B5P")
+                        l_w1 = METRIC_LABELS.get("w1", "w1")
+                        l_w2 = METRIC_LABELS.get("w2", "w2")
+                        l_w3 = METRIC_LABELS.get("w3", "w3")
+                        l_p1 = METRIC_LABELS.get("p1", "p1")
+                        l_p2 = METRIC_LABELS.get("p2", "p2")
+                        l_p3 = METRIC_LABELS.get("p3", "p3")
+                        l_q2 = METRIC_LABELS.get("q2", "q2")
+                        l_q3 = METRIC_LABELS.get("q3", "q3")
+                        l_pq2 = METRIC_LABELS.get("pq2", "pq2")
+                        l_pq3 = METRIC_LABELS.get("pq3", "pq3")
+                        l_t3e = METRIC_LABELS.get("t3e", "t3e")
+                        l_t3 = METRIC_LABELS.get("t3", "t3")
+                        l_f4 = METRIC_LABELS.get("f4", "f4")
+                        l_f4q = METRIC_LABELS.get("f4q", "f4q")
                         st.markdown(f"""
                         - 統計起始：{STATS_START_DATE.date().isoformat()}（之前忽略）
                         - 統計窗口：最近 {STATS_WINDOW_DAYS} 天（若起始日更近，則以起始日為準）
                         - 命中定義：以模型 Top5/Top4/Top3/Top2 預測與賽果名次比較：
-                          - {l_win}：預測首2位包含冠軍
-                          - {l_p}：預測首3位包含三甲中任意一隻
-                          - {l_q1}：預測首2位包含冠軍 且 預測首3位包含亞軍
-                          - {l_pq}：預測首3位命中三甲其中兩隻或以上
+                          - {l_w1}：預測首1位命中冠軍
+                          - {l_w2}：預測首2位包含冠軍
+                          - {l_w3}：預測首3位包含冠軍
+                          - {l_p1}：預測首1位命中三甲中任意一隻
+                          - {l_p2}：預測首2位命中三甲中任意一隻
+                          - {l_p3}：預測首3位命中三甲中任意一隻
+                          - {l_q2}：預測首2位同時命中冠/亞（不分次序）
+                          - {l_q3}：預測首3位同時命中冠/亞（不分次序）
+                          - {l_pq2}：預測首2位同時命中三甲其中兩隻或以上
+                          - {l_pq3}：預測首3位命中三甲其中兩隻或以上
                           - {l_t3e}：預測首2位包含冠軍 且 預測首4位包含亞軍+季軍
                           - {l_t3}：預測首4位包含三甲全部馬匹
                           - {l_f4}：預測首2位包含冠軍 且 預測首5位包含2-4名
                           - {l_f4q}：預測首5位包含四甲全部馬匹
-                          - {l_b5w}：預測首5位包含冠軍
-                          - {l_b5p}：預測首5位包含三甲中任意一隻
                         """)
 
                     st.markdown("### 🧾 分享字段（會員組合 Top5）")
@@ -1321,10 +1318,7 @@ def main():
                             )
                             return [int(r[0]) for r in rows]
 
-                        agg = {
-                            fn: {"races": 0, "win": 0, "p": 0, "q1": 0, "pq": 0, "t3e": 0, "t3": 0, "f4": 0, "f4q": 0, "b5w": 0, "b5p": 0}
-                            for fn in factor_names
-                        }
+                        agg = {fn: {"races": 0, **{k: 0 for k in HIT_METRICS}} for fn in factor_names}
                         cache_act = {}
                         for race_id, factor_name, top5, meta in preds:
                             if not isinstance(top5, list) or len(top5) < 5:
@@ -1358,36 +1352,13 @@ def main():
                                     a[kk] += int(v)
 
                         rows = []
-                        l_win = METRIC_LABELS.get("WIN", "WIN")
-                        l_p = METRIC_LABELS.get("P", "P")
-                        l_q1 = METRIC_LABELS.get("Q1", "Q1")
-                        l_pq = METRIC_LABELS.get("PQ", "PQ")
-                        l_t3e = METRIC_LABELS.get("T3E", "T3E")
-                        l_t3 = METRIC_LABELS.get("T3", "T3")
-                        l_f4 = METRIC_LABELS.get("F4", "F4")
-                        l_f4q = METRIC_LABELS.get("F4Q", "F4Q")
-                        l_b5w = METRIC_LABELS.get("B5W", "B5W")
-                        l_b5p = METRIC_LABELS.get("B5P", "B5P")
                         for fn in factor_names:
                             a = agg[fn]
                             n = int(a["races"] or 0)
-                            rows.append(
-                                {
-                                    "條件": factor_desc.get(fn, fn),
-                                    "代號": fn,
-                                    "樣本(場)": n,
-                                    f"{l_win}%": round((a["win"] / n * 100.0), 1) if n else 0.0,
-                                    f"{l_p}%": round((a["p"] / n * 100.0), 1) if n else 0.0,
-                                    f"{l_q1}%": round((a["q1"] / n * 100.0), 1) if n else 0.0,
-                                    f"{l_pq}%": round((a["pq"] / n * 100.0), 1) if n else 0.0,
-                                    f"{l_t3e}%": round((a["t3e"] / n * 100.0), 1) if n else 0.0,
-                                    f"{l_t3}%": round((a["t3"] / n * 100.0), 1) if n else 0.0,
-                                    f"{l_f4}%": round((a["f4"] / n * 100.0), 1) if n else 0.0,
-                                    f"{l_f4q}%": round((a["f4q"] / n * 100.0), 1) if n else 0.0,
-                                    f"{l_b5w}%": round((a["b5w"] / n * 100.0), 1) if n else 0.0,
-                                    f"{l_b5p}%": round((a["b5p"] / n * 100.0), 1) if n else 0.0,
-                                }
-                            )
+                            row = {"條件": factor_desc.get(fn, fn), "代號": fn, "樣本(場)": n}
+                            for k in HIT_METRICS:
+                                row[f"{METRIC_LABELS.get(k, k)}%"] = round((int(a.get(k) or 0) / n * 100.0), 1) if n else 0.0
+                            rows.append(row)
                         st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
         active_name = st.session_state.get("selected_preset_name", "（手動調整）")
@@ -1431,7 +1402,7 @@ def main():
                 - 系統會在每場把多個「獨立條件」轉成分數，並按權重合成總分排序。
                 - 獨立條件（factor）：單一條件各自產生 Top5，用於做「條件本身」準確度統計。
                 - 會員組合（preset）：多條件按會員儲存權重加權後產生 Top5，用於做「組合表現」統計。
-                - Top5 會在排位爬取後生成快照；賽果入庫後會結算命中（WIN/P/Q1/PQ/T3E/T3/F4/F4Q/B5W/B5P）。
+                - Top5 會在排位爬取後生成快照；賽果入庫後會結算命中（獨贏/位置/正Q/PQ/三重/四連）。
                 """)
 
                 with st.expander("📚 各條件計算邏輯", expanded=False):

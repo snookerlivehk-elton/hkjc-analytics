@@ -14,7 +14,7 @@
   - `predictor_type=preset`：會員儲存組合（多因子加權）Top5
 - **結算日與流程**
   - 排位/即時數據更新 + 計分後：生成 Top5 快照（建議使用後台「⚡ 一鍵完整更新」確保資料完整）
-  - 賽果/派彩入庫後：以「Top5 快照」對比賽果 Top5 計算命中（WIN/P/Q1/PQ/T3E/T3/F4/F4Q/B5W/B5P），並回寫到快照 meta.hits / meta.actual_top5
+- 賽果/派彩入庫後：以「Top5 快照」對比賽果 Top5 計算命中（獨贏/位置/正Q/PQ/三重/四連），並回寫到快照 meta.hits / meta.actual_top5
 
 建議順序（以某賽日為單位）：
 
