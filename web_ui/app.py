@@ -784,6 +784,93 @@ def main():
             going_display = g0
     col4.metric("場地狀況", going_display or "N/A")
 
+    with st.expander("🛰️ 數據源更新狀態", expanded=False):
+        from database.models import SystemConfig
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        racedate_str = ""
+        try:
+            if race and hasattr(race.race_date, "strftime"):
+                racedate_str = race.race_date.strftime("%Y/%m/%d")
+        except Exception:
+            racedate_str = ""
+
+        rn = int(getattr(race, "race_no", 0) or 0) if race else 0
+        hk_tz = ZoneInfo("Asia/Hong_Kong")
+
+        def _get_cfg(key: str):
+            return session.query(SystemConfig).filter_by(key=key).first()
+
+        def _iso_to_local(s: str):
+            try:
+                dt = datetime.fromisoformat(str(s))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=hk_tz)
+                return dt.astimezone(hk_tz).strftime("%m/%d %H:%M")
+            except Exception:
+                return None
+
+        st.markdown("#### ⚡ SpeedPRO 能量分")
+        is_maiden = bool(str(race.race_class or "").strip() and ("新馬" in str(race.race_class or "")))
+        snap_key = f"speedpro_energy:{racedate_str}:{rn}" if (racedate_str and rn) else ""
+        info_key = f"speedpro_energy_info:{racedate_str}:{rn}" if (racedate_str and rn) else ""
+        retry_key = f"speedpro_retry:{racedate_str}:{rn}" if (racedate_str and rn) else ""
+
+        if is_maiden:
+            st.info("此場屬新馬賽/無足夠賽績時，HKJC 可能不提供 SpeedPRO 指數；系統會視作不適用。")
+            if snap_key:
+                st.caption(f"key={snap_key}")
+        else:
+            snap_cfg = _get_cfg(snap_key) if snap_key else None
+            info_cfg = _get_cfg(info_key) if info_key else None
+            retry_cfg = _get_cfg(retry_key) if retry_key else None
+
+            data_map = snap_cfg.value if (snap_cfg and isinstance(snap_cfg.value, dict)) else {}
+            info = info_cfg.value if (info_cfg and isinstance(info_cfg.value, dict)) else {}
+            retry = retry_cfg.value if (retry_cfg and isinstance(retry_cfg.value, dict)) else {}
+
+            total = len(data_map) if isinstance(data_map, dict) else 0
+            has_energy = 0
+            has_status = 0
+            both = 0
+            if total:
+                for v in data_map.values():
+                    if not isinstance(v, dict):
+                        continue
+                    ea = v.get("energy_assess")
+                    sr = v.get("status_rating")
+                    if ea is not None:
+                        has_energy += 1
+                    if sr is not None:
+                        has_status += 1
+                    if ea is not None and sr is not None:
+                        both += 1
+
+            ready = bool(total >= 6 and has_energy > 0 and has_status > 0 and (both / float(total)) >= 0.6)
+            captured_at = _iso_to_local(info.get("captured_at")) if isinstance(info, dict) else None
+            last_err = str(retry.get("last_error") or "").strip() if isinstance(retry, dict) else ""
+            next_retry = _iso_to_local(retry.get("next_retry_at")) if isinstance(retry, dict) else None
+
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("狀態", "✅ 已齊全" if ready else ("⚠️ 未齊全" if total else "⏳ 未抓取"))
+            c2.metric("EA 覆蓋", f"{has_energy}/{total}" if total else "0/0")
+            c3.metric("SR 覆蓋", f"{has_status}/{total}" if total else "0/0")
+            c4.metric("同時覆蓋", f"{both}/{total}" if total else "0/0")
+
+            if captured_at:
+                st.caption(f"最後更新：{captured_at}（key={snap_key}）")
+            elif snap_key:
+                st.caption(f"key={snap_key}")
+
+            if not ready:
+                hint = "判定以「速勢能量評估(EA)」＋「狀態評級(SR)」是否已更新為準；未齊全時 SpeedPRO 因子會視作不可用（避免太早採納造成錯誤結果）。"
+                if last_err:
+                    hint += f" 目前狀態：{last_err}"
+                if next_retry:
+                    hint += f"（下次重試：{next_retry}）"
+                st.info(hint)
+
     # 數據加載與顯示
     weight_map = st.session_state.get("active_weight_map", {})
     df = load_scoring_data(session, selected_race_id, weight_map)
@@ -1908,8 +1995,8 @@ def main():
                         "draw_stats": "用當日官方檔位統計（勝率/上名率；若有Top4%則優先）先驗平滑，再做相對基準與信心折扣（偏保守）後同場標準化。",
                         "weight_rating_perf": "以同程強勢評分差（勝出/入TopK時最高評分 vs 現評）與同程TopK率（可衰減）為主，並加入場內評分位置＋同評分下輕磅形勢作保守基準，再同場標準化。",
                         "class_performance": "只針對 3→4 與 4→5 的降班訊號（其餘降班忽略），並加入時效性衰減，再同場標準化。",
-                        "recent_form": "取最近 6 仗有效名次，按時間權重加權平均後轉為 raw，再同場標準化。",
-                        "debut_long_rest": "本場若屬長休復出（可調門檻），回看歷史長休復出賽的勝/入位並疊加加分，再同場標準化。",
+                        "recent_form": "把最近 6 仗名次轉成 Top4 取向分數，做近期加權，並對樣本不足/長休/退出等情況保守化處理後再同場標準化。",
+                        "debut_long_rest": "長休復出時回看該馬歷史「長休後第一仗」的 Top4 表現並做先驗平滑與樣本不足保守化；長休越久越向中性收斂，再同場標準化。",
                     }
                     for w in weights_list:
                         st.markdown(f"**{w.description}**")

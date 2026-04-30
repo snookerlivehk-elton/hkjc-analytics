@@ -356,14 +356,38 @@ else:
                 if selected_factor == "初出／長休後表現":
                     from database.models import SystemConfig, RaceEntry, ScoringFactor
 
-                    cfg = {"rest_days": 90}
+                    cfg = {
+                        "rest_days": 90,
+                        "rest_tau": 60.0,
+                        "prior_strength": 6.0,
+                        "prior_top4": 0.28,
+                        "conf_k": 3.0,
+                        "sample_max": 12,
+                        "dnf_rank": 14,
+                    }
                     config = session.query(SystemConfig).filter_by(key="debut_long_rest_config").first()
                     if config and isinstance(config.value, dict):
                         v = config.value
                         if "rest_days" in v:
                             cfg["rest_days"] = int(v["rest_days"])
+                        if "rest_tau" in v:
+                            cfg["rest_tau"] = float(v["rest_tau"])
+                        if "prior_strength" in v:
+                            cfg["prior_strength"] = float(v["prior_strength"])
+                        if "prior_top4" in v:
+                            cfg["prior_top4"] = float(v["prior_top4"])
+                        if "conf_k" in v:
+                            cfg["conf_k"] = float(v["conf_k"])
+                        if "sample_max" in v:
+                            cfg["sample_max"] = int(v["sample_max"])
+                        if "dnf_rank" in v:
+                            cfg["dnf_rank"] = int(v["dnf_rank"])
 
-                    expected = f"R{cfg['rest_days']}d"
+                    expected = (
+                        f"R{int(cfg['rest_days'])}d|T{float(cfg['rest_tau']):.0f}d|"
+                        f"PS{float(cfg['prior_strength']):.1f}|P{float(cfg['prior_top4']):.2f}|"
+                        f"K{float(cfg['conf_k']):.1f}|M{int(cfg['sample_max'])}|D{int(cfg['dnf_rank'])}"
+                    )
                     sample = (
                         session.query(ScoringFactor.raw_data_display)
                         .join(RaceEntry, RaceEntry.id == ScoringFactor.entry_id)
@@ -504,17 +528,16 @@ else:
                     st.markdown("---")
                     st.markdown("### 💡 演算法說明：近期狀態 (Last 6 Runs)")
                     st.markdown("""
-                    這個條件用於評估馬匹最近 6 場比賽的**「時間衰減加權平均名次」**。
+                    這個條件用於評估馬匹最近 6 場的**「Top4 取向近期狀態」**，核心不是直接平均名次，而是把每一仗的名次轉換成「更貼近 Top4 命中」的分數，再做近期加權與保守化。
                     
-                    **為什麼要用加權平均？**
-                    因為賽馬最重要的就是「當下狀態」。一匹最近一場跑第 1 名的馬，其狀態絕對比半年前跑第 1 名的馬更好。
-                    因此，我們賦予**越近期的比賽越高的權重**。
+                    **計分重點：**
+                    1. **名次→Top4 分數**：每一仗名次會轉成 0–1 的「Top4 相似度」（名次越前分越高）。退出/未完成等會視作差名次處理，避免被忽略而偏樂觀。
+                    2. **近期權重**：仍採用最近 6 仗權重（第 1 仗最重），並可選擇加入「按距離今天幾日」的時間衰減，使更近期的賽事影響更大。
+                    3. **樣本不足保守**：近仗不足時，分數會向中性值收斂，避免 1–2 場爆分。
+                    4. **長休中性化**：距離上一仗太久時，分數會自動向中性靠攏（狀態不明）。
+                    5. **趨勢加成**：若最近 3 仗比之前 3 仗明顯進步，會有小幅加分（可調整或設為 0 關閉）。
                     
-                    **計分公式：**
-                    1. 系統會抓取馬匹最近 6 場有效名次 (忽略退出等異常紀錄)。
-                    2. 將每場名次乘上對應的權重 (預設最近一場為 6，最遠一場為 1)。
-                    3. 算出加權平均名次。加權平均名次越小（越接近 1），代表狀態越好。
-                    4. 引擎會將這場比賽所有馬匹的加權平均名次進行百分位標準化，最優秀者得 10 分。
+                    最後，引擎會把本場所有馬匹的 raw 分數做相對百分位標準化成 0–10 分。
                     """)
                     
                     with st.expander("⚙️ 調整加權參數 (調整後將即時儲存並重算)"):
@@ -552,6 +575,81 @@ else:
                                 engine.score_race(selected_race_id)
                                 
                                 st.success(f"參數已儲存為 {new_weights}，並已重新計算分數！")
+                                st.rerun()
+                    
+                    with st.expander("⚙️ 調整進階參數（Top4 取向＋保守化；調整後將即時儲存並重算）", expanded=False):
+                        from database.models import SystemConfig
+                        
+                        cfg = {
+                            "mid_rank": 4.5,
+                            "rank_slope": 1.6,
+                            "dnf_rank": 14,
+                            "rank_cap": 20,
+                            "use_day_decay": True,
+                            "day_tau": 120.0,
+                            "conf_k": 2.0,
+                            "gap_days_neutral": 60.0,
+                            "gap_tau": 60.0,
+                            "trend_w": 0.08,
+                            "trend_tau": 3.0,
+                        }
+                        
+                        config = session.query(SystemConfig).filter_by(key="recent_form_config").first()
+                        if config and isinstance(config.value, dict):
+                            for k in cfg.keys():
+                                if k in config.value:
+                                    try:
+                                        cfg[k] = type(cfg[k])(config.value[k])
+                                    except Exception:
+                                        pass
+                        
+                        with st.form("recent_form_config_form"):
+                            st.caption("用途：更貼近 Top4 命中；並針對樣本不足、長休、退出等情況作保守化。")
+                            
+                            c1, c2, c3, c4 = st.columns(4)
+                            mid_rank = c1.number_input("Top4 分數中點名次", value=float(cfg["mid_rank"]), min_value=1.0, max_value=12.0, step=0.1)
+                            rank_slope = c2.number_input("名次曲線斜率(越小越極端)", value=float(cfg["rank_slope"]), min_value=0.5, max_value=5.0, step=0.1)
+                            dnf_rank = c3.number_input("退出/未完成視作名次", value=int(cfg["dnf_rank"]), min_value=6, max_value=40, step=1)
+                            rank_cap = c4.number_input("名次上限裁剪", value=int(cfg["rank_cap"]), min_value=6, max_value=60, step=1)
+                            
+                            c5, c6, c7, c8 = st.columns(4)
+                            use_day_decay = c5.checkbox("啟用按日時間衰減", value=bool(cfg["use_day_decay"]))
+                            day_tau = c6.number_input("按日衰減 τ（天；越大越不衰減）", value=float(cfg["day_tau"]), min_value=0.0, max_value=365.0, step=5.0)
+                            conf_k = c7.number_input("樣本不足保守係數(越大越保守)", value=float(cfg["conf_k"]), min_value=0.0, max_value=20.0, step=0.5)
+                            gap_days_neutral = c8.number_input("長休中性化門檻(天)", value=float(cfg["gap_days_neutral"]), min_value=0.0, max_value=365.0, step=5.0)
+                            
+                            c9, c10, c11, c12 = st.columns(4)
+                            gap_tau = c9.number_input("長休中性化衰減 τ（天）", value=float(cfg["gap_tau"]), min_value=0.0, max_value=365.0, step=5.0)
+                            trend_w = c10.number_input("趨勢加成權重(設0關閉)", value=float(cfg["trend_w"]), min_value=0.0, max_value=0.3, step=0.01)
+                            trend_tau = c11.number_input("趨勢飽和 τ（名次差）", value=float(cfg["trend_tau"]), min_value=0.5, max_value=20.0, step=0.5)
+                            _ = c12.empty()
+                            
+                            submitted = st.form_submit_button("💾 儲存進階參數並為本場重新計分", type="primary")
+                            if submitted:
+                                new_cfg = {
+                                    "mid_rank": float(mid_rank),
+                                    "rank_slope": float(rank_slope),
+                                    "dnf_rank": int(dnf_rank),
+                                    "rank_cap": int(rank_cap),
+                                    "use_day_decay": bool(use_day_decay),
+                                    "day_tau": float(day_tau),
+                                    "conf_k": float(conf_k),
+                                    "gap_days_neutral": float(gap_days_neutral),
+                                    "gap_tau": float(gap_tau),
+                                    "trend_w": float(trend_w),
+                                    "trend_tau": float(trend_tau),
+                                }
+                                if not config:
+                                    config = SystemConfig(key="recent_form_config", description="近期狀態(Last 6)：Top4 取向＋保守化參數")
+                                    session.add(config)
+                                config.value = new_cfg
+                                session.commit()
+                                
+                                from scoring_engine.core import ScoringEngine
+                                engine = ScoringEngine(session)
+                                engine.score_race(selected_race_id)
+                                
+                                st.success("進階參數已儲存並重新計分！")
                                 st.rerun()
                 
                 if selected_factor in ("騎師＋練馬師合作 (同路程/場地)", "騎師＋練馬師合作 (不論馬匹)", "騎師＋練馬師合作 (綜合)"):
@@ -768,29 +866,71 @@ else:
                     st.markdown("---")
                     st.markdown("### 💡 演算法說明：初出／長休後表現")
                     st.markdown("""
-                    這個條件用於評估馬匹是否「長休後復出」以及其歷史上「長休後復出」的表現。
+                    這個條件用於評估馬匹在「**初出／長休復出**」場景下的 Top4 命中傾向，重點是**保守、可泛化**：
                     
-                    - **休息天數門檻 (可調)**：本場距離上仗日數 ≥ 門檻，視為長休復出。
-                    - **疊加加分**：回看該馬歷史上每次「休息≥門檻」後的復出賽績；若復出賽勝出/入位，按設定分值疊加加分。
-                    - **最後調整**：同場再做百分位標準化成 0–10 分。
+                    - **先判斷是否長休**：本場距離上仗日數 ≥ 門檻，才視作長休復出；否則回傳中性（不加不減），避免大部分馬全變 0 分造成噪音。
+                    - **馬匹自身復出樣本**：回看該馬歷史上每次「gap ≥ 門檻」後的第一仗，把成績轉成 **Top4 命中(0/1)**，計算平滑後的 Top4 率。
+                    - **樣本不足保守**：復出樣本少時，分數向中性收斂，避免 1–2 次復出就爆分或誤導。
+                    - **長休越久越不確定**：距離上仗越久，會把分數再往中性拉回（可調 τ），避免超長休被過度解讀。
+                    - **退出/未完成**：不會被忽略，會視作差表現樣本（避免偏樂觀）。
+                    
+                    最後，引擎會把本場所有馬匹的 raw 分數做相對百分位標準化成 0–10 分。
                     """)
-                    with st.expander("⚙️ 調整休息天數門檻 (調整後將即時儲存並重算)", expanded=False):
+                    with st.expander("⚙️ 調整參數（調整後將即時儲存並重算）", expanded=False):
                         from database.models import SystemConfig
 
-                        cfg = {"rest_days": 90}
+                        cfg = {
+                            "rest_days": 90,
+                            "rest_tau": 60.0,
+                            "prior_strength": 6.0,
+                            "prior_top4": 0.28,
+                            "conf_k": 3.0,
+                            "sample_max": 12,
+                            "dnf_rank": 14,
+                        }
                         config = session.query(SystemConfig).filter_by(key="debut_long_rest_config").first()
                         if config and isinstance(config.value, dict):
                             v = config.value
                             if "rest_days" in v:
                                 cfg["rest_days"] = int(v["rest_days"])
+                            if "rest_tau" in v:
+                                cfg["rest_tau"] = float(v["rest_tau"])
+                            if "prior_strength" in v:
+                                cfg["prior_strength"] = float(v["prior_strength"])
+                            if "prior_top4" in v:
+                                cfg["prior_top4"] = float(v["prior_top4"])
+                            if "conf_k" in v:
+                                cfg["conf_k"] = float(v["conf_k"])
+                            if "sample_max" in v:
+                                cfg["sample_max"] = int(v["sample_max"])
+                            if "dnf_rank" in v:
+                                cfg["dnf_rank"] = int(v["dnf_rank"])
 
                         with st.form("debut_long_rest_config_form"):
-                            rest_days = st.number_input("休息天數門檻 (日)", value=int(cfg["rest_days"]), min_value=0, max_value=365, step=5)
+                            c1, c2, c3, c4 = st.columns(4)
+                            rest_days = c1.number_input("長休門檻 (日)", value=int(cfg["rest_days"]), min_value=0, max_value=365, step=5)
+                            rest_tau = c2.number_input("長休不確定 τ(日)", value=float(cfg["rest_tau"]), min_value=0.0, max_value=365.0, step=5.0)
+                            sample_max = c3.number_input("最多回看復出樣本", value=int(cfg["sample_max"]), min_value=1, max_value=60, step=1)
+                            dnf_rank = c4.number_input("退出/未完成視作名次", value=int(cfg["dnf_rank"]), min_value=6, max_value=60, step=1)
+
+                            c5, c6, c7 = st.columns(3)
+                            prior_top4 = c5.number_input("先驗Top4率", value=float(cfg["prior_top4"]), min_value=0.0, max_value=1.0, step=0.01)
+                            prior_strength = c6.number_input("先驗強度(等價樣本)", value=float(cfg["prior_strength"]), min_value=0.0, max_value=200.0, step=1.0)
+                            conf_k = c7.number_input("樣本不足保守係數(越大越保守)", value=float(cfg["conf_k"]), min_value=0.0, max_value=50.0, step=0.5)
+
                             submitted = st.form_submit_button("💾 儲存參數並為本場重新計分", type="primary")
                             if submitted:
-                                new_cfg = {"rest_days": int(rest_days)}
+                                new_cfg = {
+                                    "rest_days": int(rest_days),
+                                    "rest_tau": float(rest_tau),
+                                    "prior_strength": float(prior_strength),
+                                    "prior_top4": float(prior_top4),
+                                    "conf_k": float(conf_k),
+                                    "sample_max": int(sample_max),
+                                    "dnf_rank": int(dnf_rank),
+                                }
                                 if not config:
-                                    config = SystemConfig(key="debut_long_rest_config", description="初出／長休後表現：休息天數門檻")
+                                    config = SystemConfig(key="debut_long_rest_config", description="初出／長休後表現：Top4取向＋保守化參數")
                                     session.add(config)
                                 config.value = new_cfg
                                 session.commit()
@@ -1046,7 +1186,8 @@ else:
                     st.markdown("""
                     這個條件用於根據 HKJC「速勢能量表」評估馬匹在本場的能量匹配與狀態。
                     
-                    - **資料來源**：`/local/info/speedpro/speedguide?raceno=X`（通常於排位日當晚公佈）。
+                    - **資料來源**：HKJC SpeedPRO 速勢能量頁 `https://racing.hkjc.com/zh-hk/local/info/speedpro/speedguide?raceno=X`（頁面顯示用）；系統抓取其背後的官方 JSON：`https://consvc.hkjc.com/-/media/Sites/JCRW/SpeedPro/current/sg_race_X`。
+                    - **發佈時間注意**：其中「速勢能量評估」與「狀態評級」較晚發佈，太早抓取容易出現缺欄位或覆蓋不足；系統會在未到可用時間或覆蓋不足時回傳 0 分並顯示原因（避免產生錯誤結果）。
                     - **擷取欄位**：
                       - 能量所需
                       - 狀態評級

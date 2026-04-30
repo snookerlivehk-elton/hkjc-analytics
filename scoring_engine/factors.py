@@ -1465,7 +1465,8 @@ class FactorCalculator:
 
     # 14. HKJC SpeedPRO 能量分 (SpeedPRO)
     def _calculate_speedpro_energy(self):
-        from datetime import datetime
+        from datetime import datetime, timedelta
+        from zoneinfo import ZoneInfo
         from database.models import Race, SystemConfig
 
         race_id = self.df.iloc[0].get("race_id") if "race_id" in self.df.columns else None
@@ -1475,23 +1476,33 @@ class FactorCalculator:
 
         race = self.session.get(Race, race_id) if race_id else None
         race_no = int(getattr(race, "race_no", 0) or 0) if race else 0
+        race_class = str(getattr(race, "race_class", "") or "").strip() if race else ""
         date_str = None
+        race_day = None
         try:
             rd = getattr(race, "race_date", None)
             if isinstance(rd, datetime):
+                race_day = rd
                 date_str = rd.date().strftime("%Y/%m/%d")
         except Exception:
             date_str = None
+            race_day = None
 
         data_map = {}
+        source_key = None
         if date_str and race_no:
             cfg2 = self.session.query(SystemConfig).filter_by(key=f"speedpro_energy:{date_str}:{race_no}").first()
             if cfg2 and isinstance(cfg2.value, dict):
                 data_map = cfg2.value
+                source_key = f"speedpro_energy:{date_str}:{race_no}"
         if not data_map:
             cfg = self.session.query(SystemConfig).filter_by(key=f"speedpro_energy:{race_id}").first()
             data_map = cfg.value if cfg and isinstance(cfg.value, dict) else {}
+            if data_map:
+                source_key = f"speedpro_energy:{race_id}"
         if not isinstance(data_map, dict) or not data_map:
+            if race_class and ("新馬" in race_class):
+                return pd.Series(0.0, index=self.df.index), pd.Series("新馬賽無SpeedPRO", index=self.df.index)
             return pd.Series(0.0, index=self.df.index), pd.Series("無數據", index=self.df.index)
 
         priority_cfg = self.session.query(SystemConfig).filter_by(key="speedpro_energy_sort_priority").first()
@@ -1506,7 +1517,7 @@ class FactorCalculator:
         def _get_metric(hn: int):
             v = data_map.get(str(hn))
             if v is None:
-                v = data_map.get(int(hn)) if isinstance(list(data_map.keys())[0], int) else None
+                v = data_map.get(int(hn))
             return v if isinstance(v, dict) else {}
 
         def _num(v):
@@ -1549,6 +1560,43 @@ class FactorCalculator:
         rank_map = {hn: i + 1 for i, hn in enumerate(sorted_hn)}
         n_total = len(sorted_hn) if sorted_hn else 0
 
+        total = n_total
+        has_energy = 0
+        has_status = 0
+        both = 0
+        for hn in sorted_hn:
+            m = _get_metric(hn)
+            ea = _num(m.get("energy_assess"))
+            sr = _num(m.get("status_rating"))
+            if ea is not None:
+                has_energy += 1
+            if sr is not None:
+                has_status += 1
+            if ea is not None and sr is not None:
+                both += 1
+
+        ready = bool(total and total >= 6 and has_energy > 0 and has_status > 0 and (both / float(total)) >= 0.6)
+        if not ready:
+            parts = [f"未齊全 EA{has_energy}/{total}", f"SR{has_status}/{total}", f"BOTH{both}/{total}"]
+            hk_tz = ZoneInfo("Asia/Hong_Kong")
+            if isinstance(race_day, datetime):
+                try:
+                    rd_hk = race_day
+                    if rd_hk.tzinfo is None:
+                        rd_hk = rd_hk.replace(tzinfo=hk_tz)
+                    now_hk = datetime.now(hk_tz)
+                    window_start = (
+                        datetime.combine((rd_hk - timedelta(days=1)).date(), datetime.strptime("12:00", "%H:%M").time())
+                        .replace(tzinfo=hk_tz)
+                    )
+                    if now_hk < window_start:
+                        parts.append(f"未到預計發佈(≥{window_start.strftime('%m/%d %H:%M')})")
+                except Exception:
+                    pass
+            if source_key:
+                parts.append(source_key)
+            return pd.Series(0.0, index=self.df.index), pd.Series("｜".join(parts), index=self.df.index)
+
         raw_scores = []
         displays = []
         for _, row in self.df.iterrows():
@@ -1564,13 +1612,18 @@ class FactorCalculator:
                 displays.append("無數據")
             else:
                 raw_scores.append(float(n_total - rnk))
-                displays.append(f"需{er}｜評{sr}｜評估{ea}｜差{ed}｜排{rnk}")
+                parts = [f"需{er}", f"評{sr}", f"評估{ea}", f"差{ed}", f"排{rnk}"]
+                if source_key:
+                    parts.append(source_key)
+                parts.append("P" + ",".join(priority))
+                displays.append("｜".join(parts))
 
         return pd.Series(raw_scores, index=self.df.index), pd.Series(displays, index=self.df.index)
 
     # 15. 近期狀態 (Recent Form - Last 6 Runs) - 真實邏輯：加權計算過去 6 場的平均名次
     def _calculate_recent_form(self):
         from datetime import datetime
+        import math
         from database.models import HorseHistory, Horse, SystemConfig, Race
         scores = []
         displays = []
@@ -1589,51 +1642,190 @@ class FactorCalculator:
             default_weights = config.value
         else:
             default_weights = [6, 5, 4, 3, 2, 1]
-        
+
+        cfg = {
+            "mid_rank": 4.5,
+            "rank_slope": 1.6,
+            "dnf_rank": 14,
+            "rank_cap": 20,
+            "use_day_decay": True,
+            "day_tau": 120.0,
+            "neutral": 0.5,
+            "conf_k": 2.0,
+            "gap_days_neutral": 60.0,
+            "gap_tau": 60.0,
+            "trend_w": 0.08,
+            "trend_tau": 3.0,
+        }
+        try:
+            config = self.session.query(SystemConfig).filter_by(key="recent_form_config").first()
+            if config and isinstance(config.value, dict):
+                v = config.value
+                if "mid_rank" in v:
+                    cfg["mid_rank"] = float(v["mid_rank"])
+                if "rank_slope" in v:
+                    cfg["rank_slope"] = float(v["rank_slope"])
+                if "dnf_rank" in v:
+                    cfg["dnf_rank"] = int(v["dnf_rank"])
+                if "rank_cap" in v:
+                    cfg["rank_cap"] = int(v["rank_cap"])
+                if "use_day_decay" in v:
+                    cfg["use_day_decay"] = bool(v["use_day_decay"])
+                if "day_tau" in v:
+                    cfg["day_tau"] = float(v["day_tau"])
+                if "conf_k" in v:
+                    cfg["conf_k"] = float(v["conf_k"])
+                if "gap_days_neutral" in v:
+                    cfg["gap_days_neutral"] = float(v["gap_days_neutral"])
+                if "gap_tau" in v:
+                    cfg["gap_tau"] = float(v["gap_tau"])
+                if "trend_w" in v:
+                    cfg["trend_w"] = float(v["trend_w"])
+                if "trend_tau" in v:
+                    cfg["trend_tau"] = float(v["trend_tau"])
+        except Exception:
+            pass
+
+        if cfg["rank_slope"] <= 0:
+            cfg["rank_slope"] = 1.0
+        if cfg["rank_cap"] < 1:
+            cfg["rank_cap"] = 1
+        if cfg["dnf_rank"] < 1:
+            cfg["dnf_rank"] = 1
+        if cfg["day_tau"] < 0:
+            cfg["day_tau"] = 0.0
+        if cfg["conf_k"] < 0:
+            cfg["conf_k"] = 0.0
+        if cfg["gap_days_neutral"] < 0:
+            cfg["gap_days_neutral"] = 0.0
+        if cfg["gap_tau"] < 0:
+            cfg["gap_tau"] = 0.0
+        if cfg["trend_w"] < 0:
+            cfg["trend_w"] = 0.0
+        if cfg["trend_tau"] <= 0:
+            cfg["trend_tau"] = 1.0
+
+        cached = {}
+
+        def _days_ago(dt):
+            if not dt:
+                return None
+            try:
+                d = (cutoff_dt.date() - dt.date()).days
+                return 0 if d < 0 else int(d)
+            except Exception:
+                return None
+
+        def _rank_to_score(r):
+            x = (float(r) - float(cfg["mid_rank"])) / float(cfg["rank_slope"])
+            if x >= 60:
+                return 0.0
+            if x <= -60:
+                return 1.0
+            return 1.0 / (1.0 + math.exp(x))
+
         for _, row in self.df.iterrows():
-            # 查詢該馬匹最近 6 場往績
-            history = self.session.query(HorseHistory)\
-                .join(Horse)\
-                .filter(Horse.code == row["horse_code"])\
-                .filter(HorseHistory.race_date < cutoff_dt)\
-                .order_by(HorseHistory.race_date.desc())\
-                .limit(6).all()
-            
+            horse_id = self._to_int(row.get("horse_id", 0), default=0)
+            horse_code = str(row.get("horse_code") or "").strip()
+            cache_key = horse_id if horse_id else horse_code
+
+            if cache_key and cache_key in cached:
+                raw, disp = cached[cache_key]
+                scores.append(raw)
+                displays.append(disp)
+                continue
+
+            history = []
+            if horse_id:
+                history = (
+                    self.session.query(HorseHistory.race_date, HorseHistory.rank)
+                    .filter(HorseHistory.horse_id == horse_id, HorseHistory.race_date < cutoff_dt)
+                    .order_by(HorseHistory.race_date.desc())
+                    .limit(6)
+                    .all()
+                )
+            elif horse_code:
+                history = (
+                    self.session.query(HorseHistory.race_date, HorseHistory.rank)
+                    .join(Horse)
+                    .filter(Horse.code == horse_code, HorseHistory.race_date < cutoff_dt)
+                    .order_by(HorseHistory.race_date.desc())
+                    .limit(6)
+                    .all()
+                )
+
             if not history:
-                scores.append(-7.0) # 無數據給中位分 (假設平均第7名)
-                displays.append("無往績紀錄")
+                raw = float(cfg["neutral"])
+                disp = "無近仗"
+                if cache_key:
+                    cached[cache_key] = (raw, disp)
+                scores.append(raw)
+                displays.append(disp)
                 continue
-            
-            # 過濾出有效名次 (>0)，忽略退出等異常紀錄
-            ranks = [h.rank for h in history if h.rank > 0]
-            if not ranks:
-                scores.append(-7.0)
-                displays.append("近期無有效名次")
-                continue
-            
-            # 反轉排序：確保第一筆是最近的賽事 (history 是按時間降序 order_by desc)
-            # 所以 ranks[0] 就是最近一場
-            
-            # 根據有效名次的數量截取對應的權重
-            n = len(ranks)
+
+            runs = [(_days_ago(dt), self._to_int(rk, default=0)) for (dt, rk) in history]
+            n = len(runs)
             weights = default_weights[:n]
-            total_weight = sum(weights)
-            
-            if total_weight == 0:
-                scores.append(-7.0)
-                displays.append("權重總和為0")
-                continue
-                
-            weighted_sum = sum(r * w for r, w in zip(ranks, weights))
-            weighted_avg_rank = weighted_sum / total_weight
-            
-            # 為了給後端排序使用，我們把 raw_scores 設為負的加權平均名次
-            scores.append(-weighted_avg_rank)
-            
-            # 組合顯示字串
-            recent_str = "-".join(str(r) for r in ranks)
-            displays.append(f"近仗: {recent_str} (加權均名次 {weighted_avg_rank:.1f})")
-            
+            denom = 0.0
+            numer = 0.0
+            disp_ranks = []
+            eff_ranks = []
+
+            for i, (days_ago, rk) in enumerate(runs):
+                eff = rk if rk > 0 else int(cfg["dnf_rank"])
+                if eff < 1:
+                    eff = 1
+                if eff > int(cfg["rank_cap"]):
+                    eff = int(cfg["rank_cap"])
+
+                eff_ranks.append(eff)
+                disp_ranks.append("X" if rk <= 0 else str(int(rk)))
+
+                s = _rank_to_score(eff)
+                w = float(weights[i]) if i < len(weights) else 1.0
+                decay = 1.0
+                if cfg["use_day_decay"] and days_ago is not None and cfg["day_tau"] > 0:
+                    decay = math.exp(-float(days_ago) / float(cfg["day_tau"]))
+                ww = w * decay
+                numer += ww * s
+                denom += ww
+
+            mean_score = float(cfg["neutral"]) if denom <= 0 else (numer / denom)
+            conf = float(n) / (float(n) + float(cfg["conf_k"])) if cfg["conf_k"] > 0 else 1.0
+            raw = float(cfg["neutral"]) + conf * (mean_score - float(cfg["neutral"]))
+
+            last_days = runs[0][0]
+            if last_days is not None and float(last_days) > float(cfg["gap_days_neutral"]) and cfg["gap_tau"] > 0:
+                shrink = math.exp(-(float(last_days) - float(cfg["gap_days_neutral"])) / float(cfg["gap_tau"]))
+                raw = float(cfg["neutral"]) + shrink * (raw - float(cfg["neutral"]))
+
+            trend_bonus = 0.0
+            trend_delta = None
+            last_k = min(3, n)
+            prev_k = min(3, max(0, n - last_k))
+            if prev_k > 0:
+                last_mean = sum(eff_ranks[:last_k]) / float(last_k)
+                prev_mean = sum(eff_ranks[last_k:last_k + prev_k]) / float(prev_k)
+                trend_delta = prev_mean - last_mean
+                trend_bonus = float(cfg["trend_w"]) * math.tanh(float(trend_delta) / float(cfg["trend_tau"]))
+                raw += trend_bonus
+
+            if raw < 0.0:
+                raw = 0.0
+            if raw > 1.0:
+                raw = 1.0
+
+            recent_str = "-".join(disp_ranks)
+            if trend_delta is None:
+                disp = f"近仗:{recent_str}｜Top4分{mean_score:.2f}｜信心{conf:.2f}｜距上仗{last_days if last_days is not None else 'NA'}日"
+            else:
+                disp = f"近仗:{recent_str}｜Top4分{mean_score:.2f}｜信心{conf:.2f}｜距上仗{last_days if last_days is not None else 'NA'}日｜趨勢{trend_delta:+.1f}"
+
+            if cache_key:
+                cached[cache_key] = (raw, disp)
+            scores.append(raw)
+            displays.append(disp)
+
         return pd.Series(scores, index=self.df.index), pd.Series(displays, index=self.df.index)
 
     # 16. 獸醫報告／休息天數 (Vet/Rest Days)
@@ -1645,6 +1837,7 @@ class FactorCalculator:
     # 17. 初出／長休後表現 (Debut/Long Rest)
     def _calculate_debut_long_rest(self):
         from datetime import datetime
+        import math
         from database.models import HorseHistory, Race, SystemConfig
 
         race_id = self.df.iloc[0].get("race_id") if "race_id" in self.df.columns else None
@@ -1656,26 +1849,59 @@ class FactorCalculator:
             race_date = datetime.now()
         cutoff_dt = self._race_cutoff_dt()
 
-        cfg = {"rest_days": 90, "win_points": 1.0, "place_points": 0.5}
+        cfg = {
+            "rest_days": 90,
+            "rest_tau": 60.0,
+            "neutral_top4": 0.0,
+            "prior_strength": 6.0,
+            "prior_top4": 0.28,
+            "conf_k": 3.0,
+            "sample_max": 12,
+            "dnf_rank": 14,
+        }
         try:
             config = self.session.query(SystemConfig).filter_by(key="debut_long_rest_config").first()
             if config and isinstance(config.value, dict):
                 v = config.value
                 if "rest_days" in v:
                     cfg["rest_days"] = int(v["rest_days"])
-                if "win_points" in v:
-                    cfg["win_points"] = float(v["win_points"])
-                if "place_points" in v:
-                    cfg["place_points"] = float(v["place_points"])
+                if "rest_tau" in v:
+                    cfg["rest_tau"] = float(v["rest_tau"])
+                if "neutral_top4" in v:
+                    cfg["neutral_top4"] = float(v["neutral_top4"])
+                if "prior_strength" in v:
+                    cfg["prior_strength"] = float(v["prior_strength"])
+                if "prior_top4" in v:
+                    cfg["prior_top4"] = float(v["prior_top4"])
+                if "conf_k" in v:
+                    cfg["conf_k"] = float(v["conf_k"])
+                if "sample_max" in v:
+                    cfg["sample_max"] = int(v["sample_max"])
+                if "dnf_rank" in v:
+                    cfg["dnf_rank"] = int(v["dnf_rank"])
         except Exception:
             pass
 
         if cfg["rest_days"] < 0:
             cfg["rest_days"] = 0
-        if cfg["win_points"] < 0:
-            cfg["win_points"] = 0.0
-        if cfg["place_points"] < 0:
-            cfg["place_points"] = 0.0
+        if cfg["rest_tau"] < 0:
+            cfg["rest_tau"] = 0.0
+        if cfg["neutral_top4"] < 0:
+            cfg["neutral_top4"] = 0.0
+        if cfg["neutral_top4"] > 1.0:
+            cfg["neutral_top4"] = 1.0
+        if cfg["prior_strength"] < 0:
+            cfg["prior_strength"] = 0.0
+        if cfg["prior_top4"] < 0:
+            cfg["prior_top4"] = 0.0
+        if cfg["prior_top4"] > 1.0:
+            cfg["prior_top4"] = 1.0
+        if cfg["conf_k"] < 0:
+            cfg["conf_k"] = 0.0
+        if cfg["sample_max"] < 1:
+            cfg["sample_max"] = 1
+        if cfg["dnf_rank"] < 1:
+            cfg["dnf_rank"] = 1
 
         scores = []
         displays = []
@@ -1690,70 +1916,106 @@ class FactorCalculator:
                 continue
 
             if horse_id in cached:
-                current_rest, comeback_n, win_n, place_n, points, samples = cached[horse_id]
-            else:
-                hist = (
-                    self.session.query(HorseHistory.race_date, HorseHistory.rank)
-                    .filter(HorseHistory.horse_id == horse_id, HorseHistory.rank > 0, HorseHistory.race_date < cutoff_dt)
-                    .order_by(HorseHistory.race_date.asc())
-                    .all()
-                )
+                raw, disp = cached[horse_id]
+                scores.append(raw)
+                displays.append(disp)
+                continue
 
-                if not hist:
-                    current_rest = None
-                    comeback_n = 0
-                    win_n = 0
-                    place_n = 0
-                    points = 0.0
-                    samples = []
-                else:
-                    last_hist_date = hist[-1][0] if isinstance(hist[-1][0], datetime) else None
-                    current_rest = max((race_date - last_hist_date).days, 0) if last_hist_date else None
+            neutral = float(cfg["neutral_top4"])
+            if neutral <= 0.0:
+                n_field = len(self.df) if hasattr(self.df, "__len__") else 0
+                neutral = 4.0 / float(n_field) if n_field and n_field > 0 else float(cfg["prior_top4"])
+            neutral = max(0.0, min(1.0, neutral))
 
-                    comeback_n = 0
-                    win_n = 0
-                    place_n = 0
-                    points = 0.0
-                    samples = []
+            hist = (
+                self.session.query(HorseHistory.race_date, HorseHistory.rank)
+                .filter(HorseHistory.horse_id == horse_id, HorseHistory.race_date < cutoff_dt)
+                .order_by(HorseHistory.race_date.asc())
+                .all()
+            )
 
-                    prev_date = None
-                    for dt, rnk in hist:
-                        if not isinstance(dt, datetime):
-                            prev_date = None
-                            continue
-                        if prev_date is not None:
-                            gap = (dt - prev_date).days
-                            if gap >= cfg["rest_days"]:
-                                comeback_n += 1
-                                if rnk == 1:
-                                    win_n += 1
-                                    points += cfg["win_points"]
-                                    samples.append(f"W@{gap}d")
-                                elif rnk in (2, 3):
-                                    place_n += 1
-                                    points += cfg["place_points"]
-                                    samples.append(f"P@{gap}d")
-                                else:
-                                    samples.append(f"-@{gap}d")
-                        prev_date = dt
+            sig = (
+                f"R{int(cfg['rest_days'])}d|T{float(cfg['rest_tau']):.0f}d|"
+                f"PS{float(cfg['prior_strength']):.1f}|P{float(cfg['prior_top4']):.2f}|"
+                f"K{float(cfg['conf_k']):.1f}|M{int(cfg['sample_max'])}|D{int(cfg['dnf_rank'])}"
+            )
 
-                cached[horse_id] = (current_rest, comeback_n, win_n, place_n, points, samples[:6])
+            if not hist:
+                raw = neutral
+                disp = f"初出/無往績｜中性{neutral:.2f}｜{sig}"
+                cached[horse_id] = (raw, disp)
+                scores.append(raw)
+                displays.append(disp)
+                continue
+
+            last_hist_date = hist[-1][0] if isinstance(hist[-1][0], datetime) else None
+            current_rest = max((race_date - last_hist_date).days, 0) if last_hist_date else None
 
             if current_rest is None:
-                scores.append(0.0)
-                displays.append(f"初出/無往績 | R{cfg['rest_days']}d")
+                raw = neutral
+                disp = f"無有效日期｜中性{neutral:.2f}｜{sig}"
+                cached[horse_id] = (raw, disp)
+                scores.append(raw)
+                displays.append(disp)
                 continue
 
-            if current_rest < cfg["rest_days"]:
-                scores.append(0.0)
-                displays.append(f"休{current_rest}d(<{cfg['rest_days']}d) | R{cfg['rest_days']}d")
+            rest_days = int(cfg["rest_days"])
+            if current_rest < rest_days:
+                raw = neutral
+                disp = f"休{current_rest}d(<{rest_days}d)｜中性{neutral:.2f}｜{sig}"
+                cached[horse_id] = (raw, disp)
+                scores.append(raw)
+                displays.append(disp)
                 continue
 
-            scores.append(points)
-            sample_str = ",".join(samples) if samples else "無樣本"
-            displays.append(
-                f"休{current_rest}d(≥{cfg['rest_days']}d) | 復出{comeback_n}次 冠{win_n} 位{place_n} | +{points:.2f} | {sample_str} | R{cfg['rest_days']}d"
+            outcomes = []
+            samples = []
+            prev_date = None
+            for dt, rnk in hist:
+                if not isinstance(dt, datetime):
+                    prev_date = None
+                    continue
+                if prev_date is not None:
+                    gap = (dt - prev_date).days
+                    if gap >= rest_days:
+                        rk = self._to_int(rnk, default=0)
+                        eff = rk if rk > 0 else int(cfg["dnf_rank"])
+                        ok = 1 if (eff > 0 and eff <= 4) else 0
+                        outcomes.append(ok)
+                        tag = "T4" if ok else "-"
+                        samples.append(f"{tag}@{int(gap)}d")
+                prev_date = dt
+
+            if len(outcomes) > int(cfg["sample_max"]):
+                outcomes = outcomes[-int(cfg["sample_max"]):]
+                samples = samples[-int(cfg["sample_max"]):]
+
+            n = len(outcomes)
+            ps = float(cfg["prior_strength"])
+            pr = float(cfg["prior_top4"])
+            if ps <= 0:
+                smoothed = (sum(outcomes) / float(n)) if n > 0 else pr
+            else:
+                smoothed = (sum(outcomes) + ps * pr) / (float(n) + ps)
+
+            conf = float(n) / (float(n) + float(cfg["conf_k"])) if float(cfg["conf_k"]) > 0 else 1.0
+            base = neutral + conf * (smoothed - neutral)
+
+            if float(cfg["rest_tau"]) > 0:
+                shrink = math.exp(-(float(current_rest) - float(rest_days)) / float(cfg["rest_tau"]))
+                raw = neutral + shrink * (base - neutral)
+            else:
+                raw = base
+
+            raw = max(0.0, min(1.0, float(raw)))
+
+            sample_str = ",".join(samples[-6:]) if samples else "無樣本"
+            disp = (
+                f"休{current_rest}d(≥{rest_days}d)｜復出樣本{n}｜T4率{smoothed:.2f}｜信心{conf:.2f}｜raw{raw:.2f}｜{sample_str}｜{sig}"
             )
+            cached[horse_id] = (raw, disp)
+            scores.append(raw)
+            displays.append(disp)
 
         return pd.Series(scores, index=self.df.index), pd.Series(displays, index=self.df.index)
 
