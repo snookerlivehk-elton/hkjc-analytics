@@ -440,7 +440,7 @@ with tab_preset:
                         continue
                     if not isinstance(v, list):
                         continue
-                    for item in v[:3]:
+                    for item in v[:20]:
                         if not isinstance(item, dict):
                             continue
                         name = str(item.get("name") or "").strip()
