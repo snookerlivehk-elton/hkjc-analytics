@@ -984,22 +984,31 @@ with tab_members:
 
             st.markdown("---")
             st.markdown("### 🔎 組合權重參數")
+            
+            # Group rows by email
+            from collections import defaultdict
+            grouped_by_email = defaultdict(list)
             for r in rows:
-                email = r["Email"]
-                name = r["組合"]
-                weights_map = r.get("_weights") or {}
-                with st.expander(f"{email} / {name}", expanded=False):
-                    total_w = sum(float(v) for v in weights_map.values()) if weights_map else 0.0
-                    items = []
-                    for k, v in weights_map.items():
-                        if k in factor_desc:
-                            share = (float(v) / total_w * 100.0) if total_w > 0 else 0.0
-                            items.append({"條件": factor_desc[k], "代號": k, "權重": round(float(v), 2), "佔比%": round(share, 1)})
-                    items = sorted(items, key=lambda x: x["佔比%"], reverse=True)
-                    if items:
-                        st.dataframe(pd.DataFrame(items), use_container_width=True, hide_index=True)
-                    else:
-                        st.info("此組合沒有可用的權重資料。")
+                grouped_by_email[r["Email"]].append(r)
+                
+            for email, member_rows in grouped_by_email.items():
+                with st.expander(f"👤 {email} ({len(member_rows)} 個組合)", expanded=False):
+                    for r in member_rows:
+                        name = r["組合"]
+                        weights_map = r.get("_weights") or {}
+                        st.markdown(f"**🔹 {name}**")
+                        total_w = sum(float(v) for v in weights_map.values()) if weights_map else 0.0
+                        items = []
+                        for k, v in weights_map.items():
+                            if k in factor_desc:
+                                share = (float(v) / total_w * 100.0) if total_w > 0 else 0.0
+                                items.append({"條件": factor_desc[k], "代號": k, "權重": round(float(v), 2), "佔比%": round(share, 1)})
+                        items = sorted(items, key=lambda x: x["佔比%"], reverse=True)
+                        if items:
+                            st.dataframe(pd.DataFrame(items), use_container_width=True, hide_index=True)
+                        else:
+                            st.info("此組合沒有可用的權重資料。")
+                        st.markdown("<br>", unsafe_allow_html=True)
     finally:
         session_all.close()
 
