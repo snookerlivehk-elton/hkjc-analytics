@@ -211,7 +211,7 @@ def _get_member_presets(session: Session, email: str):
         for item in cfg.value:
             if isinstance(item, dict) and item.get("name") and isinstance(item.get("weights"), dict):
                 out.append(item)
-        return out[:3]
+        return out[:20]
     return []
 
 def _save_member_presets(session: Session, email: str, presets: list):
@@ -223,7 +223,7 @@ def _save_member_presets(session: Session, email: str, presets: list):
     if not cfg:
         cfg = SystemConfig(key=key, description="會員權重配置組合")
         session.add(cfg)
-    cfg.value = presets[:3]
+    cfg.value = presets[:20]
     session.commit()
 
 def _predict_topk_for_race(session: Session, race_id: int, weight_map: dict, k: int):
@@ -616,7 +616,7 @@ def main():
                                     "建議權重": round(float(sugg.get(fn) or 0.0), 3),
                                 }
                             )
-                        st.dataframe(pd.DataFrame(out_rows).sort_values(["建議權重", "目前權重"], ascending=[False, False]), use_container_width=True, hide_index=True, column_config={"條件": st.column_config.TextColumn(width="medium")})
+                        st.dataframe(pd.DataFrame(out_rows).sort_values(["建議權重", "目前權重"], ascending=[False, False]), use_container_width=True, hide_index=True)
 
                         payload = {
                             "top_k": int(res.get("top_k") or 0),
@@ -664,8 +664,8 @@ def main():
                                         presets2 = _get_member_presets(session, member_email)
                                         if any(str(p.get("name") or "") == n for p in presets2):
                                             st.error("❌ 組合名稱已存在")
-                                        elif len(presets2) >= 3:
-                                            st.error("❌ 已達上限（最多 3 個組合）")
+                                        elif len(presets2) >= 20:
+                                            st.error("❌ 已達上限（最多 20 個組合）")
                                         else:
                                             presets2.append({"name": n, "weights": dict(suggested_map), "updated_at": datetime.now().isoformat()})
                                             _save_member_presets(session, member_email, presets2)
@@ -680,7 +680,7 @@ def main():
                     elif isinstance(res, dict) and res.get("ok") is False:
                         st.info("選定範圍內未找到足夠的已結算賽果 + 計分資料，無法生成建議。")
 
-            st.markdown("**儲存/編輯組合（每位會員最多 3 個）**")
+            st.markdown("**儲存/編輯組合（每位會員最多 20 個）**")
             with st.form("preset_save_form"):
                 name = st.text_input("組合名稱", value="", placeholder="例如：穩健型 / 追熱型")
                 action = st.selectbox("操作", ["另存新組合", "更新目前組合", "刪除目前組合"])
@@ -717,7 +717,7 @@ def main():
                             share = (float(v) / total_w * 100.0) if total_w > 0 else 0.0
                             rows.append({"條件": weights_lookup[k], "權重": round(float(v), 2), "佔比%": round(share, 1)})
                     rows = sorted(rows, key=lambda x: x["佔比%"], reverse=True)
-                    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, column_config={"條件": st.column_config.TextColumn(width="medium"), "代號": st.column_config.TextColumn(width="medium"), "組合": st.column_config.TextColumn(width="medium")})
+                    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
                 c1, c2 = st.columns(2)
                 confirm = c1.button("確認儲存", type="primary", use_container_width=True)
@@ -733,8 +733,8 @@ def main():
                             st.error("❌ 請輸入組合名稱")
                         elif any(p["name"] == n for p in presets):
                             st.error("❌ 組合名稱已存在")
-                        elif len(presets) >= 3:
-                            st.error("❌ 已達上限（最多 3 個組合）")
+                        elif len(presets) >= 20:
+                            st.error("❌ 已達上限（最多 20 個組合）")
                         else:
                             presets.append({"name": n, "weights": dict(wmap), "updated_at": pending.get("ts")})
                             _save_member_presets(session, member_email, presets)
@@ -925,7 +925,7 @@ def main():
                         rows[-1][f"{l_t3}%"] = round((t3_n / races_n * 100.0), 1) if races_n else 0.0
                         rows[-1][f"{l_f4}%"] = round((f4_n / races_n * 100.0), 1) if races_n else 0.0
                         rows[-1][f"{l_f4q}%"] = round((f4q_n / races_n * 100.0), 1) if races_n else 0.0
-                    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, column_config={"條件": st.column_config.TextColumn(width="medium"), "代號": st.column_config.TextColumn(width="medium"), "組合": st.column_config.TextColumn(width="medium")})
+                    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
                     with st.expander("📌 命中率統計口徑", expanded=False):
                         l_w1 = METRIC_LABELS.get("w1", "w1")
                         l_w2 = METRIC_LABELS.get("w2", "w2")
@@ -1934,7 +1934,7 @@ def main():
                             for k in HIT_METRICS:
                                 row[f"{METRIC_LABELS.get(k, k)}%"] = round((int(a.get(k) or 0) / n * 100.0), 1) if n else 0.0
                             rows.append(row)
-                        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, column_config={"條件": st.column_config.TextColumn(width="medium"), "代號": st.column_config.TextColumn(width="medium"), "組合": st.column_config.TextColumn(width="medium")})
+                        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
         active_name = st.session_state.get("selected_preset_name", "（手動調整）")
         with st.expander(f"🏆 專業排名表（目前權重：{active_name}）", expanded=True):
