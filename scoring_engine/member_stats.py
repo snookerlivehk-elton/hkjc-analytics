@@ -161,7 +161,7 @@ def rebuild_member_preset_stats(
     )
 
     out: Dict[str, Any] = {}
-    for p in (presets or [])[:3]:
+    for p in (presets or [])[:20]:
         name = str(p.get("name") or "").strip()
         weights = p.get("weights") if isinstance(p.get("weights"), dict) else {}
         if not name:
@@ -260,7 +260,7 @@ def update_member_preset_elim_stats_incremental(
     policy = CURRENT_ELIM_POLICY
     top_k = int(policy.get("top_k") or 0)
 
-    for p in (presets or [])[:3]:
+    for p in (presets or [])[:20]:
         name = str(p.get("name") or "").strip()
         weights = p.get("weights") if isinstance(p.get("weights"), dict) else {}
         if not name:
@@ -424,7 +424,7 @@ def rebuild_member_preset_elim_stats(
     )
     races = q.all()
 
-    for p in (presets or [])[:3]:
+    for p in (presets or [])[:20]:
         name = str(p.get("name") or "").strip()
         weights = p.get("weights") if isinstance(p.get("weights"), dict) else {}
         if not name or not weights:
@@ -595,7 +595,7 @@ def update_member_preset_stats_incremental(
     changed_any = False
     policy = CURRENT_POLICY
 
-    preset_list = [p for p in (presets or [])[:3] if isinstance(p, dict) and str(p.get("name") or "").strip()]
+    preset_list = [p for p in (presets or [])[:20] if isinstance(p, dict) and str(p.get("name") or "").strip()]
     need_rebuild = False
     for p in preset_list:
         name = str(p.get("name") or "").strip()
@@ -776,7 +776,7 @@ def update_all_members_preset_stats_for_race_date(session: Session, race_date_st
         now = datetime.now().isoformat()
         members += 1
 
-        for p in cfg.value[:3]:
+        for p in cfg.value[:20]:
             if not isinstance(p, dict):
                 continue
             name = str(p.get("name") or "").strip()

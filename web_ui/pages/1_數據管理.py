@@ -943,7 +943,7 @@ with tab_members:
                 continue
             email = cfg.key.split(":", 1)[1] if ":" in cfg.key else cfg.key
             stats_map = load_member_preset_stats(session_all, email)
-            for p in cfg.value[:3]:
+            for p in cfg.value[:20]:
                 if not isinstance(p, dict):
                     continue
                 name = str(p.get("name") or "").strip()

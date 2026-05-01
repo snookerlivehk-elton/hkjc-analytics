@@ -33,7 +33,7 @@ def _load_member_presets(session: Session) -> List[Tuple[str, str, Dict[str, flo
         email = str(email or "").strip().lower()
         if not email:
             continue
-        for p in cfg.value[:3]:
+        for p in cfg.value[:20]:
             if not isinstance(p, dict):
                 continue
             name = str(p.get("name") or "").strip()
