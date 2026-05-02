@@ -694,6 +694,56 @@ with tab_ops:
             if trigger_predictions_snapshot(target_date_str):
                 st.success(f"✅ 已生成 {target_date_str} Top5 預測快照！")
 
+        st.subheader("🤖 AI 賽事前瞻 (批次生成)")
+        st.caption("一次過為當日所有場次生成 AI 賽事前瞻，稍後於「獨立條件分析」頁面即可極速查看，無需逐場等待。")
+        c_confirm, c_btn = st.columns([2, 3])
+        ok = _confirm_run(c_confirm, "batch_ai", label="輸入 RUN 以生成報告")
+        if c_btn.button("✨ 批次生成當日所有 AI 報告", use_container_width=True, disabled=not ok):
+            from database.models import Race, SystemConfig
+            from scoring_engine.ai_advisor import run_ai_race_summary, load_ai_api_key
+            from sqlalchemy import func
+            
+            session_ai = get_session()
+            try:
+                api_key_info = load_ai_api_key(session_ai)
+                api_key = api_key_info.get("env") or api_key_info.get("stored")
+                if not api_key:
+                    st.error("❌ 尚未設定 AI API Key，無法生成報告。")
+                else:
+                    target_date_str = selected_date.strftime("%Y/%m/%d")
+                    races = session_ai.query(Race).filter(func.date(Race.race_date) == selected_date).order_by(Race.race_no).all()
+                    if not races:
+                        st.warning(f"⚠️ {target_date_str} 沒有賽事資料。")
+                    else:
+                        progress_text = "生成進度"
+                        my_bar = st.progress(0, text=progress_text)
+                        success_count = 0
+                        
+                        for i, r in enumerate(races):
+                            my_bar.progress((i) / len(races), text=f"正在為 第 {r.race_no} 場 閱讀評述並生成報告...")
+                            fg_key = f"speedpro_formguide:{target_date_str}:{r.race_no}"
+                            cfg = session_ai.query(SystemConfig).filter_by(key=fg_key).first()
+                            
+                            if not cfg or not cfg.value:
+                                st.warning(f"第 {r.race_no} 場缺乏 FormGuide 資料，跳過。")
+                                continue
+                                
+                            # 檢查是否已存在 (利用 session state 作快取)
+                            if f"ai_summary_{r.id}" not in st.session_state:
+                                res = run_ai_race_summary(session_ai, r.id)
+                                if res.get("ok"):
+                                    st.session_state[f"ai_summary_{r.id}"] = res.get("summary")
+                                    success_count += 1
+                                else:
+                                    st.error(f"第 {r.race_no} 場生成失敗: {res.get('reason')} - {res.get('error')}")
+                            else:
+                                success_count += 1
+                                
+                        my_bar.progress(1.0, text="批次生成完成！")
+                        st.success(f"✅ 完成！成功為 {success_count} / {len(races)} 場賽事生成或載入報告。")
+            finally:
+                session_ai.close()
+
         st.subheader("🏁 抓取賽果與派彩")
         st.caption("抓取賽果/派彩入庫後，會自動結算：會員組合命中率 + Top5 快照命中（回寫 hits/actual_top5）。若已設定賽果 cron（每日 HK 23:55）通常不需手動按。")
         c_confirm, c_btn = st.columns([2, 3])
