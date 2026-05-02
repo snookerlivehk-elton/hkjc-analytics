@@ -359,6 +359,28 @@ def run_ai_race_summary(session: Session, race_id: int) -> Dict[str, Any]:
     if not api_key:
         return {"ok": False, "reason": "missing_api_key"}
         
+    # Get custom prompt from DB or use default
+    prompt_cfg = session.query(SystemConfig).filter_by(key="ai_race_summary_prompt").first()
+    if prompt_cfg and isinstance(prompt_cfg.value, dict) and "prompt" in prompt_cfg.value:
+        base_prompt = prompt_cfg.value["prompt"]
+    else:
+        base_prompt = (
+            "你是專業香港賽馬分析師。現在我提供這場賽事各匹馬的近期走勢評述（FormGuide），以及系統量化出來的客觀數據（包含檔位、負磅、評分、SpeedPRO能量分、騎練合作分、近期狀態分等）。\n"
+            "請根據這些質化與量化數據進行深度綜合分析。\n\n"
+            "請務必包含以下兩個版本：\n\n"
+            "### 【簡潔版分析】\n"
+            "- 使用列點方式，直接給出 3-4 匹你認為最值得留意的馬匹，以及 1-2 匹不建議投注（淘汰風險高）的馬匹。\n"
+            "- 必須標明 `[馬號] 馬名`。\n"
+            "- 每匹馬用一句話總結原因（結合客觀因子與走勢評述）。\n\n"
+            "### 【完整版分析】\n"
+            "包含以下四個部分：\n"
+            "1. **👀 焦點馬匹點評**：挑選出狀態正在回勇，或上仗因「意外/受困/走位差/不利步速」而落敗的「可原諒馬匹/黑馬」。必須標明 `[馬號] 馬名`，並結合其客觀因子進行解釋。\n"
+            "2. **⚠️ 淘汰風險馬匹分析**：挑選出 1-2 匹你認為今場沒太大可能入圍的馬匹（反向分析）。例如：近期走勢持續疲弱、今仗面對極端不利檔位/步速、或能量數值與評述皆差的馬匹，並解釋為何看淡。\n"
+            "3. **🏇 預期賽事形勢**：綜合各駒近仗步速與跑法，預測今場的步速偏快或偏慢？哪幾匹馬可能放頭？\n"
+            "4. **💡 綜合結論與投注策略**：給出整體的賽事定調與策略建議。\n\n"
+            "請用繁體中文以清晰的 Markdown 格式輸出，直接給出分析，不要包含任何 json 或 markdown code block 標籤。"
+        )
+        
     # Fetch Objective factors from DB for this race (Req 4)
     from database.models import ScoringFactor
     entries = session.query(RaceEntry).filter_by(race_id=race_id).all()
@@ -442,22 +464,7 @@ def run_ai_race_summary(session: Session, race_id: int) -> Dict[str, Any]:
         for i, rule in enumerate(learned_rules, 1):
             rules_text += f"- {rule}\n"
             
-    system_prompt = (
-        "你是專業香港賽馬分析師。現在我提供這場賽事各匹馬的近期走勢評述（FormGuide），以及系統量化出來的客觀數據（包含檔位、負磅、評分、SpeedPRO能量分、騎練合作分、近期狀態分等）。\n"
-        "請根據這些質化與量化數據進行深度綜合分析。\n\n"
-        f"{rules_text}\n"
-        "請務必包含以下兩個版本：\n\n"
-        "### 【簡潔版分析】\n"
-        "- 使用列點方式，直接給出 3-4 匹你認為最值得留意的馬匹。\n"
-        "- 必須標明 `[馬號] 馬名`。\n"
-        "- 每匹馬用一句話總結推薦原因（結合客觀因子與走勢評述）。\n\n"
-        "### 【完整版分析】\n"
-        "包含以下三個部分：\n"
-        "1. **👀 焦點馬匹點評**：挑選出狀態正在回勇，或上仗因「意外/受困/走位差/不利步速」而落敗的「可原諒馬匹/黑馬」。必須標明 `[馬號] 馬名`，並結合其客觀因子（如：抽好檔、負磅輕、能量分高）進行綜合解釋。\n"
-        "2. **🏇 預期賽事形勢**：綜合各駒近仗步速與跑法，預測今場的步速偏快或偏慢？哪幾匹馬可能放頭？\n"
-        "3. **💡 綜合結論與投注策略**：給出整體的賽事定調與策略建議。\n\n"
-        "請用繁體中文以清晰的 Markdown 格式輸出，直接給出分析，不要包含任何 json 或 markdown code block 標籤。"
-    )
+    system_prompt = f"{base_prompt}\n\n{rules_text}"
     
     resp = call_chat_completions(
         endpoint=settings["endpoint"],

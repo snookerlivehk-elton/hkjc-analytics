@@ -1533,18 +1533,54 @@ with tab_hits:
 
                         st.markdown("**設定**")
                         settings = load_ai_settings(session_hit)
+                        
+                        prompt_cfg = session_hit.query(SystemConfig).filter_by(key="ai_race_summary_prompt").first()
+                        current_summary_prompt = ""
+                        if prompt_cfg and isinstance(prompt_cfg.value, dict) and "prompt" in prompt_cfg.value:
+                            current_summary_prompt = prompt_cfg.value["prompt"]
+                        else:
+                            current_summary_prompt = (
+                                "你是專業香港賽馬分析師。現在我提供這場賽事各匹馬的近期走勢評述（FormGuide），以及系統量化出來的客觀數據（包含檔位、負磅、評分、SpeedPRO能量分、騎練合作分、近期狀態分等）。\n"
+                                "請根據這些質化與量化數據進行深度綜合分析。\n\n"
+                                "請務必包含以下兩個版本：\n\n"
+                                "### 【簡潔版分析】\n"
+                                "- 使用列點方式，直接給出 3-4 匹你認為最值得留意的馬匹，以及 1-2 匹不建議投注（淘汰風險高）的馬匹。\n"
+                                "- 必須標明 `[馬號] 馬名`。\n"
+                                "- 每匹馬用一句話總結原因（結合客觀因子與走勢評述）。\n\n"
+                                "### 【完整版分析】\n"
+                                "包含以下四個部分：\n"
+                                "1. **👀 焦點馬匹點評**：挑選出狀態正在回勇，或上仗因「意外/受困/走位差/不利步速」而落敗的「可原諒馬匹/黑馬」。必須標明 `[馬號] 馬名`，並結合其客觀因子進行解釋。\n"
+                                "2. **⚠️ 淘汰風險馬匹分析**：挑選出 1-2 匹你認為今場沒太大可能入圍的馬匹（反向分析）。例如：近期走勢持續疲弱、今仗面對極端不利檔位/步速、或能量數值與評述皆差的馬匹，並解釋為何看淡。\n"
+                                "3. **🏇 預期賽事形勢**：綜合各駒近仗步速與跑法，預測今場的步速偏快或偏慢？哪幾匹馬可能放頭？\n"
+                                "4. **💡 綜合結論與投注策略**：給出整體的賽事定調與策略建議。\n\n"
+                                "請用繁體中文以清晰的 Markdown 格式輸出，直接給出分析，不要包含任何 json 或 markdown code block 標籤。"
+                            )
+
                         with st.form("ai_llm_settings_form"):
                             endpoint = st.text_input("Endpoint（OpenAI-compatible）", value=str(settings.get("endpoint") or "").strip(), placeholder="https://api.openai.com/v1/chat/completions")
                             model_id = st.text_input("模型名稱（Model ID）", value=str(settings.get("model_id") or "").strip(), placeholder="gpt-4.1-mini")
                             system_prompt = st.text_area(
-                                "AI 系統提示詞（System Prompt）",
+                                "AI 系統提示詞（因子建議用 System Prompt）",
                                 value=str(settings.get("system_prompt") or default_ai_system_prompt()).strip(),
                                 height=200,
+                            )
+                            summary_prompt = st.text_area(
+                                "賽前分析 Prompt（賽事總覽用，含反向分析）",
+                                value=current_summary_prompt.strip(),
+                                height=300,
                             )
                             submitted = st.form_submit_button("💾 儲存設定", type="primary")
                             if submitted:
                                 save_ai_settings(session_hit, endpoint=endpoint, model_id=model_id, system_prompt=system_prompt)
-                                st.success("✅ 已儲存 LLM 設定。")
+                                
+                                p_cfg = session_hit.query(SystemConfig).filter_by(key="ai_race_summary_prompt").first()
+                                if not p_cfg:
+                                    p_cfg = SystemConfig(key="ai_race_summary_prompt", description="AI 賽事前瞻分析 Prompt")
+                                    session_hit.add(p_cfg)
+                                p_cfg.value = {"prompt": summary_prompt}
+                                session_hit.commit()
+                                
+                                st.success("✅ 已儲存 LLM 設定與分析 Prompt。")
                                 st.rerun()
 
                         st.markdown("**API Key**")
