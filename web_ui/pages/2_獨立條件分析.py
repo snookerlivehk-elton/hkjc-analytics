@@ -1425,6 +1425,15 @@ else:
                     st.error("❌ 尚未設定 AI API Key，無法生成報告。")
                     st.info("💡 請前往「系統維護 -> AI 參數設定」設定 API Key。")
                 else:
+                    # Req 2: Check if historical report exists in DB first
+                    report_key = f"ai_race_report:{race_date_str}:{race.race_no}"
+                    report_cfg = session.query(SystemConfig).filter_by(key=report_key).first()
+                    
+                    if report_cfg and isinstance(report_cfg.value, dict) and "report" in report_cfg.value:
+                        st.success("✅ 已載入歷史 AI 分析報告")
+                        if f"ai_summary_{selected_race_id}" not in st.session_state:
+                            st.session_state[f"ai_summary_{selected_race_id}"] = report_cfg.value["report"]
+                    
                     if st.button("✨ 立即生成 / 重新生成 AI 賽事總結", type="primary", use_container_width=True):
                         with st.spinner("🤖 AI 正在閱讀各駒近仗走勢與評述，請稍候（約需 10-20 秒）..."):
                             from scoring_engine.ai_advisor import run_ai_race_summary

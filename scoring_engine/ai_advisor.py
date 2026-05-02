@@ -359,6 +359,26 @@ def run_ai_race_summary(session: Session, race_id: int) -> Dict[str, Any]:
     if not api_key:
         return {"ok": False, "reason": "missing_api_key"}
         
+    # Fetch Objective factors from DB for this race (Req 4)
+    from database.models import ScoringFactor
+    entries = session.query(RaceEntry).filter_by(race_id=race_id).all()
+    factors_by_horse = {}
+    for e in entries:
+        hno = str(e.horse_no)
+        factors_by_horse[hno] = {
+            "draw": e.draw,
+            "weight": e.actual_weight,
+            "rating": e.rating
+        }
+        
+    # Fetch computed scores for key factors
+    s_factors = session.query(ScoringFactor).join(RaceEntry).filter(RaceEntry.race_id == race_id).all()
+    for f in s_factors:
+        hno = str(f.entry.horse_no)
+        if f.factor_name == "speedpro_energy": factors_by_horse[hno]["speedpro"] = f.score
+        elif f.factor_name == "jockey_trainer_bond": factors_by_horse[hno]["jt"] = f.score
+        elif f.factor_name == "recent_form": factors_by_horse[hno]["recent"] = f.score
+        
     # Build the input text
     fg_data = cfg.value
     input_lines = [
@@ -372,7 +392,22 @@ def run_ai_race_summary(session: Session, race_id: int) -> Dict[str, Any]:
         h_name = h_data.get("horse_name", "")
         history = h_data.get("history", [])
         
-        input_lines.append(f"### {horse_no}號馬：{h_name}")
+        # Add basic factors
+        f_info = factors_by_horse.get(str(horse_no), {})
+        draw = f_info.get("draw", "?")
+        weight = f_info.get("weight", "?")
+        rating = f_info.get("rating", "?")
+        
+        input_lines.append(f"### [{horse_no}] {h_name} (檔位: {draw}, 負磅: {weight}, 評分: {rating})")
+        
+        # Add specific factor scores if available
+        f_scores = []
+        if "speedpro" in f_info: f_scores.append(f"SpeedPRO能量: {f_info['speedpro']:.1f}分")
+        if "jt" in f_info: f_scores.append(f"騎練合作: {f_info['jt']:.1f}分")
+        if "recent" in f_info: f_scores.append(f"近期狀態: {f_info['recent']:.1f}分")
+        if f_scores:
+            input_lines.append("系統量化因子: " + ", ".join(f_scores))
+            
         if not history:
             input_lines.append("無近期紀錄\n")
             continue
@@ -399,12 +434,18 @@ def run_ai_race_summary(session: Session, race_id: int) -> Dict[str, Any]:
     user_text = "\n".join(input_lines)
     
     system_prompt = (
-        "你是專業香港賽馬分析師。現在我提供這場賽事各匹馬的近期走勢評述（FormGuide）。\n"
-        "請根據這些質化數據（例如：走位疊數、意外、步速、評述內容），進行深度綜合分析。\n\n"
-        "請務必包含以下三個部分：\n"
-        "1. **👀 焦點馬匹點評**：挑選出狀態正在回勇，或上仗因「意外/受困/走位差/不利步速」而落敗的「可原諒馬匹/黑馬」。\n"
+        "你是專業香港賽馬分析師。現在我提供這場賽事各匹馬的近期走勢評述（FormGuide），以及系統量化出來的客觀數據（包含檔位、負磅、評分、SpeedPRO能量分、騎練合作分、近期狀態分等）。\n"
+        "請根據這些質化與量化數據進行深度綜合分析。\n\n"
+        "請務必包含以下兩個版本：\n\n"
+        "### 【簡潔版分析】\n"
+        "- 使用列點方式，直接給出 3-4 匹你認為最值得留意的馬匹。\n"
+        "- 必須標明 `[馬號] 馬名`。\n"
+        "- 每匹馬用一句話總結推薦原因（結合客觀因子與走勢評述）。\n\n"
+        "### 【完整版分析】\n"
+        "包含以下三個部分：\n"
+        "1. **👀 焦點馬匹點評**：挑選出狀態正在回勇，或上仗因「意外/受困/走位差/不利步速」而落敗的「可原諒馬匹/黑馬」。必須標明 `[馬號] 馬名`，並結合其客觀因子（如：抽好檔、負磅輕、能量分高）進行綜合解釋。\n"
         "2. **🏇 預期賽事形勢**：綜合各駒近仗步速與跑法，預測今場的步速偏快或偏慢？哪幾匹馬可能放頭？\n"
-        "3. **💡 綜合結論與建議**：給出 3-4 匹你認為最值得留意的馬匹（請註明原因）。\n\n"
+        "3. **💡 綜合結論與投注策略**：給出整體的賽事定調與策略建議。\n\n"
         "請用繁體中文以清晰的 Markdown 格式輸出，直接給出分析，不要包含任何 json 或 markdown code block 標籤。"
     )
     
@@ -418,6 +459,15 @@ def run_ai_race_summary(session: Session, race_id: int) -> Dict[str, Any]:
     )
     
     if resp.get("ok"):
+        # Save to DB for historical viewing (Req 2)
+        report_key = f"ai_race_report:{date_str}:{race_no}"
+        report_cfg = session.query(SystemConfig).filter_by(key=report_key).first()
+        if not report_cfg:
+            report_cfg = SystemConfig(key=report_key, description=f"AI 賽事分析報告（racedate={date_str} R{race_no}）")
+            session.add(report_cfg)
+        report_cfg.value = {"report": resp.get("text"), "created_at": datetime.utcnow().isoformat()}
+        session.commit()
+        
         return {"ok": True, "summary": resp.get("text")}
     else:
         return {"ok": False, "reason": "api_error", "error": resp.get("error")}
