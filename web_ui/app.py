@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 # 加入專案路徑
 root_path = str(Path(__file__).resolve().parent.parent)
 if root_path not in sys.path:
-    sys.path.append(root_path)
+    sys.path.insert(0, root_path)
 
 from database.connection import get_session, init_db
 from database.models import Race, RaceEntry, ScoringFactor, ScoringWeight, Horse, SystemConfig, RaceResult, RaceDividend, RaceTrackCondition

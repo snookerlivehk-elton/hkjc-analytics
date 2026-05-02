@@ -4,7 +4,7 @@ from pathlib import Path
 
 root_path = str(Path(__file__).resolve().parent.parent)
 if root_path not in sys.path:
-    sys.path.append(root_path)
+    sys.path.insert(0, root_path)
 
 from database.connection import init_db, get_session
 from scoring_engine.prediction_snapshots import generate_prediction_top5_for_race_date

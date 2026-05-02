@@ -5,7 +5,7 @@ from pathlib import Path
 # 將專案根目錄加入路徑，以便導入 database 模組
 root_path = str(Path(__file__).resolve().parent.parent)
 if root_path not in sys.path:
-    sys.path.append(root_path)
+    sys.path.insert(0, root_path)
 
 from database.connection import init_db, get_session
 from database.models import ScoringWeight

@@ -9,7 +9,7 @@ from pathlib import Path
 # 加入專案路徑
 root_path = str(Path(__file__).resolve().parent.parent)
 if root_path not in sys.path:
-    sys.path.append(root_path)
+    sys.path.insert(0, root_path)
 
 from database.models import RaceEntry, ScoringFactor, ScoringWeight, SystemConfig, Race, HorseHistory
 from utils.logger import logger

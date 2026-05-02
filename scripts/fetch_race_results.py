@@ -6,7 +6,7 @@ from pathlib import Path
 # 加入專案根目錄到路徑，避免在部署環境找不到 database 模組
 root_path = str(Path(__file__).resolve().parent.parent)
 if root_path not in sys.path:
-    sys.path.append(root_path)
+    sys.path.insert(0, root_path)
 
 from database.connection import init_db, get_session
 from database.models import Race, RaceEntry, RaceResult, RaceDividend, RaceTrackCondition
