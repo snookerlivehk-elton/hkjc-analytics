@@ -321,8 +321,8 @@ with tab_factor:
             c_btn, _ = st.columns([1, 3])
             if c_btn.button("🔄 重新計算 AI 命中統計", use_container_width=True, key="recalc_ai_overall_stats"):
                 from scoring_engine.ai_stats import calculate_ai_hit_stats
-
-                calculate_ai_hit_stats(session)
+                with st.spinner("正在重新計算 AI 命中統計..."):
+                    calculate_ai_hit_stats(session)
                 st.success("✅ 計算完成！")
                 st.rerun()
 
@@ -331,6 +331,58 @@ with tab_factor:
             stats0 = cfg_ai.value.get("stats") if (cfg_ai and isinstance(cfg_ai.value, dict)) else None
             hit = (stats0.get("hit") if isinstance(stats0, dict) else {}) or {}
             elim = (stats0.get("elim") if isinstance(stats0, dict) else {}) or {}
+
+            with st.expander("🔍 為何可能顯示 0%（原因檢查）", expanded=False):
+                rep_rows = session.query(SystemConfig.key, SystemConfig.value).filter(SystemConfig.key.like("ai_race_report:%")).all()
+                total_reports = len(rep_rows)
+                with_top5 = 0
+                with_elim = 0
+                parsable_race = 0
+                races_with_results = 0
+                for k, v in rep_rows:
+                    if not isinstance(v, dict):
+                        continue
+                    if isinstance(v.get("top5_horse_nos"), list):
+                        with_top5 += 1
+                    if isinstance(v.get("eliminated_horse_nos"), list):
+                        with_elim += 1
+                    parts = str(k or "").split(":")
+                    if len(parts) < 3:
+                        continue
+                    date_s = str(parts[1] or "").strip()
+                    try:
+                        rno = int(parts[2])
+                    except Exception:
+                        continue
+                    if not date_s or rno <= 0:
+                        continue
+                    try:
+                        from datetime import datetime as _dt
+                        d0 = None
+                        for fmt in ("%Y/%m/%d", "%Y-%m-%d"):
+                            try:
+                                d0 = _dt.strptime(date_s, fmt).date()
+                                break
+                            except Exception:
+                                d0 = None
+                        if not d0:
+                            continue
+                    except Exception:
+                        continue
+                    rr = session.query(Race).filter(func.date(Race.race_date) == d0, Race.race_no == rno).first()
+                    if not rr:
+                        continue
+                    parsable_race += 1
+                    act = actual_topk(session, int(rr.id), 4)
+                    if len(act) >= 4:
+                        races_with_results += 1
+
+                st.markdown(f"- AI 報告總數：**{total_reports}**")
+                st.markdown(f"- 報告含 Top5 欄位：**{with_top5}**")
+                st.markdown(f"- 報告含 淘汰 欄位：**{with_elim}**")
+                st.markdown(f"- 可對應到 Race 的報告：**{parsable_race}**")
+                st.markdown(f"- 已有賽果(Top4)可計命中的場次：**{races_with_results}**")
+                st.caption("命中率/淘汰準確率必須有賽果（Top4）才可計算；若賽事未完或未抓賽果，統計會顯示 0。")
 
             st.markdown("#### 🎯 推薦名單 (Top 5) 命中率")
             hraces = int(hit.get("races") or 0)

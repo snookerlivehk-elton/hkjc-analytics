@@ -7,6 +7,17 @@ from typing import Dict, Any, List
 from database.models import SystemConfig, Race, RaceEntry, RaceResult
 from scoring_engine.member_stats import _actual_topk_for_race
 
+def _try_parse_date(s: str):
+    t = str(s or "").strip()
+    if not t:
+        return None
+    for fmt in ("%Y/%m/%d", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(t, fmt).date()
+        except Exception:
+            continue
+    return None
+
 def calculate_ai_hit_stats(session: Session) -> Dict[str, Any]:
     # Fetch all AI race reports
     reports = session.query(SystemConfig).filter(SystemConfig.key.like("ai_race_report:%")).all()
@@ -44,7 +55,9 @@ def calculate_ai_hit_stats(session: Session) -> Dict[str, Any]:
             continue
         
         # Get actual results for this race
-        date_obj = datetime.strptime(date_str, "%Y/%m/%d").date()
+        date_obj = _try_parse_date(date_str)
+        if not date_obj:
+            continue
         race = session.query(Race).filter(func.date(Race.race_date) == date_obj, Race.race_no == int(race_no)).first()
         if not race:
             continue

@@ -263,29 +263,33 @@ try:
                 skipped = 0
                 filled_top5 = 0
                 filled_elim = 0
+                snap_upd = 0
                 for r in reports:
                     if not isinstance(r.value, dict) or "report" not in r.value:
                         continue
                     val = r.value
                     has_top5 = isinstance(val.get("top5_horse_nos"), list)
                     has_elim = isinstance(val.get("eliminated_horse_nos"), list)
-                    if has_top5 and has_elim:
-                        continue
-
                     report_text = str(val.get("report") or "")
-                    top5, elim = _try_extract_top5_elim(report_text)
-                    if not top5 and not elim:
+                    top5 = val.get("top5_horse_nos") if has_top5 else None
+                    elim = val.get("eliminated_horse_nos") if has_elim else None
+
+                    if not has_top5 or not has_elim:
+                        t2, e2 = _try_extract_top5_elim(report_text)
+                        if not has_top5:
+                            top5 = t2
+                            val["top5_horse_nos"] = top5
+                            filled_top5 += 1
+                        if not has_elim:
+                            elim = e2
+                            val["eliminated_horse_nos"] = elim
+                            filled_elim += 1
+                        r.value = val
+                        updated += 1
+
+                    if not has_top5 and not has_elim and (not top5 and not elim):
                         skipped += 1
                         continue
-
-                    if not has_top5:
-                        val["top5_horse_nos"] = top5
-                        filled_top5 += 1
-                    if not has_elim:
-                        val["eliminated_horse_nos"] = elim
-                        filled_elim += 1
-                    r.value = val
-                    updated += 1
 
                     parts = str(r.key or "").split(":")
                     if len(parts) >= 3:
@@ -298,7 +302,8 @@ try:
                                 t5_cfg = SystemConfig(key=top5_key, description=f"Top 5 預測快照（racedate={date_str} R{race_no}）")
                                 session.add(t5_cfg)
                             t5_val = t5_cfg.value if isinstance(t5_cfg.value, dict) else {}
-                            t5_val["🤖 AI 賽事前瞻"] = top5
+                            if isinstance(top5, list):
+                                t5_val["🤖 AI 賽事前瞻"] = top5
                             t5_cfg.value = t5_val
 
                             elim_key = f"elim_snapshot:{date_str}:{race_no}"
@@ -307,12 +312,14 @@ try:
                                 e_cfg = SystemConfig(key=elim_key, description=f"反向預測淘汰快照（racedate={date_str} R{race_no}）")
                                 session.add(e_cfg)
                             e_val = e_cfg.value if isinstance(e_cfg.value, dict) else {}
-                            e_val["🤖 AI 賽事前瞻"] = elim
+                            if isinstance(elim, list):
+                                e_val["🤖 AI 賽事前瞻"] = elim
                             e_cfg.value = e_val
+                            snap_upd += 1
 
                 session.commit()
                 calculate_ai_hit_stats(session)
-                st.success(f"✅ 完成：更新 {updated} 份（補回Top5 {filled_top5}／補回淘汰 {filled_elim}），略過 {skipped} 份（無法從文字安全抽取）。")
+                st.success(f"✅ 完成：更新 {updated} 份（補回Top5 {filled_top5}／補回淘汰 {filled_elim}），略過 {skipped} 份；同步刷新快照 {snap_upd} 場，並已重算統計。")
                 st.rerun()
 
             data = []
