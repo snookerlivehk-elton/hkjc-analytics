@@ -53,33 +53,39 @@ def calculate_ai_hit_stats(session: Session) -> Dict[str, Any]:
         act_set = set(act_top4)
         
         # Hit stats
-        if top5 and len(top5) >= 5:
+        if top5 and len(top5) > 0:
             stats["hit"]["races"] += 1
             
-            p1, p2, p3, p4, p5 = top5[:5]
-            if p1 in act_top4 and act_top4.index(p1) == 0: stats["hit"]["w1"] += 1
+            p1 = top5[0] if len(top5) > 0 else None
+            p2 = top5[1] if len(top5) > 1 else None
+            p3 = top5[2] if len(top5) > 2 else None
+            p4 = top5[3] if len(top5) > 3 else None
+            p5 = top5[4] if len(top5) > 4 else None
+            
+            if p1 is not None and p1 in act_top4 and act_top4.index(p1) == 0: stats["hit"]["w1"] += 1
             
             # Q2 (1st and 2nd in predictions match 1st and 2nd in actual, any order)
-            if p1 in act_top4[:2] and p2 in act_top4[:2]: stats["hit"]["q2"] += 1
+            if p1 is not None and p2 is not None:
+                if p1 in act_top4[:2] and p2 in act_top4[:2]: stats["hit"]["q2"] += 1
             
             # PQ2 (Any 2 of top 3 predictions match any 2 of actual top 3)
-            pred_top3 = set([p1, p2, p3])
+            pred_top3 = set([p for p in [p1, p2, p3] if p is not None])
             act_top3 = set(act_top4[:3])
-            if len(pred_top3 & act_top3) >= 2: stats["hit"]["pq2"] += 1
+            if len(pred_top3) >= 2 and len(pred_top3 & act_top3) >= 2: stats["hit"]["pq2"] += 1
             
             # T3 (Top 3 predictions match Top 3 actual, any order)
-            if len(pred_top3 & act_top3) == 3: stats["hit"]["t3"] += 1
+            if len(pred_top3) == 3 and len(pred_top3 & act_top3) == 3: stats["hit"]["t3"] += 1
             
             # F4 (Top 4 predictions match Top 4 actual, any order)
-            pred_top4 = set([p1, p2, p3, p4])
-            if len(pred_top4 & act_set) == 4: stats["hit"]["f4"] += 1
+            pred_top4 = set([p for p in [p1, p2, p3, p4] if p is not None])
+            if len(pred_top4) == 4 and len(pred_top4 & act_set) == 4: stats["hit"]["f4"] += 1
             
             # Individual positions in Top 4
-            if p1 in act_set: stats["hit"]["top1_in_top4"] += 1
-            if p2 in act_set: stats["hit"]["top2_in_top4"] += 1
-            if p3 in act_set: stats["hit"]["top3_in_top4"] += 1
-            if p4 in act_set: stats["hit"]["top4_in_top4"] += 1
-            if p5 in act_set: stats["hit"]["top5_in_top4"] += 1
+            if p1 is not None and p1 in act_set: stats["hit"]["top1_in_top4"] += 1
+            if p2 is not None and p2 in act_set: stats["hit"]["top2_in_top4"] += 1
+            if p3 is not None and p3 in act_set: stats["hit"]["top3_in_top4"] += 1
+            if p4 is not None and p4 in act_set: stats["hit"]["top4_in_top4"] += 1
+            if p5 is not None and p5 in act_set: stats["hit"]["top5_in_top4"] += 1
             
         # Elim stats
         if elim:
