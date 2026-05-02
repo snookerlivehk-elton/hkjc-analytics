@@ -473,7 +473,7 @@ def run_ai_race_summary(session: Session, race_id: int) -> Dict[str, Any]:
         "請務必以 JSON 格式輸出，不要包含任何 markdown code block (如 ```json) 標籤。格式必須完全符合以下結構：\n"
         "{\n"
         "  \"top5_horse_nos\": [整數, 整數, 整數, 整數, 整數], // 必須剛好 5 匹推薦馬 (按優先順序)\n"
-        f"  \"eliminated_horse_nos\": [整數, 整數, ...], // 必須剛好 {num_elim} 匹最不看好的淘汰馬 (約佔全場35%)\n"
+        f"  \"eliminated_horse_nos\": [整數, ...], // 最多 {num_elim} 匹淘汰馬。注意：若該場次勢均力敵，請只列出你【真正有把握】淘汰的馬匹，寧缺勿濫，數量可少於此數甚至留空 []\n"
         "  \"report\": \"你撰寫的完整 Markdown 分析報告內容 (請將簡潔版與完整版內容放在此字串中，並使用 \\n 換行)\"\n"
         "}\n"
     )
