@@ -161,7 +161,7 @@ else:
         df, factor_columns = result
         
         # 創建 Tabs 顯示不同的視圖
-        tab1, tab2 = st.tabs(["🗂️ 獨立條件分頁檢視", "📋 全局數據總覽"])
+        tab1, tab2, tab3 = st.tabs(["🗂️ 獨立條件分頁檢視", "📋 全局數據總覽", "🤖 AI 賽事前瞻 (FormGuide)"])
         
         with tab1:
             st.markdown("### 各條件獨立排名")
@@ -1401,5 +1401,42 @@ else:
             tail_cols = [c for c in full_df.columns if c not in head_cols]
             full_df = full_df[head_cols + tail_cols]
             st.dataframe(full_df, use_container_width=True, hide_index=True)
+
+        with tab3:
+            st.markdown("### 🤖 AI 賽事前瞻 (FormGuide)")
+            st.markdown("基於馬會官方 SpeedPRO 賽績指引的文字評述、步速、意外與走位等質化數據，交由 AI 模型綜合分析，找出可原諒的落敗黑馬，並預測今場形勢。")
+            
+            # Check if FormGuide data exists
+            race = session.get(Race, selected_race_id)
+            race_date_str = race.race_date.strftime("%Y/%m/%d") if hasattr(race.race_date, "strftime") else str(race.race_date)[:10].replace("-", "/")
+            fg_key = f"speedpro_formguide:{race_date_str}:{race.race_no}"
+            from database.models import SystemConfig
+            fg_cfg = session.query(SystemConfig).filter_by(key=fg_key).first()
+            
+            if not fg_cfg or not fg_cfg.value:
+                st.warning(f"⚠️ 尚未抓取到本場（{race_date_str} R{race.race_no}）的 FormGuide 賽績指引數據。")
+                st.info("💡 請前往「數據管理」頁面，執行「一鍵完整更新」來抓取最新數據。")
+            else:
+                from scoring_engine.ai_advisor import load_ai_api_key
+                api_key_info = load_ai_api_key(session)
+                api_key = api_key_info.get("env") or api_key_info.get("stored")
+                
+                if not api_key:
+                    st.error("❌ 尚未設定 AI API Key，無法生成報告。")
+                    st.info("💡 請前往「系統維護 -> AI 參數設定」設定 API Key。")
+                else:
+                    if st.button("✨ 立即生成 / 重新生成 AI 賽事總結", type="primary", use_container_width=True):
+                        with st.spinner("🤖 AI 正在閱讀各駒近仗走勢與評述，請稍候（約需 10-20 秒）..."):
+                            from scoring_engine.ai_advisor import run_ai_race_summary
+                            res = run_ai_race_summary(session, selected_race_id)
+                            if res.get("ok"):
+                                st.session_state[f"ai_summary_{selected_race_id}"] = res.get("summary")
+                            else:
+                                st.error(f"生成失敗: {res.get('reason')} - {res.get('error')}")
+                    
+                    if f"ai_summary_{selected_race_id}" in st.session_state:
+                        st.markdown("---")
+                        st.markdown("#### 📜 AI 賽事分析報告")
+                        st.info(st.session_state[f"ai_summary_{selected_race_id}"])
 
 session.close()

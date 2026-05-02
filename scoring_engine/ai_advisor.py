@@ -337,6 +337,91 @@ def _mask_key(k: str) -> str:
     return ("*" * (len(s) - 4)) + s[-4:]
 
 
+def run_ai_race_summary(session: Session, race_id: int) -> Dict[str, Any]:
+    from database.models import Race, RaceEntry, SystemConfig, PredictionTop5
+    
+    race = session.query(Race).filter(Race.id == race_id).first()
+    if not race:
+        return {"ok": False, "reason": "race_not_found"}
+        
+    date_str = race.race_date.strftime("%Y/%m/%d") if hasattr(race.race_date, "strftime") else str(race.race_date)[:10].replace("-", "/")
+    race_no = race.race_no
+    
+    fg_key = f"speedpro_formguide:{date_str}:{race_no}"
+    cfg = session.query(SystemConfig).filter_by(key=fg_key).first()
+    if not cfg or not isinstance(cfg.value, dict) or not cfg.value:
+        return {"ok": False, "reason": "no_formguide_data"}
+        
+    # Get AI settings
+    settings = load_ai_settings(session)
+    api_key_info = load_ai_api_key(session)
+    api_key = api_key_info.get("env") or api_key_info.get("stored")
+    if not api_key:
+        return {"ok": False, "reason": "missing_api_key"}
+        
+    # Build the input text
+    fg_data = cfg.value
+    input_lines = [
+        f"賽事：{date_str} 第 {race_no} 場",
+        "以下是各匹馬的近期走勢評述與紀錄：\n"
+    ]
+    
+    for horse_no, h_data in sorted(fg_data.items(), key=lambda x: int(x[0])):
+        if not isinstance(h_data, dict):
+            continue
+        h_name = h_data.get("horse_name", "")
+        history = h_data.get("history", [])
+        
+        input_lines.append(f"### {horse_no}號馬：{h_name}")
+        if not history:
+            input_lines.append("無近期紀錄\n")
+            continue
+            
+        for i, rec in enumerate(history[:3]):  # Limit to last 3 runs to save tokens
+            r_date = rec.get("racedate", "")
+            dist = rec.get("dist", "")
+            going = rec.get("going", "")
+            fp = rec.get("fp", "")
+            pace = rec.get("pace", "")
+            wide = rec.get("wide", "")
+            incident = rec.get("incident", "")
+            comments = rec.get("comments", "")
+            
+            line = f"- {r_date} ({dist} {going}): 名次 {fp}"
+            if pace: line += f", 步速: {pace}"
+            if wide: line += f", 走位: {wide}"
+            if incident: line += f", 意外: {incident}"
+            line += f" | 評述: {comments}"
+            
+            input_lines.append(line)
+        input_lines.append("")
+        
+    user_text = "\n".join(input_lines)
+    
+    system_prompt = (
+        "你是專業香港賽馬分析師。現在我提供這場賽事各匹馬的近期走勢評述（FormGuide）。\n"
+        "請根據這些質化數據（例如：走位疊數、意外、步速、評述內容），進行深度綜合分析。\n\n"
+        "請務必包含以下三個部分：\n"
+        "1. **👀 焦點馬匹點評**：挑選出狀態正在回勇，或上仗因「意外/受困/走位差/不利步速」而落敗的「可原諒馬匹/黑馬」。\n"
+        "2. **🏇 預期賽事形勢**：綜合各駒近仗步速與跑法，預測今場的步速偏快或偏慢？哪幾匹馬可能放頭？\n"
+        "3. **💡 綜合結論與建議**：給出 3-4 匹你認為最值得留意的馬匹（請註明原因）。\n\n"
+        "請用繁體中文以清晰的 Markdown 格式輸出，直接給出分析，不要包含任何 json 或 markdown code block 標籤。"
+    )
+    
+    resp = call_chat_completions(
+        endpoint=settings["endpoint"],
+        api_key=api_key,
+        model_id=settings["model_id"],
+        system_prompt=system_prompt,
+        user_text=user_text,
+        timeout_sec=90
+    )
+    
+    if resp.get("ok"):
+        return {"ok": True, "summary": resp.get("text")}
+    else:
+        return {"ok": False, "reason": "api_error", "error": resp.get("error")}
+
 def _hash_payload(payload: Dict[str, Any]) -> str:
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
     return sha256(raw).hexdigest()[:12]
