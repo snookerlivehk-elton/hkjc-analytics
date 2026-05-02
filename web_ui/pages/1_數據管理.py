@@ -14,8 +14,9 @@ from database.connection import get_session, init_db
 from scoring_engine.core import ScoringEngine
 from scoring_engine.member_stats import HIT_METRICS, METRIC_LABELS
 from web_ui.nav import render_admin_nav
+from web_ui.utils import _confirm_run
 
-st.set_page_config(page_title="數據管理 - HKJC Analytics", page_icon="🛠️", layout="wide")
+st.set_page_config(page_title="數據管理 - HKJC Analytics", page_icon="⚙️", layout="wide")
 
 # 全站列表文字靠左
 st.markdown(
@@ -62,10 +63,6 @@ if not st.session_state.get("is_superadmin", False):
 st.title("🛠️ 數據管理後台")
 st.markdown("在此頁面執行數據更新、回填與清理操作。")
 render_admin_nav()
-
-def _confirm_run(container, key: str, label: str = "輸入 RUN 以確認"):
-    token = container.text_input(label, value="", key=f"admin_confirm_{str(key)}")
-    return str(token or "").strip().upper() == "RUN"
 
 def trigger_scraper(target_date: str = None):
     """實時日誌串流輸出"""
