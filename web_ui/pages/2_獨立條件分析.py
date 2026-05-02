@@ -1438,5 +1438,9 @@ else:
                         st.markdown("---")
                         st.markdown("#### 📜 AI 賽事分析報告")
                         st.info(st.session_state[f"ai_summary_{selected_race_id}"])
+                        
+                        with st.expander("🔍 檢視傳送給 AI 的原始 FormGuide 數據", expanded=False):
+                            import json
+                            st.code(json.dumps(fg_cfg.value, ensure_ascii=False, indent=2), language="json")
 
 session.close()
