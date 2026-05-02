@@ -241,7 +241,12 @@ try:
 
                             c_confirm, c_btn = st.columns([2, 3])
                             ok = _confirm_run(c_confirm, f"regen_ai_report_{row['Date']}_{int(row['RaceNo'])}", label="輸入 RUN 以重新生成本場報告")
-                            if c_btn.button("♻️ 重新生成本場報告", use_container_width=True, disabled=not ok):
+                            if c_btn.button(
+                                "♻️ 重新生成本場報告",
+                                use_container_width=True,
+                                disabled=not ok,
+                                key=f"regen_ai_report_btn_{row['Date']}_{int(row['RaceNo'])}",
+                            ):
                                 from sqlalchemy import func
                                 from scoring_engine.ai_advisor import run_ai_race_summary
 
