@@ -227,9 +227,48 @@ try:
                     with st.expander(f"📅 {row['Date']} 第 {row['RaceNo']} 場 (建立於: {row['Created']})", expanded=False):
                         val = row["Value"]
                         if isinstance(val, dict) and "report" in val:
-                            st.markdown(val["report"])
+                            report_text = str(val.get("report") or "")
+                            if not report_text.lstrip().startswith("# J18.HK AI 賽事前瞻分析"):
+                                try:
+                                    from sqlalchemy import func
+                                    d0 = datetime.strptime(str(row["Date"]), "%Y/%m/%d").date()
+                                    rr = (
+                                        session.query(Race)
+                                        .filter(func.date(Race.race_date) == d0)
+                                        .filter(Race.race_no == int(row["RaceNo"]))
+                                        .first()
+                                    )
+                                except Exception:
+                                    rr = None
+
+                                if rr:
+                                    v = str(getattr(rr, "venue", "") or "").strip().upper()
+                                    t = str(getattr(rr, "track_type", "") or "").strip()
+                                    loc = "跑馬地" if (v == "HV" or ("跑馬地" in t)) else ("沙田" if (v == "ST" or ("沙田" in t)) else (str(getattr(rr, "venue", "") or "").strip() or "-"))
+                                    surface = str(getattr(rr, "surface", "") or "").strip() or "-"
+                                    course = str(getattr(rr, "course_type", "") or "").strip()
+                                    dist = int(getattr(rr, "distance", 0) or 0)
+                                    cls = str(getattr(rr, "race_class", "") or "").strip()
+
+                                    parts = []
+                                    if loc and loc != "-":
+                                        parts.append(loc)
+                                    if surface and surface != "-":
+                                        parts.append(surface)
+                                    if course:
+                                        parts.append(f"跑道{course}")
+                                    if dist > 0:
+                                        parts.append(f"{dist}米")
+                                    if cls:
+                                        parts.append(cls)
+                                    meta = "｜".join(parts)
+                                    meta = f"｜{meta}" if meta else ""
+                                    prefix = f"# J18.HK AI 賽事前瞻分析\n**賽事：{str(row['Date'])} 第 {int(row['RaceNo'])} 場{meta}**\n\n"
+                                    report_text = prefix + report_text
+
+                            st.markdown(report_text)
                             with st.expander("📋 點擊顯示可複製的原始文字", expanded=False):
-                                st.code(val["report"], language="markdown")
+                                st.code(report_text, language="markdown")
                             
                             with st.expander("🔍 檢視原始 FormGuide 數據", expanded=False):
                                 fg_key = f"speedpro_formguide:{row['Date']}:{int(row['RaceNo'])}"
