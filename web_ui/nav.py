@@ -2,8 +2,8 @@ import streamlit as st
 
 
 def render_admin_nav(show_logout: bool = True):
-    cols = st.columns([1, 1, 1, 0.8] if show_logout else [1, 1, 1])
-    c1, c2, c3 = cols[0], cols[1], cols[2]
+    cols = st.columns([1, 1, 1, 1, 0.8] if show_logout else [1, 1, 1, 1])
+    c1, c2, c3, c4 = cols[0], cols[1], cols[2], cols[3]
 
     if c1.button("🛠️ 數據管理", use_container_width=True):
         try:
@@ -32,8 +32,17 @@ def render_admin_nav(show_logout: bool = True):
             else:
                 st.markdown("[📈 命中統計](/%E5%91%BD%E4%B8%AD%E7%B5%B1%E8%A8%88)")
 
+    if c4.button("🤖 AI 中樞與設定", use_container_width=True):
+        try:
+            st.switch_page("pages/4_AI_中樞與設定.py")
+        except Exception:
+            if hasattr(st, "page_link"):
+                st.page_link("pages/4_AI_中樞與設定.py", label="🤖 AI 中樞與設定")
+            else:
+                st.markdown("[🤖 AI 中樞與設定](/%E4%B8%AD%E6%A8%9E%E8%88%87%E8%A8%AD%E5%AE%9A)")
+
     if show_logout:
-        c4 = cols[3]
-        if c4.button("🚪 登出", use_container_width=True):
+        c5 = cols[4]
+        if c5.button("🚪 登出", use_container_width=True):
             st.session_state["is_superadmin"] = False
             st.rerun()
