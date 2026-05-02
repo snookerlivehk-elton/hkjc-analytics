@@ -270,6 +270,17 @@ try:
                             with st.expander("📋 點擊顯示可複製的原始文字", expanded=False):
                                 st.code(report_text, language="markdown")
                             
+                            top5 = val.get("top5_horse_nos") if isinstance(val, dict) else None
+                            elim = val.get("eliminated_horse_nos") if isinstance(val, dict) else None
+                            if isinstance(top5, list) or isinstance(elim, list):
+                                with st.expander("📌 AI 結構化輸出（Top5 / 淘汰）", expanded=False):
+                                    if isinstance(top5, list):
+                                        st.markdown(f"- Top5（馬號）：{', '.join(str(x) for x in top5) if top5 else '（空）'}")
+                                    if isinstance(elim, list):
+                                        st.markdown(f"- 淘汰（馬號）：{', '.join(str(x) for x in elim) if elim else '（空）'}")
+                            else:
+                                st.warning("此報告缺少 top5_horse_nos / eliminated_horse_nos（可能為舊版入庫或解析失敗）。可按下方重新生成以補回。")
+                            
                             with st.expander("🔍 檢視原始 FormGuide 數據", expanded=False):
                                 fg_key = f"speedpro_formguide:{row['Date']}:{int(row['RaceNo'])}"
                                 fg_cfg = session.query(SystemConfig).filter_by(key=fg_key).first()

@@ -551,10 +551,64 @@ def run_ai_race_summary(session: Session, race_id: int) -> Dict[str, Any]:
             report_text = parsed.get("report", "報告解析失敗")
 
             prefix = _race_prefix(race, date_str)
-            report_text = prefix + str(report_text)
-
             top5 = parsed.get("top5_horse_nos", [])
             elim = parsed.get("eliminated_horse_nos", [])
+
+            name_map = {}
+            try:
+                q_entries = (
+                    session.query(RaceEntry.horse_no, RaceEntry)
+                    .filter(RaceEntry.race_id == int(race_id))
+                    .all()
+                )
+                for hn, e in q_entries:
+                    try:
+                        hn_i = int(hn or 0)
+                    except Exception:
+                        continue
+                    nm = ""
+                    try:
+                        nm = str(getattr(getattr(e, "horse", None), "name_ch", "") or "").strip()
+                    except Exception:
+                        nm = ""
+                    if hn_i > 0:
+                        name_map[hn_i] = nm
+            except Exception:
+                name_map = {}
+
+            def _fmt_horses(xs):
+                out = []
+                for x in xs or []:
+                    try:
+                        hn = int(x)
+                    except Exception:
+                        continue
+                    if hn <= 0:
+                        continue
+                    nm = str(name_map.get(hn) or "").strip()
+                    out.append(f"[{hn}] {nm}".strip() if nm else f"[{hn}]")
+                return out
+
+            top5_fmt = _fmt_horses(top5)
+            elim_fmt = _fmt_horses(elim)
+            summary_lines = []
+            summary_lines.append("## ✅ AI 推薦名單（按優先）")
+            if top5_fmt:
+                for i, s in enumerate(top5_fmt, 1):
+                    summary_lines.append(f"{i}. {s}")
+            else:
+                summary_lines.append("- （本場勢均力敵或資訊不足，AI 沒有給出明確推介）")
+
+            summary_lines.append("")
+            summary_lines.append("## ⚠️ AI 淘汰名單（僅列出有把握）")
+            if elim_fmt:
+                for s in elim_fmt:
+                    summary_lines.append(f"- {s}")
+            else:
+                summary_lines.append("- （無）")
+
+            summary_block = "\n".join(summary_lines).strip() + "\n\n"
+            report_text = prefix + summary_block + str(report_text)
 
             # Save to DB for historical viewing (Req 2)
             report_key = f"ai_race_report:{date_str}:{race_no}"
@@ -568,6 +622,7 @@ def run_ai_race_summary(session: Session, race_id: int) -> Dict[str, Any]:
                 "top5_horse_nos": top5,
                 "eliminated_horse_nos": elim,
                 "created_at": datetime.utcnow().isoformat(),
+                "race_id": int(race_id),
             }
 
             # Update prediction snapshots so AI predictions appear in member stats and hit stats tables
