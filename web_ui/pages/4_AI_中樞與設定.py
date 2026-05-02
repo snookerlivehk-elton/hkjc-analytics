@@ -184,6 +184,137 @@ try:
         if not reports:
             st.info("目前尚未有任何 AI 分析報告紀錄。")
         else:
+            import re
+
+            def _uniq_ints(xs):
+                out = []
+                seen = set()
+                for x in xs:
+                    try:
+                        n = int(x)
+                    except Exception:
+                        continue
+                    if n <= 0:
+                        continue
+                    if n in seen:
+                        continue
+                    seen.add(n)
+                    out.append(n)
+                return out
+
+            def _extract_section_nums(text: str, keywords, max_take: int = 5):
+                t = str(text or "")
+                lines = t.splitlines()
+                start_idx = None
+                for i, ln in enumerate(lines):
+                    s = ln.strip()
+                    for kw in keywords:
+                        if kw and (kw in s):
+                            start_idx = i
+                            break
+                    if start_idx is not None:
+                        break
+                if start_idx is None:
+                    return []
+                buf = []
+                for j in range(start_idx + 1, len(lines)):
+                    s = lines[j].strip()
+                    if s.startswith("#"):
+                        break
+                    if s == "":
+                        if buf:
+                            break
+                        continue
+                    buf.append(s)
+                    if len(buf) > 80:
+                        break
+                nums = re.findall(r"\[(\d{1,2})\]", "\n".join(buf))
+                return _uniq_ints(nums)[: int(max_take or 5)]
+
+            def _try_extract_top5_elim(report_text: str):
+                top5 = _extract_section_nums(report_text, ["AI 推薦名單", "簡潔版分析", "推薦", "Top 5", "Top5"], max_take=5)
+                elim = _extract_section_nums(report_text, ["AI 淘汰名單", "淘汰", "反向", "看淡"], max_take=20)
+                if not top5:
+                    all_nums = _uniq_ints(re.findall(r"\[(\d{1,2})\]", str(report_text or "")))
+                    top5 = all_nums[:5]
+                return top5, elim
+
+            missing_cnt = 0
+            for r in reports:
+                v = r.value if isinstance(r.value, dict) else {}
+                if not isinstance(v, dict):
+                    continue
+                if "report" not in v:
+                    continue
+                has_top5 = isinstance(v.get("top5_horse_nos"), list)
+                has_elim = isinstance(v.get("eliminated_horse_nos"), list)
+                if not (has_top5 and has_elim):
+                    missing_cnt += 1
+
+            st.caption(f"缺少 Top5/淘汰 結構化欄位的報告：{missing_cnt} 份（可先嘗試免 AI 成本補回；補不到才逐場重新生成）。")
+
+            c_confirm, c_btn = st.columns([2, 3])
+            ok_fix = _confirm_run(c_confirm, "fix_ai_report_struct_fields", label="輸入 RUN 以嘗試補回 Top5/淘汰（免 AI 成本）")
+            if c_btn.button("🧩 嘗試補回 Top5 / 淘汰（免 AI 成本）", use_container_width=True, disabled=not ok_fix, key="fix_ai_report_struct_fields_btn"):
+                from sqlalchemy import func
+                from scoring_engine.ai_stats import calculate_ai_hit_stats
+
+                updated = 0
+                skipped = 0
+                filled_top5 = 0
+                filled_elim = 0
+                for r in reports:
+                    if not isinstance(r.value, dict) or "report" not in r.value:
+                        continue
+                    val = r.value
+                    has_top5 = isinstance(val.get("top5_horse_nos"), list)
+                    has_elim = isinstance(val.get("eliminated_horse_nos"), list)
+                    if has_top5 and has_elim:
+                        continue
+
+                    report_text = str(val.get("report") or "")
+                    top5, elim = _try_extract_top5_elim(report_text)
+                    if not top5 and not elim:
+                        skipped += 1
+                        continue
+
+                    if not has_top5:
+                        val["top5_horse_nos"] = top5
+                        filled_top5 += 1
+                    if not has_elim:
+                        val["eliminated_horse_nos"] = elim
+                        filled_elim += 1
+                    r.value = val
+                    updated += 1
+
+                    parts = str(r.key or "").split(":")
+                    if len(parts) >= 3:
+                        date_str = str(parts[1] or "").strip()
+                        race_no = str(parts[2] or "").strip()
+                        if date_str and race_no:
+                            top5_key = f"top5_snapshot:{date_str}:{race_no}"
+                            t5_cfg = session.query(SystemConfig).filter_by(key=top5_key).first()
+                            if not t5_cfg:
+                                t5_cfg = SystemConfig(key=top5_key, description=f"Top 5 預測快照（racedate={date_str} R{race_no}）")
+                                session.add(t5_cfg)
+                            t5_val = t5_cfg.value if isinstance(t5_cfg.value, dict) else {}
+                            t5_val["🤖 AI 賽事前瞻"] = top5
+                            t5_cfg.value = t5_val
+
+                            elim_key = f"elim_snapshot:{date_str}:{race_no}"
+                            e_cfg = session.query(SystemConfig).filter_by(key=elim_key).first()
+                            if not e_cfg:
+                                e_cfg = SystemConfig(key=elim_key, description=f"反向預測淘汰快照（racedate={date_str} R{race_no}）")
+                                session.add(e_cfg)
+                            e_val = e_cfg.value if isinstance(e_cfg.value, dict) else {}
+                            e_val["🤖 AI 賽事前瞻"] = elim
+                            e_cfg.value = e_val
+
+                session.commit()
+                calculate_ai_hit_stats(session)
+                st.success(f"✅ 完成：更新 {updated} 份（補回Top5 {filled_top5}／補回淘汰 {filled_elim}），略過 {skipped} 份（無法從文字安全抽取）。")
+                st.rerun()
+
             data = []
             for r in reports:
                 parts = r.key.split(":")
