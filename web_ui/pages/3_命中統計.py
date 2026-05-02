@@ -241,9 +241,15 @@ with tab_factor:
                 .filter(func.date(PredictionTop5.race_date) <= d2.isoformat())
                 .all()
             )
-            if not preds:
-                st.info("選定範圍內沒有任何獨立條件 Top5 快照。")
-            else:
+            from database.models import SystemConfig
+            cfg_ai = session.query(SystemConfig).filter_by(key="ai_overall_stats").first()
+            stats0 = cfg_ai.value.get("stats") if (cfg_ai and isinstance(cfg_ai.value, dict)) else None
+            hit0 = (stats0.get("hit") if isinstance(stats0, dict) else {}) or {}
+            elim0 = (stats0.get("elim") if isinstance(stats0, dict) else {}) or {}
+
+            rows = []
+
+            if preds:
                 from scoring_engine.member_stats import _calc_hits
 
                 agg = {fn: {"races": 0, **{k: 0 for k in HIT_METRICS}} for fn in factor_names}
@@ -280,7 +286,6 @@ with tab_factor:
                         if kk in a:
                             a[kk] += int(v)
 
-                rows = []
                 for fn in factor_names:
                     a = agg[fn]
                     n = int(a["races"] or 0)
@@ -288,76 +293,113 @@ with tab_factor:
                     for k in HIT_METRICS:
                         row[f"{METRIC_LABELS.get(k, k)}%"] = round((int(a.get(k) or 0) / n * 100.0), 1) if n else 0.0
                     rows.append(row)
-                
-                # 注入 AI 的命中統計到獨立因子列表最上方
-                from database.models import SystemConfig
-                cfg = session.query(SystemConfig).filter_by(key="ai_overall_stats").first()
-                if cfg and isinstance(cfg.value, dict) and "stats" in cfg.value:
-                    ai_stats = cfg.value["stats"].get("hit", {})
-                    n = int(ai_stats.get("races") or 0)
-                    if n > 0:
-                        row = {"條件": "🤖 AI 賽事前瞻", "代號": "ai_advisor", "樣本(場)": n}
-                        for k in HIT_METRICS:
-                            row[f"{METRIC_LABELS.get(k, k)}%"] = round((int(ai_stats.get(k) or 0) / n * 100.0), 1) if n else 0.0
-                        rows.insert(0, row)
-                        
-                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, column_config={"條件": st.column_config.TextColumn(width="medium"), "代號": st.column_config.TextColumn(width="medium"), "組合": st.column_config.TextColumn(width="medium")})
-                
-                # 在列表下方顯示 AI 命中與反向預測的詳細統計
-                if cfg and isinstance(cfg.value, dict) and "stats" in cfg.value:
-                    stats = cfg.value["stats"]
-                    hit = stats.get("hit", {})
-                    elim = stats.get("elim", {})
-                    
-                    st.markdown("---")
-                    st.markdown("### 🤖 AI 賽前預測整體統計")
-                    st.markdown("統計所有已生成 AI 報告的賽事（包含 Top 5 推薦與反向淘汰）。")
-                    
-                    c_btn, _ = st.columns([1, 3])
-                    if c_btn.button("🔄 重新計算 AI 命中統計", use_container_width=True):
-                        from scoring_engine.ai_stats import calculate_ai_hit_stats
-                        stats = calculate_ai_hit_stats(session)
-                        st.success("✅ 計算完成！")
-                        st.rerun()
-                    
-                    st.markdown("#### 🎯 推薦名單 (Top 5) 命中率")
-                    hraces = int(hit.get("races") or 0)
-                    if hraces > 0:
-                        c1, c2, c3, c4, c5 = st.columns(5)
-                        c1.metric("樣本(場)", hraces)
-                        c2.metric("獨贏(W)", f"{round(hit.get('w1', 0)/hraces*100, 1)}%")
-                        c3.metric("連贏(Q2)", f"{round(hit.get('q2', 0)/hraces*100, 1)}%")
-                        c4.metric("位置Q(PQ2)", f"{round(hit.get('pq2', 0)/hraces*100, 1)}%")
-                        c5.metric("三重(T3)", f"{round(hit.get('t3', 0)/hraces*100, 1)}%")
-                        
-                        st.markdown("##### 推薦順序入圍率 (Top 4)")
-                        p1, p2, p3, p4, p5 = st.columns(5)
-                        p1.metric("第 1 推薦", f"{round(hit.get('top1_in_top4', 0)/hraces*100, 1)}%")
-                        p2.metric("第 2 推薦", f"{round(hit.get('top2_in_top4', 0)/hraces*100, 1)}%")
-                        p3.metric("第 3 推薦", f"{round(hit.get('top3_in_top4', 0)/hraces*100, 1)}%")
-                        p4.metric("第 4 推薦", f"{round(hit.get('top4_in_top4', 0)/hraces*100, 1)}%")
-                        p5.metric("第 5 推薦", f"{round(hit.get('top5_in_top4', 0)/hraces*100, 1)}%")
-                    else:
-                        st.info("尚無 Top 5 推薦數據")
-                        
-                    st.markdown("---")
-                    st.markdown("#### ⚠️ 反向預測 (淘汰名單) 表現")
-                    eraces = int(elim.get("races") or 0)
-                    epred = int(elim.get("pred") or 0)
-                    etn = int(elim.get("tn") or 0)
-                    efp = int(elim.get("fp") or 0)
-                    
-                    if eraces > 0 and epred > 0:
-                        accuracy = round(etn / epred * 100, 1)
-                        error_rate = round(efp / epred * 100, 1)
-                        
-                        c1, c2, c3, c4 = st.columns(4)
-                        c1.metric("樣本(場)", eraces)
-                        c2.metric("淘汰馬匹總數", epred)
-                        c3.metric("淘汰準確率 (不入Top4)", f"{accuracy}%", help="AI 淘汰的馬匹中，實際確實未進入前4名的比例")
-                        c4.metric("錯殺率", f"{error_rate}%", delta=f"-{error_rate}%", delta_color="inverse", help="AI 淘汰的馬匹中，實際跑入前4名的比例")
-                    else:
-                        st.info("尚無反向淘汰數據")
+            else:
+                st.info("選定範圍內沒有任何獨立條件 Top5 快照。")
+
+            # 讓 AI 也出現在獨立因子列表中（即使尚未計算也顯示 0）
+            ai_races = int(hit0.get("races") or 0)
+            ai_row = {"條件": "🤖 AI 賽事前瞻", "代號": "ai_advisor", "樣本(場)": ai_races}
+            for k in HIT_METRICS:
+                ai_row[f"{METRIC_LABELS.get(k, k)}%"] = round((int(hit0.get(k) or 0) / ai_races * 100.0), 1) if ai_races else 0.0
+            rows.insert(0, ai_row)
+
+            st.dataframe(
+                pd.DataFrame(rows),
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "條件": st.column_config.TextColumn(width="medium"),
+                    "代號": st.column_config.TextColumn(width="medium"),
+                    "組合": st.column_config.TextColumn(width="medium"),
+                },
+            )
+
+            st.markdown("---")
+            st.markdown("### 🤖 AI 賽前預測整體統計")
+            st.markdown("統計所有已生成 AI 報告的賽事（包含 Top 5 推薦與反向淘汰）。")
+
+            c_btn, _ = st.columns([1, 3])
+            if c_btn.button("🔄 重新計算 AI 命中統計", use_container_width=True, key="recalc_ai_overall_stats"):
+                from scoring_engine.ai_stats import calculate_ai_hit_stats
+
+                calculate_ai_hit_stats(session)
+                st.success("✅ 計算完成！")
+                st.rerun()
+
+            # reload (so new stats show after rerun; also supports first-time display)
+            cfg_ai = session.query(SystemConfig).filter_by(key="ai_overall_stats").first()
+            stats0 = cfg_ai.value.get("stats") if (cfg_ai and isinstance(cfg_ai.value, dict)) else None
+            hit = (stats0.get("hit") if isinstance(stats0, dict) else {}) or {}
+            elim = (stats0.get("elim") if isinstance(stats0, dict) else {}) or {}
+
+            st.markdown("#### 🎯 推薦名單 (Top 5) 命中率")
+            hraces = int(hit.get("races") or 0)
+            if hraces > 0:
+                c1, c2, c3, c4, c5 = st.columns(5)
+                c1.metric("樣本(場)", hraces)
+                c2.metric("獨贏(W)", f"{round(hit.get('w1', 0)/hraces*100, 1)}%")
+                c3.metric("連贏(Q2)", f"{round(hit.get('q2', 0)/hraces*100, 1)}%")
+                c4.metric("位置Q(PQ2)", f"{round(hit.get('pq2', 0)/hraces*100, 1)}%")
+                c5.metric("三重(T3)", f"{round(hit.get('t3', 0)/hraces*100, 1)}%")
+
+                st.markdown("##### 推薦順序入圍率 (Top 4)")
+                p1, p2, p3, p4, p5 = st.columns(5)
+                p1.metric("第 1 推薦", f"{round(hit.get('top1_in_top4', 0)/hraces*100, 1)}%")
+                p2.metric("第 2 推薦", f"{round(hit.get('top2_in_top4', 0)/hraces*100, 1)}%")
+                p3.metric("第 3 推薦", f"{round(hit.get('top3_in_top4', 0)/hraces*100, 1)}%")
+                p4.metric("第 4 推薦", f"{round(hit.get('top4_in_top4', 0)/hraces*100, 1)}%")
+                p5.metric("第 5 推薦", f"{round(hit.get('top5_in_top4', 0)/hraces*100, 1)}%")
+            else:
+                st.info("尚無 Top 5 推薦數據（請先生成 AI 報告，或按上方按鈕重新計算）。")
+
+            st.markdown("---")
+            st.markdown("#### ⚠️ 反向預測 (淘汰名單) 表現")
+            eraces = int(elim.get("races") or 0)
+            epred = int(elim.get("pred") or 0)
+            etn = int(elim.get("tn") or 0)
+            efp = int(elim.get("fp") or 0)
+
+            if eraces > 0 and epred > 0:
+                accuracy = round(etn / epred * 100, 1)
+                error_rate = round(efp / epred * 100, 1)
+
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("樣本(場)", eraces)
+                c2.metric("淘汰馬匹總數", epred)
+                c3.metric("淘汰準確率 (不入Top4)", f"{accuracy}%", help="AI 淘汰的馬匹中，實際確實未進入前4名的比例")
+                c4.metric("錯殺率", f"{error_rate}%", delta=f"-{error_rate}%", delta_color="inverse", help="AI 淘汰的馬匹中，實際跑入前4名的比例")
+            else:
+                st.info("尚無反向淘汰數據（請先生成 AI 報告，或按上方按鈕重新計算）。")
+
+            with st.expander("🔍 檢查 AI 快照是否已入庫（診斷）", expanded=False):
+                reports = session.query(SystemConfig.key, SystemConfig.value).filter(SystemConfig.key.like("ai_race_report:%")).all()
+                total_reports = len(reports)
+                with_top5 = 0
+                with_elim = 0
+                parse_failed = 0
+                for k, v in reports:
+                    if not isinstance(v, dict):
+                        continue
+                    if str(v.get("parse_error") or "").strip():
+                        parse_failed += 1
+                    t5 = v.get("top5_horse_nos")
+                    el = v.get("eliminated_horse_nos")
+                    if isinstance(t5, list) and len(t5) > 0:
+                        with_top5 += 1
+                    if isinstance(el, list) and len(el) > 0:
+                        with_elim += 1
+
+                trows = session.query(SystemConfig.key, SystemConfig.value).filter(SystemConfig.key.like("top5_snapshot:%")).all()
+                erows = session.query(SystemConfig.key, SystemConfig.value).filter(SystemConfig.key.like("elim_snapshot:%")).all()
+                t_ai = sum(1 for _, v in trows if isinstance(v, dict) and ("🤖 AI 賽事前瞻" in v))
+                e_ai = sum(1 for _, v in erows if isinstance(v, dict) and ("🤖 AI 賽事前瞻" in v))
+
+                st.markdown(f"- ai_race_report 總數：**{total_reports}**")
+                st.markdown(f"- 報告含 top5_horse_nos：**{with_top5}**")
+                st.markdown(f"- 報告含 eliminated_horse_nos：**{with_elim}**")
+                st.markdown(f"- 報告解析失敗(parse_error)：**{parse_failed}**")
+                st.markdown(f"- top5_snapshot 含 AI：**{t_ai}** / {len(trows)}")
+                st.markdown(f"- elim_snapshot 含 AI：**{e_ai}** / {len(erows)}")
 
     finally:
         session.close()

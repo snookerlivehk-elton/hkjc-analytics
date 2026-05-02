@@ -63,6 +63,19 @@ def _strip_json_fence(s: str) -> str:
         t = re.sub(r"\s*```$", "", t)
     return t.strip()
 
+def _extract_json_obj(text: str) -> Dict[str, Any]:
+    t = _strip_json_fence(text)
+    i = t.find("{")
+    j = t.rfind("}")
+    if i < 0 or j < 0 or j <= i:
+        return {"ok": False, "data": None, "error": "no_json_object_found"}
+    cand = t[i : j + 1].strip()
+    try:
+        obj = json.loads(cand)
+        return {"ok": True, "data": obj, "error": None}
+    except Exception as e:
+        return {"ok": False, "data": None, "error": str(e)}
+
 
 def parse_json_response(text: str) -> Dict[str, Any]:
     t = _strip_json_fence(text)
@@ -515,7 +528,7 @@ def run_ai_race_summary(session: Session, race_id: int) -> Dict[str, Any]:
         "【輸出格式要求】\n"
         "請務必以 JSON 格式輸出，不要包含任何 markdown code block (如 ```json) 標籤。格式必須完全符合以下結構：\n"
         "{\n"
-        "  \"top5_horse_nos\": [整數, 整數, 整數, 整數, 整數], // 必須剛好 5 匹推薦馬 (按優先順序)\n"
+        "  \"top5_horse_nos\": [整數, ...], // 推薦馬匹 1-5 匹（按優先順序；寧缺勿濫）\n"
         f"  \"eliminated_horse_nos\": [整數, ...], // 最多 {num_elim} 匹淘汰馬。注意：若該場次勢均力敵，請只列出你【真正有把握】淘汰的馬匹，寧缺勿濫，數量可少於此數甚至留空 []\n"
         "  \"report\": \"你撰寫的完整 Markdown 分析報告內容 (請將簡潔版與完整版內容放在此字串中，並使用 \\n 換行)\"\n"
         "}\n"
@@ -531,38 +544,32 @@ def run_ai_race_summary(session: Session, race_id: int) -> Dict[str, Any]:
     )
     
     if resp.get("ok"):
-        try:
-            import json
-            text = resp.get("text", "").strip()
-            if text.startswith("```json"):
-                text = text[7:]
-            if text.endswith("```"):
-                text = text[:-3]
-            parsed = json.loads(text)
-            
+        raw_text = str(resp.get("text") or "")
+        parsed_res = _extract_json_obj(raw_text)
+        if parsed_res.get("ok") is True and isinstance(parsed_res.get("data"), dict):
+            parsed = parsed_res["data"]
             report_text = parsed.get("report", "報告解析失敗")
-            
-            # Format report prefix
+
             prefix = _race_prefix(race, date_str)
-            report_text = prefix + report_text
-            
+            report_text = prefix + str(report_text)
+
             top5 = parsed.get("top5_horse_nos", [])
             elim = parsed.get("eliminated_horse_nos", [])
-            
+
             # Save to DB for historical viewing (Req 2)
             report_key = f"ai_race_report:{date_str}:{race_no}"
             report_cfg = session.query(SystemConfig).filter_by(key=report_key).first()
             if not report_cfg:
                 report_cfg = SystemConfig(key=report_key, description=f"AI 賽事分析報告（racedate={date_str} R{race_no}）")
                 session.add(report_cfg)
-                
+
             report_cfg.value = {
-                "report": report_text, 
+                "report": report_text,
                 "top5_horse_nos": top5,
                 "eliminated_horse_nos": elim,
-                "created_at": datetime.utcnow().isoformat()
+                "created_at": datetime.utcnow().isoformat(),
             }
-            
+
             # Update prediction snapshots so AI predictions appear in member stats and hit stats tables
             top5_key = f"top5_snapshot:{date_str}:{race_no}"
             t5_cfg = session.query(SystemConfig).filter_by(key=top5_key).first()
@@ -572,7 +579,7 @@ def run_ai_race_summary(session: Session, race_id: int) -> Dict[str, Any]:
             t5_val = t5_cfg.value if isinstance(t5_cfg.value, dict) else {}
             t5_val["🤖 AI 賽事前瞻"] = top5
             t5_cfg.value = t5_val
-            
+
             elim_key = f"elim_snapshot:{date_str}:{race_no}"
             el_cfg = session.query(SystemConfig).filter_by(key=elim_key).first()
             if not el_cfg:
@@ -581,34 +588,29 @@ def run_ai_race_summary(session: Session, race_id: int) -> Dict[str, Any]:
             el_val = el_cfg.value if isinstance(el_cfg.value, dict) else {}
             el_val["🤖 AI 賽事前瞻"] = elim
             el_cfg.value = el_val
-            
+
             session.commit()
-            
+
             # Update AI stats
             from scoring_engine.ai_stats import calculate_ai_hit_stats
             calculate_ai_hit_stats(session)
-            
+
             return {"ok": True, "summary": report_text}
-        except Exception as e:
-            # Fallback if JSON parsing fails
-            report_text = resp.get("text")
-            
-            prefix = _race_prefix(race, date_str)
-            report_text = prefix + str(report_text)
-            
-            report_key = f"ai_race_report:{date_str}:{race_no}"
-            report_cfg = session.query(SystemConfig).filter_by(key=report_key).first()
-            if not report_cfg:
-                report_cfg = SystemConfig(key=report_key, description=f"AI 賽事分析報告（racedate={date_str} R{race_no}）")
-                session.add(report_cfg)
-                
-            report_cfg.value = {
-                "report": report_text, 
-                "created_at": datetime.utcnow().isoformat()
-            }
-            session.commit()
-            
-            return {"ok": True, "summary": report_text}
+
+        # JSON parsing failed: still save report for viewing, and keep raw for diagnostics
+        report_text = _race_prefix(race, date_str) + raw_text
+        report_key = f"ai_race_report:{date_str}:{race_no}"
+        report_cfg = session.query(SystemConfig).filter_by(key=report_key).first()
+        if not report_cfg:
+            report_cfg = SystemConfig(key=report_key, description=f"AI 賽事分析報告（racedate={date_str} R{race_no}）")
+            session.add(report_cfg)
+        report_cfg.value = {
+            "report": report_text,
+            "created_at": datetime.utcnow().isoformat(),
+            "parse_error": str(parsed_res.get("error") or ""),
+        }
+        session.commit()
+        return {"ok": True, "summary": report_text, "reason": "json_parse_failed"}
     else:
         return {"ok": False, "reason": "api_error", "error": resp.get("error")}
 
