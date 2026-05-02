@@ -79,10 +79,11 @@ def generate_race_reflection(session: Session, race_id: int) -> Dict[str, Any]:
     system_prompt = (
         "你是專業賽馬 AI 檢討專家。以下是你在賽前寫的分析報告，以及該場賽事最終的真實 Top 4 賽果。\n"
         "請檢視你的預測與實際結果的落差。找出你可能漏看的盲點（例如：高估了某種走勢、低估了檔位或負磅的影響、忽視了特定意外紀錄等）。\n"
+        "請將『檢討分析過程』的字數嚴格控制在 200 到 400 字以內，精簡扼要。\n"
         "請總結出 1-2 條簡潔、通用、可供未來參考的『賽事預測黃金法則』。\n\n"
         "請務必嚴格以 JSON 格式輸出，格式如下：\n"
         "{\n"
-        "  \"reflection_analysis\": \"你的檢討分析過程...\",\n"
+        "  \"reflection_analysis\": \"你的檢討分析過程 (200-400字內)...\",\n"
         "  \"learned_rules\": [\"法則1\", \"法則2\"]\n"
         "}\n"
         "不要包含任何 markdown block 標籤，直接輸出純 JSON。"
