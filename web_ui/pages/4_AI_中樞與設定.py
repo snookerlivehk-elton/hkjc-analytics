@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 
 # 加入專案路徑
-root_path = str(Path(__file__).resolve().parent.parent)
+root_path = str(Path(__file__).resolve().parent.parent.parent)
 if root_path not in sys.path:
     sys.path.append(root_path)
 
