@@ -433,9 +433,19 @@ def run_ai_race_summary(session: Session, race_id: int) -> Dict[str, Any]:
         
     user_text = "\n".join(input_lines)
     
+    # Inject learned rules
+    from scoring_engine.ai_reflection import get_learned_rules
+    learned_rules = get_learned_rules(session)
+    rules_text = ""
+    if learned_rules:
+        rules_text = "\n### 【系統過往學習到的賽事法則】\n請在分析時，務必參考以下你過往自我檢討得出的法則（若適用於本場）：\n"
+        for i, rule in enumerate(learned_rules, 1):
+            rules_text += f"- {rule}\n"
+            
     system_prompt = (
         "你是專業香港賽馬分析師。現在我提供這場賽事各匹馬的近期走勢評述（FormGuide），以及系統量化出來的客觀數據（包含檔位、負磅、評分、SpeedPRO能量分、騎練合作分、近期狀態分等）。\n"
         "請根據這些質化與量化數據進行深度綜合分析。\n\n"
+        f"{rules_text}\n"
         "請務必包含以下兩個版本：\n\n"
         "### 【簡潔版分析】\n"
         "- 使用列點方式，直接給出 3-4 匹你認為最值得留意的馬匹。\n"
