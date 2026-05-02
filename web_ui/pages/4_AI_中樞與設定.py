@@ -466,16 +466,95 @@ try:
 
     with tab_reflection:
         st.markdown("### 💡 系統學習到的黃金法則")
-        from scoring_engine.ai_reflection import get_learned_rules, generate_race_reflection
+        from scoring_engine.ai_reflection import (
+            get_learned_rules,
+            get_learned_rule_items,
+            save_learned_rule_items,
+            generate_race_reflection,
+            list_reflection_candidates,
+            batch_reflect_worst,
+        )
         
-        learned_rules = get_learned_rules(session)
-        if learned_rules:
-            for i, r in enumerate(learned_rules, 1):
-                st.info(f"**法則 {i}:** {r}")
+        items = get_learned_rule_items(session)
+        if items:
+            st.caption("可在下方管理法則（啟用/停用/刪除），系統只會把「啟用」的法則注入到下一次賽前預測。")
+            changed = False
+            updated_items = []
+            for i, it in enumerate(items, 1):
+                rule_text = str(it.get("rule") or "").strip()
+                if not rule_text:
+                    continue
+                enabled_default = bool(it.get("enabled") is not False)
+                enabled = st.checkbox(f"啟用｜法則 {i}: {rule_text}", value=enabled_default, key=f"rule_enabled_{i}")
+                it2 = dict(it)
+                it2["enabled"] = bool(enabled)
+                updated_items.append(it2)
+                if bool(enabled) != enabled_default:
+                    changed = True
+
+            del_opts = [str(x.get("rule") or "").strip() for x in updated_items if str(x.get("rule") or "").strip()]
+            to_del = st.multiselect("刪除法則（可多選）", options=del_opts, default=[], key="rule_delete_sel")
+            c1, c2 = st.columns([2, 3])
+            ok_save = _confirm_run(c1, "save_rules", label="輸入 RUN 以儲存法則變更")
+            if c2.button("💾 儲存法則設定", use_container_width=True, disabled=not ok_save):
+                final_items = []
+                dels = set(str(x).strip() for x in (to_del or []) if str(x).strip())
+                for it in updated_items:
+                    rt = str(it.get("rule") or "").strip()
+                    if not rt or rt in dels:
+                        continue
+                    final_items.append(it)
+                save_learned_rule_items(session, final_items)
+                st.success("✅ 已儲存法則設定。")
+                st.rerun()
+
+            enabled_rules = get_learned_rules(session)
+            if enabled_rules:
+                st.markdown("**目前啟用法則（會影響下一次預測）**")
+                for r in enabled_rules:
+                    st.info(r)
         else:
             st.warning("目前尚未學習到任何法則。請先執行賽後反思。")
             
         st.markdown("---")
+        st.markdown("### ⚡ 批次反思（自動挑選最失準場次）")
+        st.caption("省資源策略：只挑選同一賽日中最失準的 1～3 場做反思，提升法則品質並避免每場都耗費 AI。")
+
+        from sqlalchemy import func
+        dates_q = session.query(func.date(Race.race_date)).distinct().order_by(func.date(Race.race_date).desc()).limit(180).all()
+        available_dates = []
+        for d in dates_q:
+            if d and d[0]:
+                try:
+                    available_dates.append(d[0].strftime("%Y/%m/%d"))
+                except Exception:
+                    pass
+        if available_dates:
+            sel_date = st.selectbox("選擇賽日", options=available_dates, index=0, key="batch_reflect_date")
+            top_n = st.slider("最多反思幾場（挑最失準）", min_value=1, max_value=5, value=3, step=1, key="batch_reflect_topn")
+            cand = list_reflection_candidates(session, date_str=str(sel_date), only_unreflected=True, limit=100)
+            if not cand:
+                st.info("該賽日沒有可反思的場次（需同時具備：AI 報告 + 已有賽果 Top4 + 未反思）。")
+            else:
+                show = cand[: int(top_n)]
+                st.markdown("**將會優先反思以下場次（按失準程度排序）**")
+                for x in show:
+                    st.write(f"- {x.get('date')} 第 {x.get('race_no')} 場｜失準分數 {x.get('score')}（Top4命中 {x.get('hits_in_top4')}/4；錯殺 {x.get('false_elim')}）")
+
+                c1, c2 = st.columns([2, 3])
+                ok_run = _confirm_run(c1, "batch_reflect_run", label="輸入 RUN 以批次反思")
+                if c2.button("🧠 批次生成反思（只跑最失準）", use_container_width=True, disabled=not ok_run, key="batch_reflect_btn"):
+                    with st.spinner("AI 正在批次檢討並提煉法則..."):
+                        res = batch_reflect_worst(session, date_str=str(sel_date), top_n=int(top_n))
+                    results = res.get("results") if isinstance(res, dict) else []
+                    ok_n = 0
+                    for item in results or []:
+                        rr = item.get("res") if isinstance(item, dict) else {}
+                        if isinstance(rr, dict) and rr.get("ok"):
+                            ok_n += 1
+                    st.success(f"✅ 完成批次反思：成功 {ok_n}/{len(results or [])} 場。")
+                    st.rerun()
+
         st.markdown("### 🔄 執行賽後反思")
         st.write("請選擇已經有賽果（且已有賽前 AI 報告）的賽事，讓 AI 對比預測與實際結果，提煉新法則（字數已控制在 200-400 字）。")
         
