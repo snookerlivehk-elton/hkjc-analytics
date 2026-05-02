@@ -55,10 +55,12 @@ async def run_daily_scraper():
         draw_stats_by_race = await special_scraper.get_draw_stats(racedate=target_date_str)
         enable_speedpro_inline = str(os.environ.get("ENABLE_SPEEDPRO_INLINE_FETCH") or "").strip().lower() in ("1", "true", "yes")
         speedpro_scraper = None
+        formguide_scraper = None
         if enable_speedpro_inline:
             from data_scraper.speedpro_energy import SpeedProEnergyScraper
-
+            from data_scraper.speedpro_formguide import SpeedProFormGuideScraper
             speedpro_scraper = SpeedProEnergyScraper()
+            formguide_scraper = SpeedProFormGuideScraper()
         
         # 將檔位統計儲存到 SystemConfig 以供計分使用
         if draw_stats_by_race:
@@ -149,6 +151,28 @@ async def run_daily_scraper():
                         print(f">>> 已同步 SpeedPRO 能量分：race_no={race.race_no} entries={len(sp)}")
                 except Exception as e:
                     print(f">>> [警告] SpeedPRO 能量分同步失敗（race_no={race.race_no}）: {e}")
+                    session.rollback()
+
+            if formguide_scraper is not None:
+                try:
+                    from database.models import SystemConfig
+                    fg = formguide_scraper.scrape(int(race.race_no or 0))
+                    if isinstance(fg, dict) and fg:
+                        try:
+                            date_str = (race.race_date.date().strftime("%Y/%m/%d") if race.race_date else None)
+                        except Exception:
+                            date_str = None
+                        if date_str and race.race_no:
+                            key_fg = f"speedpro_formguide:{date_str}:{int(race.race_no)}"
+                            cfg_fg = session.query(SystemConfig).filter_by(key=key_fg).first()
+                            if not cfg_fg:
+                                cfg_fg = SystemConfig(key=key_fg, description=f"SpeedPRO 賽績指引（racedate={date_str} R{int(race.race_no)}）")
+                                session.add(cfg_fg)
+                            cfg_fg.value = {str(int(k)): v for k, v in fg.items()}
+                            session.commit()
+                            print(f">>> 已同步 SpeedPRO 賽績指引：race_no={race.race_no} entries={len(fg)}")
+                except Exception as e:
+                    print(f">>> [警告] SpeedPRO 賽績指引同步失敗（race_no={race.race_no}）: {e}")
                     session.rollback()
 
             engine.score_race(race.id)

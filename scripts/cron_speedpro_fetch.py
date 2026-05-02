@@ -14,6 +14,7 @@ if root_path not in sys.path:
 from database.connection import init_db, get_session
 from database.models import Race, RaceEntry, SystemConfig
 from data_scraper.speedpro_energy import SpeedProEnergyScraper
+from data_scraper.speedpro_formguide import SpeedProFormGuideScraper
 
 
 HK_TZ = ZoneInfo("Asia/Hong_Kong")
@@ -226,17 +227,33 @@ def main():
             race_nos = [rn for rn in race_nos if int(rn) in wanted]
 
         scraper = SpeedProEnergyScraper()
+        fg_scraper = SpeedProFormGuideScraper()
         any_work = False
 
         for rn in race_nos:
             snap_key = f"speedpro_energy:{racedate_str}:{int(rn)}"
             retry_key = f"speedpro_retry:{racedate_str}:{int(rn)}"
+            fg_snap_key = f"speedpro_formguide:{racedate_str}:{int(rn)}"
 
             snap_cfg = _get_cfg(session, snap_key)
+            energy_ok = False
             if snap_cfg and isinstance(snap_cfg.value, dict):
                 ok, _ = _is_done_payload(snap_cfg.value)
                 if ok:
-                    continue
+                    energy_ok = True
+                    
+            if energy_ok:
+                fg_cfg = _get_cfg(session, fg_snap_key)
+                if not fg_cfg or not isinstance(fg_cfg.value, dict) or not fg_cfg.value:
+                    try:
+                        fg_data = fg_scraper.scrape(int(rn))
+                        if fg_data:
+                            normalized_fg = {str(int(k)): v for k, v in fg_data.items() if str(k).isdigit() and isinstance(v, dict)}
+                            _upsert_cfg(session, fg_snap_key, normalized_fg, f"SpeedPRO 賽績指引（racedate={racedate_str} R{int(rn)}）")
+                            print(f"ok {fg_snap_key} rows={len(normalized_fg)}")
+                    except Exception as e:
+                        print(f"error fetching formguide {fg_snap_key}: {e}")
+                continue
 
             retry_cfg = _get_cfg(session, retry_key)
             retry_state = retry_cfg.value if retry_cfg and isinstance(retry_cfg.value, dict) else {}
@@ -296,6 +313,17 @@ def main():
                 }
                 _upsert_cfg(session, retry_key, state, f"SpeedPRO 重試狀態（racedate={racedate_str} R{int(rn)}）")
                 print(f"ok {snap_key} rows={len(normalized)}")
+
+                # Also fetch formguide since energy is done
+                try:
+                    fg_data = fg_scraper.scrape(int(rn))
+                    if fg_data:
+                        normalized_fg = {str(int(k)): v for k, v in fg_data.items() if str(k).isdigit() and isinstance(v, dict)}
+                        _upsert_cfg(session, fg_snap_key, normalized_fg, f"SpeedPRO 賽績指引（racedate={racedate_str} R{int(rn)}）")
+                        print(f"ok {fg_snap_key} rows={len(normalized_fg)}")
+                except Exception as e:
+                    print(f"error fetching formguide {fg_snap_key}: {e}")
+
                 continue
 
             minutes = _retry_minutes(attempt)
