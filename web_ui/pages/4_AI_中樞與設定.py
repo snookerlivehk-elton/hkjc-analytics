@@ -15,11 +15,13 @@ if root_path not in sys.path:
 from database.connection import get_session
 from database.models import SystemConfig, Race
 from web_ui.utils import _confirm_run
+from web_ui.nav import render_admin_nav
 
 st.set_page_config(page_title="AI 顧問與設定 - HKJC Analytics", page_icon="🤖", layout="wide")
 
 st.markdown("## 🤖 AI 中樞與設定")
 st.markdown("在此集中管理 AI 參數設定、批次生成賽事報告，以及檢視賽後反思與進化法則。")
+render_admin_nav()
 
 tab_settings, tab_batch, tab_history, tab_reflection, tab_factor = st.tabs([
     "⚙️ AI 參數設定", 
@@ -226,6 +228,46 @@ try:
                         val = row["Value"]
                         if isinstance(val, dict) and "report" in val:
                             st.markdown(val["report"])
+                            with st.expander("📋 點擊顯示可複製的原始文字", expanded=False):
+                                st.code(val["report"], language="markdown")
+                            
+                            with st.expander("🔍 檢視原始 FormGuide 數據", expanded=False):
+                                fg_key = f"speedpro_formguide:{row['Date']}:{int(row['RaceNo'])}"
+                                fg_cfg = session.query(SystemConfig).filter_by(key=fg_key).first()
+                                if fg_cfg and fg_cfg.value:
+                                    st.code(json.dumps(fg_cfg.value, ensure_ascii=False, indent=2), language="json")
+                                else:
+                                    st.info("找不到此場次的 FormGuide 暫存資料。")
+
+                            c_confirm, c_btn = st.columns([2, 3])
+                            ok = _confirm_run(c_confirm, f"regen_ai_report_{row['Date']}_{int(row['RaceNo'])}", label="輸入 RUN 以重新生成本場報告")
+                            if c_btn.button("♻️ 重新生成本場報告", use_container_width=True, disabled=not ok):
+                                from sqlalchemy import func
+                                from scoring_engine.ai_advisor import run_ai_race_summary
+
+                                try:
+                                    d0 = datetime.strptime(str(row["Date"]), "%Y/%m/%d").date()
+                                except Exception:
+                                    d0 = None
+                                if not d0:
+                                    st.error("❌ 日期格式無法解析。")
+                                else:
+                                    rr = (
+                                        session.query(Race)
+                                        .filter(func.date(Race.race_date) == d0)
+                                        .filter(Race.race_no == int(row["RaceNo"]))
+                                        .first()
+                                    )
+                                    if not rr:
+                                        st.error("❌ 找不到對應賽事資料（Race）。")
+                                    else:
+                                        with st.spinner("🤖 正在重新生成報告..."):
+                                            res = run_ai_race_summary(session, int(rr.id))
+                                        if res.get("ok"):
+                                            st.success("✅ 已重新生成並更新報告。")
+                                            st.rerun()
+                                        else:
+                                            st.error(f"❌ 重新生成失敗：{res.get('reason')} {res.get('error')}")
                         else:
                             st.info("報告內容格式無法解析。")
 

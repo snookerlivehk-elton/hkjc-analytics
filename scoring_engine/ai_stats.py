@@ -38,11 +38,14 @@ def calculate_ai_hit_stats(session: Session) -> Dict[str, Any]:
         if len(parts) < 3:
             continue
         date_str = parts[1]
-        race_no = parts[2]
+        try:
+            race_no = int(parts[2])
+        except Exception:
+            continue
         
         # Get actual results for this race
         date_obj = datetime.strptime(date_str, "%Y/%m/%d").date()
-        race = session.query(Race).filter(func.date(Race.race_date) == date_obj, Race.race_no == race_no).first()
+        race = session.query(Race).filter(func.date(Race.race_date) == date_obj, Race.race_no == int(race_no)).first()
         if not race:
             continue
             
@@ -114,4 +117,3 @@ def calculate_ai_hit_stats(session: Session) -> Dict[str, Any]:
     session.commit()
     
     return stats
-

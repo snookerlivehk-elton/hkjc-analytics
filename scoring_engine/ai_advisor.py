@@ -346,6 +346,48 @@ def run_ai_race_summary(session: Session, race_id: int) -> Dict[str, Any]:
         
     date_str = race.race_date.strftime("%Y/%m/%d") if hasattr(race.race_date, "strftime") else str(race.race_date)[:10].replace("-", "/")
     race_no = race.race_no
+
+    def _venue_label(venue: Any, track_type: Any) -> str:
+        v = str(venue or "").strip().upper()
+        t = str(track_type or "").strip()
+        if v == "HV" or ("跑馬地" in t):
+            return "跑馬地"
+        if v == "ST" or ("沙田" in t):
+            return "沙田"
+        return str(venue or "").strip() or "-"
+
+    def _surface_label(surface: Any, track_type: Any) -> str:
+        s = str(surface or "").strip()
+        if s:
+            return s
+        t = str(track_type or "").strip().upper()
+        if any(x in t for x in ["ALL WEATHER", "A/W", "AW"]):
+            return "泥地(全天候)"
+        if "TURF" in t:
+            return "草地"
+        return "-"
+
+    def _race_prefix(r: Any, date_s: str) -> str:
+        loc = _venue_label(getattr(r, "venue", None), getattr(r, "track_type", None))
+        surface = _surface_label(getattr(r, "surface", None), getattr(r, "track_type", None))
+        course = str(getattr(r, "course_type", "") or "").strip()
+        dist = int(getattr(r, "distance", 0) or 0)
+        cls = str(getattr(r, "race_class", "") or "").strip()
+
+        parts = []
+        if loc and loc != "-":
+            parts.append(loc)
+        if surface and surface != "-":
+            parts.append(surface)
+        if course:
+            parts.append(f"跑道{course}")
+        if dist > 0:
+            parts.append(f"{dist}米")
+        if cls:
+            parts.append(cls)
+        meta = "｜".join(parts)
+        meta = f"｜{meta}" if meta else ""
+        return f"# J18.HK AI 賽事前瞻分析\n**賽事：{date_s} 第 {int(getattr(r, 'race_no', 0) or 0)} 場{meta}**\n\n"
     
     fg_key = f"speedpro_formguide:{date_str}:{race_no}"
     cfg = session.query(SystemConfig).filter_by(key=fg_key).first()
@@ -499,6 +541,11 @@ def run_ai_race_summary(session: Session, race_id: int) -> Dict[str, Any]:
             parsed = json.loads(text)
             
             report_text = parsed.get("report", "報告解析失敗")
+            
+            # Format report prefix
+            prefix = _race_prefix(race, date_str)
+            report_text = prefix + report_text
+            
             top5 = parsed.get("top5_horse_nos", [])
             elim = parsed.get("eliminated_horse_nos", [])
             
@@ -515,6 +562,26 @@ def run_ai_race_summary(session: Session, race_id: int) -> Dict[str, Any]:
                 "eliminated_horse_nos": elim,
                 "created_at": datetime.utcnow().isoformat()
             }
+            
+            # Update prediction snapshots so AI predictions appear in member stats and hit stats tables
+            top5_key = f"top5_snapshot:{date_str}:{race_no}"
+            t5_cfg = session.query(SystemConfig).filter_by(key=top5_key).first()
+            if not t5_cfg:
+                t5_cfg = SystemConfig(key=top5_key, description=f"Top 5 預測快照（racedate={date_str} R{race_no}）")
+                session.add(t5_cfg)
+            t5_val = t5_cfg.value if isinstance(t5_cfg.value, dict) else {}
+            t5_val["🤖 AI 賽事前瞻"] = top5
+            t5_cfg.value = t5_val
+            
+            elim_key = f"elim_snapshot:{date_str}:{race_no}"
+            el_cfg = session.query(SystemConfig).filter_by(key=elim_key).first()
+            if not el_cfg:
+                el_cfg = SystemConfig(key=elim_key, description=f"反向預測淘汰快照（racedate={date_str} R{race_no}）")
+                session.add(el_cfg)
+            el_val = el_cfg.value if isinstance(el_cfg.value, dict) else {}
+            el_val["🤖 AI 賽事前瞻"] = elim
+            el_cfg.value = el_val
+            
             session.commit()
             
             # Update AI stats
@@ -525,6 +592,9 @@ def run_ai_race_summary(session: Session, race_id: int) -> Dict[str, Any]:
         except Exception as e:
             # Fallback if JSON parsing fails
             report_text = resp.get("text")
+            
+            prefix = _race_prefix(race, date_str)
+            report_text = prefix + str(report_text)
             
             report_key = f"ai_race_report:{date_str}:{race_no}"
             report_cfg = session.query(SystemConfig).filter_by(key=report_key).first()
