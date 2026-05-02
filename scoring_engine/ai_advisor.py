@@ -464,7 +464,19 @@ def run_ai_race_summary(session: Session, race_id: int) -> Dict[str, Any]:
         for i, rule in enumerate(learned_rules, 1):
             rules_text += f"- {rule}\n"
             
+    # Append JSON output instruction
+    num_elim = max(1, int(len(entries) * 0.35))
     system_prompt = f"{base_prompt}\n\n{rules_text}"
+    system_prompt += (
+        "\n\n====================\n"
+        "【輸出格式要求】\n"
+        "請務必以 JSON 格式輸出，不要包含任何 markdown code block (如 ```json) 標籤。格式必須完全符合以下結構：\n"
+        "{\n"
+        "  \"top5_horse_nos\": [整數, 整數, 整數, 整數, 整數], // 必須剛好 5 匹推薦馬 (按優先順序)\n"
+        f"  \"eliminated_horse_nos\": [整數, 整數, ...], // 必須剛好 {num_elim} 匹最不看好的淘汰馬 (約佔全場35%)\n"
+        "  \"report\": \"你撰寫的完整 Markdown 分析報告內容 (請將簡潔版與完整版內容放在此字串中，並使用 \\n 換行)\"\n"
+        "}\n"
+    )
     
     resp = call_chat_completions(
         endpoint=settings["endpoint"],
@@ -476,16 +488,56 @@ def run_ai_race_summary(session: Session, race_id: int) -> Dict[str, Any]:
     )
     
     if resp.get("ok"):
-        # Save to DB for historical viewing (Req 2)
-        report_key = f"ai_race_report:{date_str}:{race_no}"
-        report_cfg = session.query(SystemConfig).filter_by(key=report_key).first()
-        if not report_cfg:
-            report_cfg = SystemConfig(key=report_key, description=f"AI 賽事分析報告（racedate={date_str} R{race_no}）")
-            session.add(report_cfg)
-        report_cfg.value = {"report": resp.get("text"), "created_at": datetime.utcnow().isoformat()}
-        session.commit()
-        
-        return {"ok": True, "summary": resp.get("text")}
+        try:
+            import json
+            text = resp.get("text", "").strip()
+            if text.startswith("```json"):
+                text = text[7:]
+            if text.endswith("```"):
+                text = text[:-3]
+            parsed = json.loads(text)
+            
+            report_text = parsed.get("report", "報告解析失敗")
+            top5 = parsed.get("top5_horse_nos", [])
+            elim = parsed.get("eliminated_horse_nos", [])
+            
+            # Save to DB for historical viewing (Req 2)
+            report_key = f"ai_race_report:{date_str}:{race_no}"
+            report_cfg = session.query(SystemConfig).filter_by(key=report_key).first()
+            if not report_cfg:
+                report_cfg = SystemConfig(key=report_key, description=f"AI 賽事分析報告（racedate={date_str} R{race_no}）")
+                session.add(report_cfg)
+                
+            report_cfg.value = {
+                "report": report_text, 
+                "top5_horse_nos": top5,
+                "eliminated_horse_nos": elim,
+                "created_at": datetime.utcnow().isoformat()
+            }
+            session.commit()
+            
+            # Update AI stats
+            from scoring_engine.ai_stats import calculate_ai_hit_stats
+            calculate_ai_hit_stats(session)
+            
+            return {"ok": True, "summary": report_text}
+        except Exception as e:
+            # Fallback if JSON parsing fails
+            report_text = resp.get("text")
+            
+            report_key = f"ai_race_report:{date_str}:{race_no}"
+            report_cfg = session.query(SystemConfig).filter_by(key=report_key).first()
+            if not report_cfg:
+                report_cfg = SystemConfig(key=report_key, description=f"AI 賽事分析報告（racedate={date_str} R{race_no}）")
+                session.add(report_cfg)
+                
+            report_cfg.value = {
+                "report": report_text, 
+                "created_at": datetime.utcnow().isoformat()
+            }
+            session.commit()
+            
+            return {"ok": True, "summary": report_text}
     else:
         return {"ok": False, "reason": "api_error", "error": resp.get("error")}
 
