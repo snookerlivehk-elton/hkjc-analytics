@@ -679,7 +679,13 @@ try:
         st.markdown("### 🎯 Top3 目標校準（Top5 重排）")
         st.caption("用途：用系統客觀分數對 AI Top5 做低成本重排，目標提升「Top2 勝出率」與「Top3 ≥ 2 入圍率」。不會增加 LLM 成本。")
 
-        from scoring_engine.ai_rerank import load_ai_rerank_config, save_ai_rerank_config, backtest_rerank
+        from scoring_engine.ai_rerank import (
+            load_ai_rerank_config,
+            save_ai_rerank_config,
+            backtest_rerank,
+            tune_rerank_for_bucket,
+            load_bucket_rerank_config,
+        )
         rr_cfg = load_ai_rerank_config(session)
         c1, c2, c3 = st.columns(3)
         ai_prior_w = c1.number_input("AI 順序權重", value=float(rr_cfg.get("ai_prior_weight") or 0.0), step=0.1, key="rr_ai_prior_w")
@@ -739,6 +745,69 @@ try:
                 c4.metric("重排後 Top3≥2入圍率", f"{r.get('top3_2in_rate', 0.0)}%")
             else:
                 st.error(f"❌ 回測失敗：{res}")
+
+        st.markdown("---")
+        st.markdown("#### 🧩 分桶調參（按跑道×場地狀態×距離分桶）")
+        st.caption("用途：為不同跑道/場地狀態配置不同重排權重，系統會在生成報告時自動套用對應分桶權重。")
+
+        idx_cfg = session.query(SystemConfig).filter_by(key="trkprof_index").first()
+        items = []
+        if idx_cfg and isinstance(idx_cfg.value, dict):
+            items = idx_cfg.value.get("items") if isinstance(idx_cfg.value.get("items"), list) else []
+        keys = [str(x.get("key") or "") for x in items if isinstance(x, dict) and str(x.get("key") or "").startswith("trkprof:")]
+        if not keys:
+            st.info("尚無跑道/場地分組索引。請先到上方「📊 跑道 / 場地狀態統計」計算一次。")
+        else:
+            sel = st.selectbox("選擇跑道/場地分桶（trkprof）", options=keys, index=0, key="rr_bucket_sel")
+            parts = str(sel).split(":")
+            bparts = None
+            if len(parts) >= 5:
+                bparts = (parts[1], parts[2], parts[3], parts[4])
+
+            if bparts:
+                current_bucket_cfg = load_bucket_rerank_config(session, bparts)
+                if current_bucket_cfg:
+                    st.success(f"已存在分桶權重：ai_rerank_cfg:{bparts[0]}:{bparts[1]}:{bparts[2]}:{bparts[3]}")
+                    st.dataframe(pd.DataFrame([current_bucket_cfg]), use_container_width=True, hide_index=True)
+                else:
+                    st.warning("此分桶尚未調參，生成報告會回退到全局重排權重。")
+
+                c1, c2, c3 = st.columns(3)
+                w2_w = c1.number_input("目標權重：Top2 勝出率", value=0.7, step=0.1, key="rr_obj_w2")
+                t2_w = c2.number_input("目標權重：Top3≥2入圍率", value=0.3, step=0.1, key="rr_obj_t2")
+                grid = c3.selectbox("搜尋強度", ["fast", "thorough"], index=0, key="rr_grid_preset")
+
+                c1, c2, c3 = st.columns([2, 2, 3])
+                bd1 = c1.date_input("調參開始日期", value=datetime(2026, 4, 8).date(), key="rr_bucket_d1")
+                bd2 = c2.date_input("調參結束日期", value=datetime.today().date(), key="rr_bucket_d2")
+                bn = int(c3.selectbox("最多使用樣本(場)", [50, 100, 150, 200], index=1, key="rr_bucket_n"))
+
+                c1, c2 = st.columns([2, 3])
+                ok_tune = _confirm_run(c1, "rr_bucket_tune", label="輸入 RUN 以分桶調參")
+                if c2.button("🧠 分桶調參並儲存最佳權重", use_container_width=True, disabled=not ok_tune, key="rr_bucket_tune_btn"):
+                    with st.spinner("正在分桶調參（grid search）..."):
+                        res = tune_rerank_for_bucket(
+                            session,
+                            bparts,
+                            d1=datetime.combine(bd1, datetime.min.time()) if bd1 else None,
+                            d2=datetime.combine(bd2, datetime.max.time()) if bd2 else None,
+                            max_races=int(bn),
+                            grid_preset=str(grid),
+                            objective={"w2_weight": float(w2_w), "top3_2in_weight": float(t2_w)},
+                            save=True,
+                        )
+                    if isinstance(res, dict) and res.get("ok"):
+                        st.success(f"✅ 分桶調參完成：樣本 {int(res.get('samples') or 0)} 場")
+                        b = res.get("base") if isinstance(res.get("base"), dict) else {}
+                        best = res.get("best") if isinstance(res.get("best"), dict) else {}
+                        c1, c2, c3, c4 = st.columns(4)
+                        c1.metric("Baseline W2", f"{b.get('w2_rate', 0.0)}%")
+                        c2.metric("Best W2", f"{best.get('w2_rate', 0.0)}%")
+                        c3.metric("Baseline Top3≥2", f"{b.get('top3_2in_rate', 0.0)}%")
+                        c4.metric("Best Top3≥2", f"{best.get('top3_2in_rate', 0.0)}%")
+                        st.rerun()
+                    else:
+                        st.error(f"❌ 分桶調參失敗：{res}")
 
     with tab_factor:
         st.markdown("### 💡 AI 因子優化建議")
