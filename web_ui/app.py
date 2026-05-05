@@ -776,12 +776,20 @@ def main():
     tc = session.query(RaceTrackCondition).filter_by(race_id=int(selected_race_id)).first()
     if tc and str(getattr(tc, "going_raw", "") or "").strip():
         going_display = str(getattr(tc, "going_raw", "") or "").strip()
+    if not going_display and tc and str(getattr(tc, "going_code", "") or "").strip():
+        try:
+            from scoring_engine.track_conditions import going_code_label
+            going_display = going_code_label(str(getattr(tc, "going_code", "") or "").strip())
+        except Exception:
+            going_display = str(getattr(tc, "going_code", "") or "").strip()
     if not going_display:
         div0 = session.query(RaceDividend).filter_by(race_id=int(selected_race_id)).first()
         meta0 = div0.meta if (div0 and isinstance(div0.meta, dict)) else {}
         g0 = str(meta0.get("going") or "").strip()
         if g0:
             going_display = g0
+    if not going_display and str(getattr(race, "going", "") or "").strip():
+        going_display = str(getattr(race, "going", "") or "").strip()
     col4.metric("場地狀況", going_display or "N/A")
 
     with st.expander("🛰️ 數據源更新狀態", expanded=False):
