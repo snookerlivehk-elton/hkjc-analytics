@@ -749,9 +749,23 @@ try:
                 )
                 c1, c2 = st.columns(2)
                 c1.markdown("**勝出馬跑法分布**")
-                c1.dataframe(pd.DataFrame([v.get("winner_style_pct") or {}]), use_container_width=True, hide_index=True)
+                c1.dataframe(pd.DataFrame([v.get("winner_style_composite_pct") or v.get("winner_style_pct") or {}]), use_container_width=True, hide_index=True)
                 c2.markdown("**Top4 入圍跑法分布**")
-                c2.dataframe(pd.DataFrame([v.get("top4_style_pct") or {}]), use_container_width=True, hide_index=True)
+                c2.dataframe(pd.DataFrame([v.get("top4_style_composite_pct") or v.get("top4_style_pct") or {}]), use_container_width=True, hide_index=True)
+
+                c1, c2, c3 = st.columns(3)
+                c1.markdown("**Top4 早段跑法**")
+                c1.dataframe(pd.DataFrame([v.get("top4_style_early_pct") or {}]), use_container_width=True, hide_index=True)
+                c2.markdown("**Top4 中段跑法**")
+                c2.dataframe(pd.DataFrame([v.get("top4_style_mid_pct") or {}]), use_container_width=True, hide_index=True)
+                c3.markdown("**Top4 末段跑法**")
+                c3.dataframe(pd.DataFrame([v.get("top4_style_late_pct") or {}]), use_container_width=True, hide_index=True)
+
+                c1, c2 = st.columns(2)
+                c1.markdown(f"**步速分布（勝出；樣本={int(v.get('pace_races') or 0)}）**")
+                c1.dataframe(pd.DataFrame([v.get("winner_pace_pct") or {}]), use_container_width=True, hide_index=True)
+                c2.markdown(f"**步速分布（Top4；樣本={int(v.get('pace_races') or 0)}）**")
+                c2.dataframe(pd.DataFrame([v.get("top4_pace_pct") or {}]), use_container_width=True, hide_index=True)
 
                 st.markdown("**平均賠率（Win Odds）**")
                 st.dataframe(
