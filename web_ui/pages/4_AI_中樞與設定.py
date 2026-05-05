@@ -740,13 +740,43 @@ try:
         if not keys:
             st.info("尚無可查詢的分組。請先計算。")
         else:
-            sel_key = st.selectbox("選擇分組 key", options=keys, index=0, key="trkprof_sel_key")
+            from scoring_engine.track_conditions import going_code_label
+
+            n_map = {str(x.get("key") or ""): int(x.get("n_races") or 0) for x in items if isinstance(x, dict) and str(x.get("key") or "")}
+
+            def _dist_label(b: str) -> str:
+                bb = str(b or "").strip().upper()
+                if bb == "S":
+                    return "短途≤1200"
+                if bb == "M":
+                    return "中途1201-1600"
+                if bb == "L":
+                    return "長途>1600"
+                return "未知距離"
+
+            def _venue_label(v: str) -> str:
+                vv = str(v or "").strip().upper()
+                if vv == "HV":
+                    return "跑馬地"
+                if vv == "ST":
+                    return "沙田"
+                return vv or "-"
+
+            def _fmt_trkprof_key(k: str) -> str:
+                s = str(k or "").strip()
+                parts = s.split(":")
+                if len(parts) >= 5 and parts[0] == "trkprof":
+                    venue, gcode, course, dist_b = parts[1], parts[2], parts[3], parts[4]
+                    n = int(n_map.get(s) or 0)
+                    n_txt = f"｜樣本 {n}" if n > 0 else ""
+                    return f"{_venue_label(venue)}｜{going_code_label(str(gcode))}({gcode})｜跑道{course}｜{_dist_label(dist_b)}{n_txt}"
+                return s
+
+            sel_key = st.selectbox("選擇分組", options=keys, format_func=_fmt_trkprof_key, index=0, key="trkprof_sel_key")
             cfg = session.query(SystemConfig).filter_by(key=str(sel_key)).first()
             if cfg and isinstance(cfg.value, dict):
                 v = cfg.value
-                st.success(
-                    f"{v.get('venue')}｜{v.get('going_code')}｜跑道 {v.get('course_type')}｜距離分桶 {v.get('dist_bucket')}｜樣本 {int(v.get('n_races') or 0)}"
-                )
+                st.success(_fmt_trkprof_key(str(sel_key)))
                 c1, c2 = st.columns(2)
                 c1.markdown("**勝出馬跑法分布**")
                 c1.dataframe(pd.DataFrame([v.get("winner_style_composite_pct") or v.get("winner_style_pct") or {}]), use_container_width=True, hide_index=True)
@@ -868,7 +898,39 @@ try:
         if not keys:
             st.info("尚無跑道/場地分組索引。請先到上方「📊 跑道 / 場地狀態統計」計算一次。")
         else:
-            sel = st.selectbox("選擇跑道/場地分桶（trkprof）", options=keys, index=0, key="rr_bucket_sel")
+            from scoring_engine.track_conditions import going_code_label
+
+            n_map = {str(x.get("key") or ""): int(x.get("n_races") or 0) for x in items if isinstance(x, dict) and str(x.get("key") or "")}
+
+            def _dist_label(b: str) -> str:
+                bb = str(b or "").strip().upper()
+                if bb == "S":
+                    return "短途≤1200"
+                if bb == "M":
+                    return "中途1201-1600"
+                if bb == "L":
+                    return "長途>1600"
+                return "未知距離"
+
+            def _venue_label(v: str) -> str:
+                vv = str(v or "").strip().upper()
+                if vv == "HV":
+                    return "跑馬地"
+                if vv == "ST":
+                    return "沙田"
+                return vv or "-"
+
+            def _fmt_trkprof_key(k: str) -> str:
+                s = str(k or "").strip()
+                parts = s.split(":")
+                if len(parts) >= 5 and parts[0] == "trkprof":
+                    venue, gcode, course, dist_b = parts[1], parts[2], parts[3], parts[4]
+                    n = int(n_map.get(s) or 0)
+                    n_txt = f"｜樣本 {n}" if n > 0 else ""
+                    return f"{_venue_label(venue)}｜{going_code_label(str(gcode))}({gcode})｜跑道{course}｜{_dist_label(dist_b)}{n_txt}"
+                return s
+
+            sel = st.selectbox("選擇跑道/場地分桶", options=keys, format_func=_fmt_trkprof_key, index=0, key="rr_bucket_sel")
             parts = str(sel).split(":")
             bparts = None
             if len(parts) >= 5:
