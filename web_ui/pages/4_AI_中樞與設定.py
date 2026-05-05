@@ -807,7 +807,20 @@ try:
                         c4.metric("Best Top3≥2", f"{best.get('top3_2in_rate', 0.0)}%")
                         st.rerun()
                     else:
-                        st.error(f"❌ 分桶調參失敗：{res}")
+                        st.error(f"❌ 分桶調參失敗：{res.get('reason') if isinstance(res, dict) else res}")
+                        dbg = res.get("debug") if isinstance(res, dict) else None
+                        if isinstance(dbg, dict):
+                            st.markdown(f"- 掃描賽事：**{int(dbg.get('scanned') or 0)}**")
+                            st.markdown(f"- 命中分桶：**{int(dbg.get('in_bucket') or 0)}**")
+                            st.markdown(f"- 有 AI 報告：**{int(dbg.get('with_report') or 0)}**")
+                            st.markdown(f"- 有賽果 Top4：**{int(dbg.get('with_results') or 0)}**")
+                            ex = dbg.get("missing_examples") if isinstance(dbg.get("missing_examples"), dict) else {}
+                            if ex:
+                                with st.expander("查看缺失樣本例子", expanded=False):
+                                    st.json(ex)
+                            hint = str(dbg.get("hint") or "").strip()
+                            if hint:
+                                st.caption(hint)
 
     with tab_factor:
         st.markdown("### 💡 AI 因子優化建議")

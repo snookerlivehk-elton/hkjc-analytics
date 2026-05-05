@@ -361,38 +361,89 @@ def tune_rerank_for_bucket(
 
     from scoring_engine.member_stats import _actual_topk_for_race
 
+    venue, going_code, course, dist_b = parts
+
     q = session.query(Race).order_by(Race.race_date.desc(), Race.race_no.asc())
     if d1 is not None:
         q = q.filter(Race.race_date >= d1)
     if d2 is not None:
         q = q.filter(Race.race_date <= d2)
-    races = q.limit(int(max_races or 200) * 5).all()
+    q = q.filter(Race.venue == str(venue))
+    q = q.filter(Race.course_type == str(course))
+    if str(dist_b) == "S":
+        q = q.filter(Race.distance != None).filter(Race.distance <= 1200)
+    elif str(dist_b) == "M":
+        q = q.filter(Race.distance != None).filter(Race.distance > 1200).filter(Race.distance <= 1600)
+    elif str(dist_b) == "L":
+        q = q.filter(Race.distance != None).filter(Race.distance > 1600)
+    else:
+        q = q.filter((Race.distance == None) | (Race.distance <= 0))
 
+    races = q.limit(5000).all()
+
+    scanned = 0
+    in_bucket = 0
+    with_report = 0
+    with_results = 0
     cand = []
+    missing_examples = {"no_ai_report": [], "no_results": []}
+
     for race in races:
+        scanned += 1
         p2 = _bucket_parts(session, race)
         if not p2 or p2 != parts:
             continue
+        in_bucket += 1
+
         date_str = race.race_date.strftime("%Y/%m/%d")
         key = f"ai_race_report:{date_str}:{int(race.race_no)}"
         cfg0 = session.query(SystemConfig).filter_by(key=key).first()
         if not cfg0 or not isinstance(cfg0.value, dict):
+            if len(missing_examples["no_ai_report"]) < 5:
+                missing_examples["no_ai_report"].append({"date": date_str, "race_no": int(race.race_no)})
             continue
+        with_report += 1
+
         val = cfg0.value
         t5 = val.get("top5_horse_nos_original")
         if not isinstance(t5, list):
             t5 = val.get("top5_horse_nos")
         if not isinstance(t5, list) or not t5:
             continue
+
         act = _actual_topk_for_race(session, int(race.id), 4)
         if len(act) < 4:
+            if len(missing_examples["no_results"]) < 5:
+                missing_examples["no_results"].append({"date": date_str, "race_no": int(race.race_no)})
             continue
+        with_results += 1
+
         cand.append((race, t5, act))
         if len(cand) >= int(max_races or 200):
             break
 
     if not cand:
-        return {"ok": False, "reason": "no_samples"}
+        reason = "no_samples"
+        if in_bucket <= 0:
+            reason = "no_races_in_bucket"
+        elif with_report <= 0:
+            reason = "no_ai_reports"
+        elif with_results <= 0:
+            reason = "no_results"
+        return {
+            "ok": False,
+            "reason": reason,
+            "bucket": {"venue": venue, "going_code": going_code, "course_type": course, "dist_bucket": dist_b},
+            "bucket_key": _bucket_key(parts),
+            "debug": {
+                "scanned": int(scanned),
+                "in_bucket": int(in_bucket),
+                "with_report": int(with_report),
+                "with_results": int(with_results),
+                "missing_examples": missing_examples,
+                "hint": "需同時具備：AI 報告（ai_race_report）+ 已有賽果 Top4；並確保 RaceTrackCondition.going_code/跑道/距離分桶能對應分桶。",
+            },
+        }
 
     base = {"races": 0, "w2": 0, "top3_2in_top4": 0}
 
