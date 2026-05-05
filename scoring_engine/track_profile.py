@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from statistics import median
 from typing import Any, Dict, List, Optional, Tuple
+import re
 
 from sqlalchemy.orm import Session
 
@@ -36,10 +37,11 @@ def _parse_first_pos(runpos: str) -> Optional[int]:
     s = str(runpos or "").strip()
     if not s:
         return None
-    s = s.replace(" ", "")
-    p = s.split("-")[0].strip()
+    m = re.search(r"\d+", s)
+    if not m:
+        return None
     try:
-        v = int("".join(ch for ch in p if ch.isdigit()))
+        v = int(m.group(0))
     except Exception:
         return None
     return v if v > 0 else None
@@ -253,4 +255,3 @@ def load_track_profile(
     val = dict(cfg.value)
     val["key"] = key
     return val
-
