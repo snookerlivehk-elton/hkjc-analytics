@@ -178,6 +178,48 @@ try:
                         my_bar.progress(1.0, text="批次生成完成！")
                         st.success(f"✅ 完成！成功為 {success_count} / {len(races)} 場賽事生成或載入報告。")
 
+            st.markdown("---")
+            st.markdown("### 🎯 單場生成 / 補回報告")
+            st.caption("用途：針對個別場次（例如第 1 場）獨立生成或補回 AI 報告。")
+
+            from scoring_engine.ai_advisor import run_ai_race_summary
+            target_date_str = selected_date.strftime("%Y/%m/%d")
+            races1 = session.query(Race).filter(func.date(Race.race_date) == selected_date).order_by(Race.race_no.asc()).all()
+            if not races1:
+                st.info("該日沒有賽事資料。")
+            else:
+                opts = []
+                by_label = {}
+                for r in races1:
+                    label = f"第 {int(r.race_no)} 場"
+                    opts.append(label)
+                    by_label[label] = r
+                sel = st.selectbox("選擇場次", options=opts, index=0, key="single_ai_race_sel")
+                rr = by_label.get(sel)
+                if rr:
+                    report_key = f"ai_race_report:{target_date_str}:{int(rr.race_no)}"
+                    has_report = bool(session.query(SystemConfig.id).filter_by(key=report_key).first())
+                    fg_key = f"speedpro_formguide:{target_date_str}:{int(rr.race_no)}"
+                    has_fg = bool(session.query(SystemConfig.id).filter_by(key=fg_key).first())
+                    st.markdown(f"- 場次：**{target_date_str} 第 {int(rr.race_no)} 場**")
+                    st.markdown(f"- FormGuide：**{'有' if has_fg else '沒有'}**（無資料會無法生成）")
+                    st.markdown(f"- AI 報告：**{'已有' if has_report else '未有'}**（可用此功能補回）")
+
+                    c_confirm, c_btn = st.columns([2, 3])
+                    ok1 = _confirm_run(c_confirm, "single_ai", label="輸入 RUN 以生成/更新本場報告")
+                    if c_btn.button("✨ 生成 / 更新本場 AI 報告", use_container_width=True, disabled=not ok1, key=f"single_ai_btn_{target_date_str}_{int(rr.race_no)}"):
+                        api_key = env_key or stored_key
+                        if not api_key:
+                            st.error("❌ 尚未設定 AI API Key，無法生成報告。")
+                        else:
+                            with st.spinner("正在生成本場 AI 報告..."):
+                                res = run_ai_race_summary(session, int(rr.id))
+                            if isinstance(res, dict) and res.get("ok"):
+                                st.success("✅ 已生成 / 更新本場 AI 報告。")
+                                st.rerun()
+                            else:
+                                st.error(f"❌ 生成失敗：{res.get('reason') if isinstance(res, dict) else res}")
+
     with tab_history:
         st.markdown("### 📜 歷史分析報告總覽")
         reports = session.query(SystemConfig).filter(SystemConfig.key.like("ai_race_report:%")).all()
