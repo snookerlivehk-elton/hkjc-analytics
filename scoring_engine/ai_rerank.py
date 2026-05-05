@@ -8,6 +8,7 @@ from sqlalchemy import func
 
 from database.models import Race, RaceEntry, SystemConfig, RaceTrackCondition, ScoringFactor
 from scoring_engine.track_conditions import normalize_going
+from scoring_engine.track_profile import _surface_code as _surface_code_for_course
 
 
 DEFAULT_RERANK_CONFIG = {
@@ -57,7 +58,8 @@ def _get_going_code(session: Session, race: Race) -> str:
 def _bucket_parts(session: Session, race: Race, going_code_override: Optional[str] = None) -> Optional[Tuple[str, str, str, str]]:
     venue = _venue_code(getattr(race, "venue", ""))
     going_code = str(going_code_override or "").strip() or _get_going_code(session, race)
-    course = str(getattr(race, "course_type", "") or "").strip() or "U"
+    surface = _surface_code_for_course(race)
+    course = str(getattr(race, "course_type", "") or "").strip() or ("AWT" if surface == "AW" else "U")
     dist_b = _dist_bucket(getattr(race, "distance", None))
     if not going_code:
         return None

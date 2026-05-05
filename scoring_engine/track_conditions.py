@@ -5,9 +5,9 @@ from typing import Tuple
 
 
 def normalize_going(raw: str) -> Tuple[str, str]:
-    s = str(raw or "").strip()
-    s = re.sub(r"\s+", "", s)
-    if not s:
+    s_display = str(raw or "").strip()
+    s_display = re.sub(r"\s+", "", s_display)
+    if not s_display:
         return "", ""
 
     m = {
@@ -23,10 +23,13 @@ def normalize_going(raw: str) -> Tuple[str, str]:
         "濕快": "WET_FAST",
         "濕慢": "WET_SLOW",
     }
-    code = m.get(s)
+    s_key = s_display
+    if (s_key not in m) and s_key.endswith("地") and (s_key[:-1] in m):
+        s_key = s_key[:-1]
+    code = m.get(s_key)
     if code:
-        return s, code
-    return s, s
+        return s_display, code
+    return s_display, s_display
 
 
 GOING_CODE_LABELS = {

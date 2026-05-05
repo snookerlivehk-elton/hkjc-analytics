@@ -208,9 +208,10 @@ def compute_track_profiles(
     for race in races:
         seen_races += 1
         venue = _venue_code(race.venue)
-        course = str(race.course_type or "").strip() or "U"
-        dist_b = _dist_bucket(race.distance)
         surface = _surface_code(race)
+        raw_course = str(race.course_type or "").strip()
+        course = raw_course or ("AWT" if surface == "AW" else "U")
+        dist_b = _dist_bucket(race.distance)
 
         tc = session.query(RaceTrackCondition).filter_by(race_id=race.id).first()
         going_code = str(getattr(tc, "going_code", "") or "").strip()

@@ -97,14 +97,15 @@ class RaceCardScraper:
             surface = ""
             course_type = ""
             venue_str = "沙田" if venue == "ST" else "跑馬地"
-            track_match = re.search(r'(草地|全天候跑道|泥地)', full_text)
+            track_match = re.search(r'(草地|全天候跑道|全天候|泥地|AWT|A/W|ALL\s*WEATHER)', full_text, re.IGNORECASE)
             course_match = re.search(r'(\"[A-Z0-9\+]+\")\s*賽道', full_text)
             
             if track_match:
                 t = track_match.group(1)
-                if t in ["全天候跑道", "泥地"]:
+                if "草地" not in str(t):
                     track_type_info = f"{venue_str}全天候"
                     surface = "泥地"
+                    course_type = "AWT"
                 elif t == "草地":
                     course_code = course_match.group(1) if course_match else '""'
                     track_type_info = f"{venue_str}草地{course_code}"
@@ -112,10 +113,21 @@ class RaceCardScraper:
                     course_type = str(course_code).strip().strip('"')
                     
             # 嘗試擷取場地狀況 (通常在排位表階段不會有場地狀況，只會有草地/泥地)
-            if "草地" in full_text:
-                going = "草地"
-            elif "全天候" in full_text or "泥地" in full_text:
-                going = "泥地"
+            going_raw = ""
+            m_go = re.search(r"(?:場地狀況|場地狀態)\\s*[:：]?\\s*([\\u4e00-\\u9fff]{1,6})", full_text)
+            if m_go:
+                going_raw = str(m_go.group(1) or "").strip()
+            if not going_raw:
+                m_go2 = re.search(r"(好快地?|好至快地?|好地|快地|黏地|黏至軟地?|軟至黏地?|軟地|大爛地|濕快地?|濕慢地?)", full_text)
+                if m_go2:
+                    going_raw = str(m_go2.group(1) or "").strip()
+            if going_raw:
+                going = going_raw
+            else:
+                if "草地" in full_text:
+                    going = "草地"
+                elif "全天候" in full_text or "泥地" in full_text or "AWT" in full_text.upper() or "ALL WEATHER" in full_text.upper() or "A/W" in full_text.upper():
+                    going = "泥地"
                 
             race_data = {
                 "race_no": race_no, 

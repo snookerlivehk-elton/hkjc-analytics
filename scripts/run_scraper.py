@@ -17,6 +17,7 @@ from data_scraper.odds import OddsScraper
 from data_scraper.horse import HorseScraper
 from scoring_engine.core import ScoringEngine
 from scoring_engine.prediction_snapshots import generate_prediction_top5_for_race_date
+from scoring_engine.track_conditions import normalize_going
 from utils.logger import logger
 
 async def run_daily_scraper():
@@ -91,6 +92,23 @@ async def run_daily_scraper():
                 surface=race_info.get("surface", ""),
                 course_type=race_info.get("course_type", ""),
             )
+
+            try:
+                from database.models import RaceTrackCondition
+
+                going_raw, going_code = normalize_going(str(race_info.get("going", "") or ""))
+                track_raw = str(race_info.get("track_type", "") or "").strip()
+                tc = session.query(RaceTrackCondition).filter_by(race_id=int(race.id)).first()
+                if not tc:
+                    tc = RaceTrackCondition(race_id=int(race.id), source="HKJC_RACECARD")
+                    session.add(tc)
+                if going_raw and (not str(getattr(tc, "going_raw", "") or "").strip()):
+                    tc.going_raw = going_raw
+                    tc.going_code = str(going_code or going_raw)
+                if track_raw and (not str(getattr(tc, "track_raw", "") or "").strip()):
+                    tc.track_raw = track_raw
+            except Exception:
+                pass
             
             print(f">>> 正在同步場次 {race.race_no} ({venue} | {race.distance}m | {race.going}) 的馬匹數據...")
             for entry_data in race_info["entries"]:

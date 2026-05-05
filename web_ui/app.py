@@ -792,6 +792,54 @@ def main():
         going_display = str(getattr(race, "going", "") or "").strip()
     col4.metric("場地狀況", going_display or "N/A")
 
+    with st.expander("🤖 AI 賽事前瞻分析", expanded=False):
+        date_key = ""
+        try:
+            if race and getattr(race, "race_date", None) and hasattr(race.race_date, "strftime"):
+                date_key = race.race_date.strftime("%Y/%m/%d")
+        except Exception:
+            date_key = ""
+        if not date_key:
+            date_key = str(selected_date_str or "").strip().replace("-", "/")
+        rn = int(getattr(race, "race_no", 0) or 0) if race else 0
+
+        main_key = f"ai_race_report:{date_key}:{rn}"
+        main_cfg = session.query(SystemConfig).filter_by(key=main_key).first()
+        main_val = main_cfg.value if (main_cfg and isinstance(main_cfg.value, dict)) else {}
+        main_report = str(main_val.get("report") or "").strip()
+
+        if main_report:
+            top5 = main_val.get("top5_horse_nos")
+            elim = main_val.get("eliminated_horse_nos")
+            meta = []
+            if str(main_val.get("created_at") or "").strip():
+                meta.append(f"updated_at={str(main_val.get('created_at') or '').strip()}")
+            if meta:
+                st.caption("｜".join(meta))
+            if isinstance(top5, list) and top5:
+                st.write("AI 推薦（Top5）：", ", ".join([str(x) for x in top5]))
+            if isinstance(elim, list) and elim:
+                st.write("AI 淘汰：", ", ".join([str(x) for x in elim]))
+            st.markdown(main_report)
+        else:
+            st.info("本場尚未生成 AI 賽事前瞻報告。可到「AI 中樞與設定」生成。")
+
+        scenario_prefix = f"ai_race_report_scenario:{date_key}:{rn}:"
+        scenario_cfgs = session.query(SystemConfig).filter(SystemConfig.key.like(f"{scenario_prefix}%")).order_by(SystemConfig.key.asc()).all()
+        if scenario_cfgs:
+            st.markdown("#### 情境報告")
+            for c in scenario_cfgs:
+                k = str(getattr(c, "key", "") or "")
+                tag = k.split(scenario_prefix, 1)[1] if scenario_prefix in k else k
+                v = c.value if isinstance(c.value, dict) else {}
+                rpt = str(v.get("report") or "").strip()
+                if not rpt:
+                    continue
+                with st.expander(f"情境：{tag}", expanded=False):
+                    if str(v.get("created_at") or "").strip():
+                        st.caption(f"updated_at={str(v.get('created_at') or '').strip()}")
+                    st.markdown(rpt)
+
     with st.expander("🛰️ 數據源更新狀態", expanded=False):
         from datetime import datetime
         from zoneinfo import ZoneInfo

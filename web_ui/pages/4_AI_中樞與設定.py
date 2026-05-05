@@ -769,7 +769,13 @@ try:
                     venue, gcode, course, dist_b = parts[1], parts[2], parts[3], parts[4]
                     n = int(n_map.get(s) or 0)
                     n_txt = f"｜樣本 {n}" if n > 0 else ""
-                    return f"{_venue_label(venue)}｜{going_code_label(str(gcode))}({gcode})｜跑道{course}｜{_dist_label(dist_b)}{n_txt}"
+                    c0 = str(course or "").strip()
+                    cu = c0.upper()
+                    if cu in {"AWT", "A/W", "AW"}:
+                        c0 = "全天候(AWT)"
+                    elif cu == "U" or not c0:
+                        c0 = "未知(U)"
+                    return f"{_venue_label(venue)}｜{going_code_label(str(gcode))}({gcode})｜跑道{c0}｜{_dist_label(dist_b)}{n_txt}"
                 return s
 
             sel_key = st.selectbox("選擇分組", options=keys, format_func=_fmt_trkprof_key, index=0, key="trkprof_sel_key")
@@ -927,7 +933,13 @@ try:
                     venue, gcode, course, dist_b = parts[1], parts[2], parts[3], parts[4]
                     n = int(n_map.get(s) or 0)
                     n_txt = f"｜樣本 {n}" if n > 0 else ""
-                    return f"{_venue_label(venue)}｜{going_code_label(str(gcode))}({gcode})｜跑道{course}｜{_dist_label(dist_b)}{n_txt}"
+                    c0 = str(course or "").strip()
+                    cu = c0.upper()
+                    if cu in {"AWT", "A/W", "AW"}:
+                        c0 = "全天候(AWT)"
+                    elif cu == "U" or not c0:
+                        c0 = "未知(U)"
+                    return f"{_venue_label(venue)}｜{going_code_label(str(gcode))}({gcode})｜跑道{c0}｜{_dist_label(dist_b)}{n_txt}"
                 return s
 
             sel = st.selectbox("選擇跑道/場地分桶", options=keys, format_func=_fmt_trkprof_key, index=0, key="rr_bucket_sel")

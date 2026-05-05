@@ -165,12 +165,16 @@ def init_db():
                         r.surface = go
                         changed += 1
 
-                if not (getattr(r, "course_type", None) and str(getattr(r, "course_type") or "").strip()):
+                ct0 = str(getattr(r, "course_type", "") or "").strip()
+                if (not ct0) or ct0.upper() == "U":
                     if "草地" in tt:
                         m = re.search(r"\"([A-Z0-9\\+]+)\"", tt)
                         if m:
                             r.course_type = str(m.group(1))
                             changed += 1
+                    elif any(x in tt for x in ["全天候", "ALL WEATHER", "A/W", "AW", "泥地"]):
+                        r.course_type = "AWT"
+                        changed += 1
 
             if changed:
                 session2.commit()
