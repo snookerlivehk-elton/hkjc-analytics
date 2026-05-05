@@ -463,6 +463,41 @@ def run_ai_race_summary(session: Session, race_id: int) -> Dict[str, Any]:
         f"賽事：{date_str} 第 {race_no} 場",
         "以下是各匹馬的近期走勢評述與紀錄：\n"
     ]
+
+    try:
+        from database.models import RaceTrackCondition
+        tc = session.query(RaceTrackCondition).filter_by(race_id=int(race.id)).first()
+        going_code = str(getattr(tc, "going_code", "") or "").strip()
+        if not going_code:
+            from scoring_engine.track_conditions import normalize_going
+            _, going_code2 = normalize_going(str(getattr(race, "going", "") or ""))
+            going_code = str(going_code2 or "").strip()
+        if going_code:
+            from scoring_engine.track_profile import load_track_profile
+            prof = load_track_profile(
+                session,
+                venue=str(getattr(race, "venue", "") or ""),
+                going_code=going_code,
+                course_type=str(getattr(race, "course_type", "") or ""),
+                distance=int(getattr(race, "distance", 0) or 0),
+            )
+            if isinstance(prof, dict) and int(prof.get("n_races") or 0) > 0:
+                input_lines.insert(
+                    1,
+                    "\n".join(
+                        [
+                            "### 跑道/場地狀態統計（歷史樣本摘要）",
+                            f"- 分組：{prof.get('venue')}｜{prof.get('going_code')}｜跑道{prof.get('course_type')}｜距離分桶{prof.get('dist_bucket')}｜樣本 {int(prof.get('n_races') or 0)} 場",
+                            f"- 勝出跑法分布：{json.dumps(prof.get('winner_style_pct') or {}, ensure_ascii=False)}",
+                            f"- Top4 跑法分布：{json.dumps(prof.get('top4_style_pct') or {}, ensure_ascii=False)}",
+                            f"- 勝出 WinOdds（平均/中位）：{prof.get('winner_win_odds_avg')} / {prof.get('winner_win_odds_median')}",
+                            f"- Top4 WinOdds（平均/中位）：{prof.get('top4_win_odds_avg')} / {prof.get('top4_win_odds_median')}",
+                            "",
+                        ]
+                    ),
+                )
+    except Exception:
+        pass
     
     for horse_no, h_data in sorted(fg_data.items(), key=lambda x: int(x[0])):
         if not isinstance(h_data, dict):

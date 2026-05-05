@@ -387,12 +387,13 @@ with tab_factor:
             st.markdown("#### 🎯 推薦名單 (Top 5) 命中率")
             hraces = int(hit.get("races") or 0)
             if hraces > 0:
-                c1, c2, c3, c4, c5 = st.columns(5)
+                c1, c2, c3, c4, c5, c6 = st.columns(6)
                 c1.metric("樣本(場)", hraces)
-                c2.metric("獨贏(W)", f"{round(hit.get('w1', 0)/hraces*100, 1)}%")
-                c3.metric("連贏(Q2)", f"{round(hit.get('q2', 0)/hraces*100, 1)}%")
+                c2.metric("獨贏(W1)", f"{round(hit.get('w1', 0)/hraces*100, 1)}%")
+                c3.metric("Top2 勝出(W2)", f"{round(hit.get('w2', 0)/hraces*100, 1)}%")
                 c4.metric("位置Q(PQ2)", f"{round(hit.get('pq2', 0)/hraces*100, 1)}%")
-                c5.metric("三重(T3)", f"{round(hit.get('t3', 0)/hraces*100, 1)}%")
+                c5.metric("Top3≥2入圍", f"{round(hit.get('top3_2in_top4', 0)/hraces*100, 1)}%")
+                c6.metric("三重(T3)", f"{round(hit.get('t3', 0)/hraces*100, 1)}%")
 
                 st.markdown("##### 推薦順序入圍率 (Top 4)")
                 p1, p2, p3, p4, p5 = st.columns(5)

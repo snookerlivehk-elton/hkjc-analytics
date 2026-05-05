@@ -9,7 +9,7 @@ if root_path not in sys.path:
     sys.path.insert(0, root_path)
 
 from database.connection import init_db, get_session
-from database.models import Race, RaceEntry, RaceResult, RaceDividend, RaceTrackCondition
+from database.models import Race, RaceEntry, RaceResult, RaceDividend, RaceTrackCondition, SystemConfig
 from data_scraper.local_results import LocalResultsScraper
 from scoring_engine.member_stats import update_all_members_preset_stats_for_race_date
 from scoring_engine.prediction_snapshots import finalize_prediction_top5_hits_for_race_date
@@ -104,8 +104,17 @@ def main():
             tc.updated_at = datetime.now()
 
         results = payload.get("results") or []
+        runpos_by_horse_no = {}
         for r in results:
             horse_no = r.get("horse_no") or 0
+            try:
+                hn = int(horse_no)
+            except Exception:
+                hn = 0
+            if hn:
+                pos = str(r.get("running_position") or "").strip()
+                if pos:
+                    runpos_by_horse_no[str(hn)] = pos
             entry = (
                 session.query(RaceEntry)
                 .filter_by(race_id=race.id, horse_no=int(horse_no))
@@ -122,6 +131,14 @@ def main():
             rr.finish_time_sec = parse_finish_time_to_seconds(rr.finish_time)
             rr.win_odds = r.get("win_odds")
             rr.margin = r.get("margin") or ""
+
+        if runpos_by_horse_no:
+            key = f"race_runpos:{target_date}:{int(race.race_no)}"
+            cfg = session.query(SystemConfig).filter_by(key=key).first()
+            if not cfg:
+                cfg = SystemConfig(key=key, description="賽果沿途走位（running_position）快照")
+                session.add(cfg)
+            cfg.value = {"race_id": int(race.id), "race_date": target_date, "race_no": int(race.race_no), "runpos": runpos_by_horse_no}
 
         session.commit()
         ok += 1

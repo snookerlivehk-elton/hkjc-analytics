@@ -23,11 +23,12 @@ st.markdown("## 🤖 AI 中樞與設定")
 st.markdown("在此集中管理 AI 參數設定、批次生成賽事報告，以及檢視賽後反思與進化法則。")
 render_admin_nav()
 
-tab_settings, tab_batch, tab_history, tab_reflection, tab_factor = st.tabs([
+tab_settings, tab_batch, tab_history, tab_reflection, tab_track, tab_factor = st.tabs([
     "⚙️ AI 參數設定", 
     "⚡ 批次生成報告", 
     "📜 歷史分析報告", 
     "🧠 賽後反思與進化",
+    "📊 跑道/場地統計",
     "💡 因子優化建議"
 ])
 
@@ -598,6 +599,81 @@ try:
                             st.error("❌ 找不到此場賽事的賽前 AI 報告。")
                         else:
                             st.error(f"❌ 反思失敗: {err_reason} ({res.get('error')})")
+
+    with tab_track:
+        st.markdown("### 📊 跑道 / 場地狀態統計")
+        st.caption("用途：統計不同跑道 × 場地狀態下，勝出/入圍馬匹的跑法比率與平均賠率，並可供 AI 賽前分析引用。")
+
+        from scoring_engine.track_profile import compute_track_profiles
+        idx_cfg = session.query(SystemConfig).filter_by(key="trkprof_index").first()
+        if idx_cfg and isinstance(idx_cfg.value, dict):
+            st.info(
+                f"最近更新：{str(idx_cfg.value.get('updated_at') or '')}｜已掃描賽事：{int(idx_cfg.value.get('seen_races') or 0)}｜分組：{len(idx_cfg.value.get('items') or [])}"
+            )
+        else:
+            st.warning("尚未建立跑道/場地統計。請先按下方按鈕計算一次。")
+
+        c1, c2, c3 = st.columns([2, 2, 3])
+        min_d = c1.date_input("開始日期（可留空＝全量）", value=datetime(2024, 1, 1).date(), key="trkprof_min_d")
+        max_d = c2.date_input("結束日期（可留空＝今天）", value=datetime.today().date(), key="trkprof_max_d")
+        limit_races = int(c3.selectbox("最多掃描賽事數", [2000, 5000, 10000], index=1, key="trkprof_limit"))
+
+        c1, c2 = st.columns([2, 3])
+        ok_run = _confirm_run(c1, "trkprof_compute", label="輸入 RUN 以重新計算")
+        if c2.button("🔄 重新計算跑道/場地統計", use_container_width=True, disabled=not ok_run, key="trkprof_compute_btn"):
+            with st.spinner("正在重新計算跑道/場地統計..."):
+                res = compute_track_profiles(
+                    session,
+                    min_date=datetime.combine(min_d, datetime.min.time()) if min_d else None,
+                    max_date=datetime.combine(max_d, datetime.max.time()) if max_d else None,
+                    limit_races=int(limit_races),
+                )
+            if isinstance(res, dict) and res.get("ok"):
+                st.success(f"✅ 完成：掃描 {res.get('seen_races')} 場，產生 {res.get('groups')} 個分組。")
+                st.rerun()
+            else:
+                st.error(f"❌ 計算失敗：{res}")
+
+        st.markdown("---")
+        st.markdown("### 🔎 查詢統計")
+        idx_cfg = session.query(SystemConfig).filter_by(key="trkprof_index").first()
+        items = []
+        if idx_cfg and isinstance(idx_cfg.value, dict):
+            items = idx_cfg.value.get("items") if isinstance(idx_cfg.value.get("items"), list) else []
+        keys = [str(x.get("key") or "") for x in items if isinstance(x, dict) and str(x.get("key") or "")]
+        if not keys:
+            st.info("尚無可查詢的分組。請先計算。")
+        else:
+            sel_key = st.selectbox("選擇分組 key", options=keys, index=0, key="trkprof_sel_key")
+            cfg = session.query(SystemConfig).filter_by(key=str(sel_key)).first()
+            if cfg and isinstance(cfg.value, dict):
+                v = cfg.value
+                st.success(
+                    f"{v.get('venue')}｜{v.get('going_code')}｜跑道 {v.get('course_type')}｜距離分桶 {v.get('dist_bucket')}｜樣本 {int(v.get('n_races') or 0)}"
+                )
+                c1, c2 = st.columns(2)
+                c1.markdown("**勝出馬跑法分布**")
+                c1.dataframe(pd.DataFrame([v.get("winner_style_pct") or {}]), use_container_width=True, hide_index=True)
+                c2.markdown("**Top4 入圍跑法分布**")
+                c2.dataframe(pd.DataFrame([v.get("top4_style_pct") or {}]), use_container_width=True, hide_index=True)
+
+                st.markdown("**平均賠率（Win Odds）**")
+                st.dataframe(
+                    pd.DataFrame(
+                        [
+                            {
+                                "勝出馬平均": v.get("winner_win_odds_avg"),
+                                "勝出馬中位數": v.get("winner_win_odds_median"),
+                                "Top4 平均": v.get("top4_win_odds_avg"),
+                                "Top4 中位數": v.get("top4_win_odds_median"),
+                            }
+                        ]
+                    ),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            else:
+                st.error("找不到該分組資料。")
 
     with tab_factor:
         st.markdown("### 💡 AI 因子優化建議")

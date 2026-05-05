@@ -25,7 +25,7 @@ def calculate_ai_hit_stats(session: Session) -> Dict[str, Any]:
     stats = {
         "hit": {
             "races": 0,
-            "w1": 0, "q2": 0, "pq2": 0, "t3": 0, "f4": 0,
+            "w1": 0, "w2": 0, "q2": 0, "pq2": 0, "t3": 0, "f4": 0, "top3_2in_top4": 0,
             "top1_in_top4": 0, "top2_in_top4": 0, "top3_in_top4": 0, "top4_in_top4": 0, "top5_in_top4": 0
         },
         "elim": {
@@ -78,7 +78,11 @@ def calculate_ai_hit_stats(session: Session) -> Dict[str, Any]:
             p4 = top5[3] if len(top5) > 3 else None
             p5 = top5[4] if len(top5) > 4 else None
             
-            if p1 is not None and p1 in act_top4 and act_top4.index(p1) == 0: stats["hit"]["w1"] += 1
+            winner = act_top4[0] if act_top4 else None
+            if winner is not None and p1 is not None and p1 == winner:
+                stats["hit"]["w1"] += 1
+            if winner is not None and (p1 == winner or p2 == winner):
+                stats["hit"]["w2"] += 1
             
             # Q2 (1st and 2nd in predictions match 1st and 2nd in actual, any order)
             if p1 is not None and p2 is not None:
@@ -88,6 +92,8 @@ def calculate_ai_hit_stats(session: Session) -> Dict[str, Any]:
             pred_top3 = set([p for p in [p1, p2, p3] if p is not None])
             act_top3 = set(act_top4[:3])
             if len(pred_top3) >= 2 and len(pred_top3 & act_top3) >= 2: stats["hit"]["pq2"] += 1
+            if len(pred_top3 & act_set) >= 2:
+                stats["hit"]["top3_2in_top4"] += 1
             
             # T3 (Top 3 predictions match Top 3 actual, any order)
             if len(pred_top3) == 3 and len(pred_top3 & act_top3) == 3: stats["hit"]["t3"] += 1
