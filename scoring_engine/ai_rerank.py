@@ -54,9 +54,9 @@ def _get_going_code(session: Session, race: Race) -> str:
     return str(code2 or "").strip()
 
 
-def _bucket_parts(session: Session, race: Race) -> Optional[Tuple[str, str, str, str]]:
+def _bucket_parts(session: Session, race: Race, going_code_override: Optional[str] = None) -> Optional[Tuple[str, str, str, str]]:
     venue = _venue_code(getattr(race, "venue", ""))
-    going_code = _get_going_code(session, race)
+    going_code = str(going_code_override or "").strip() or _get_going_code(session, race)
     course = str(getattr(race, "course_type", "") or "").strip() or "U"
     dist_b = _dist_bucket(getattr(race, "distance", None))
     if not going_code:
@@ -177,6 +177,7 @@ def rerank_top5(
     top5_horse_nos: List[Any],
     factors_by_horse: Optional[Dict[str, Dict[str, Any]]] = None,
     cfg: Optional[Dict[str, float]] = None,
+    going_code_override: Optional[str] = None,
 ) -> Dict[str, Any]:
     top5 = []
     for x in list(top5_horse_nos or []):
@@ -194,7 +195,7 @@ def rerank_top5(
     try:
         race = session.query(Race).filter(Race.id == int(race_id)).first()
         if race:
-            parts = _bucket_parts(session, race)
+            parts = _bucket_parts(session, race, going_code_override=going_code_override)
     except Exception:
         parts = None
     if cfg is not None:

@@ -220,6 +220,60 @@ try:
                             else:
                                 st.error(f"❌ 生成失敗：{res.get('reason') if isinstance(res, dict) else res}")
 
+                    st.markdown("**備用情境（例如落雨）**")
+                    from scoring_engine.track_conditions import GOING_CODE_LABELS
+                    scenario_opts = [
+                        ("WET_SLOW", f"WET_SLOW（{GOING_CODE_LABELS.get('WET_SLOW', '濕慢')}）"),
+                        ("WET_FAST", f"WET_FAST（{GOING_CODE_LABELS.get('WET_FAST', '濕快')}）"),
+                    ]
+                    scen_code = st.selectbox(
+                        "假設場地狀態（going_code）",
+                        options=[x[0] for x in scenario_opts],
+                        format_func=lambda x: dict(scenario_opts).get(x, x),
+                        index=0,
+                        key=f"single_ai_scenario_code_{target_date_str}_{int(rr.race_no)}",
+                    )
+                    c_confirm, c_btn = st.columns([2, 3])
+                    ok2 = _confirm_run(c_confirm, "single_ai_scenario", label="輸入 RUN 以生成備用情境報告")
+                    if c_btn.button(
+                        "🌧️ 生成雨戰備用 AI 報告",
+                        use_container_width=True,
+                        disabled=not ok2,
+                        key=f"single_ai_scenario_btn_{target_date_str}_{int(rr.race_no)}_{scen_code}",
+                    ):
+                        api_key = env_key or stored_key
+                        if not api_key:
+                            st.error("❌ 尚未設定 AI API Key，無法生成報告。")
+                        else:
+                            with st.spinner("正在生成備用情境 AI 報告..."):
+                                res = run_ai_race_summary(
+                                    session,
+                                    int(rr.id),
+                                    going_code_override=str(scen_code),
+                                    scenario_tag=str(scen_code),
+                                    save_as_scenario=True,
+                                )
+                            if isinstance(res, dict) and res.get("ok"):
+                                st.success("✅ 已生成備用情境 AI 報告。")
+                                st.rerun()
+                            else:
+                                st.error(f"❌ 生成失敗：{res.get('reason') if isinstance(res, dict) else res}")
+
+                    scen_rows = (
+                        session.query(SystemConfig)
+                        .filter(SystemConfig.key.like(f"ai_race_report_scenario:{target_date_str}:{int(rr.race_no)}:%"))
+                        .all()
+                    )
+                    if scen_rows:
+                        with st.expander("查看本場已生成的備用情境報告", expanded=False):
+                            for i, row in enumerate(sorted(scen_rows, key=lambda x: str(x.key or ""))):
+                                v = row.value if isinstance(row.value, dict) else {}
+                                tag = str(v.get("scenario") or "").strip() or str(row.key).split(":")[-1]
+                                st.markdown(f"#### 情境：{tag}")
+                                st.markdown(str(v.get("report") or ""))
+                                with st.expander("📋 點擊顯示可複製的原始文字", expanded=False):
+                                    st.code(str(v.get("report") or ""), language="markdown")
+
     with tab_history:
         st.markdown("### 📜 歷史分析報告總覽")
         reports = session.query(SystemConfig).filter(SystemConfig.key.like("ai_race_report:%")).all()

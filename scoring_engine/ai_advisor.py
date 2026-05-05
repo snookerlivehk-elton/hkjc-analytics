@@ -350,7 +350,13 @@ def _mask_key(k: str) -> str:
     return ("*" * (len(s) - 4)) + s[-4:]
 
 
-def run_ai_race_summary(session: Session, race_id: int) -> Dict[str, Any]:
+def run_ai_race_summary(
+    session: Session,
+    race_id: int,
+    going_code_override: str = "",
+    scenario_tag: str = "",
+    save_as_scenario: bool = False,
+) -> Dict[str, Any]:
     from database.models import Race, RaceEntry, SystemConfig, PredictionTop5
     
     race = session.query(Race).filter(Race.id == race_id).first()
@@ -400,7 +406,12 @@ def run_ai_race_summary(session: Session, race_id: int) -> Dict[str, Any]:
             parts.append(cls)
         meta = "｜".join(parts)
         meta = f"｜{meta}" if meta else ""
-        return f"# J18.HK AI 賽事前瞻分析\n**賽事：{date_s} 第 {int(getattr(r, 'race_no', 0) or 0)} 場{meta}**\n\n"
+        extra = ""
+        if str(scenario_tag or "").strip():
+            extra = f"｜情境：{str(scenario_tag).strip()}"
+        elif str(going_code_override or "").strip():
+            extra = f"｜情境：{str(going_code_override).strip()}"
+        return f"# J18.HK AI 賽事前瞻分析\n**賽事：{date_s} 第 {int(getattr(r, 'race_no', 0) or 0)} 場{meta}{extra}**\n\n"
     
     fg_key = f"speedpro_formguide:{date_str}:{race_no}"
     cfg = session.query(SystemConfig).filter_by(key=fg_key).first()
@@ -468,12 +479,16 @@ def run_ai_race_summary(session: Session, race_id: int) -> Dict[str, Any]:
     try:
         from database.models import RaceTrackCondition
         tc = session.query(RaceTrackCondition).filter_by(race_id=int(race.id)).first()
-        going_code = str(getattr(tc, "going_code", "") or "").strip()
+        going_code = str(going_code_override or "").strip()
+        if not going_code:
+            going_code = str(getattr(tc, "going_code", "") or "").strip()
         if not going_code:
             from scoring_engine.track_conditions import normalize_going
             _, going_code2 = normalize_going(str(getattr(race, "going", "") or ""))
             going_code = str(going_code2 or "").strip()
         if going_code:
+            if str(going_code_override or "").strip():
+                input_lines.insert(1, f"### 假設場地狀態（going_code）：{going_code}\n")
             from scoring_engine.track_profile import load_track_profile
             prof = load_track_profile(
                 session,
@@ -594,7 +609,13 @@ def run_ai_race_summary(session: Session, race_id: int) -> Dict[str, Any]:
             top5_rerank_debug = None
             try:
                 from scoring_engine.ai_rerank import rerank_top5
-                rrk = rerank_top5(session, int(race_id), top5, factors_by_horse=factors_by_horse)
+                rrk = rerank_top5(
+                    session,
+                    int(race_id),
+                    top5,
+                    factors_by_horse=factors_by_horse,
+                    going_code_override=str(going_code_override or "").strip() or None,
+                )
                 top5_reranked = rrk.get("top5") if isinstance(rrk, dict) else None
                 if isinstance(top5_reranked, list) and top5_reranked:
                     top5 = top5_reranked
@@ -661,7 +682,12 @@ def run_ai_race_summary(session: Session, race_id: int) -> Dict[str, Any]:
             report_text = prefix + summary_block + str(report_text)
 
             # Save to DB for historical viewing (Req 2)
-            report_key = f"ai_race_report:{date_str}:{race_no}"
+            if save_as_scenario:
+                tag = str(scenario_tag or "").strip() or str(going_code_override or "").strip() or "SCENARIO"
+                tag = tag.replace(":", "_")
+                report_key = f"ai_race_report_scenario:{date_str}:{race_no}:{tag}"
+            else:
+                report_key = f"ai_race_report:{date_str}:{race_no}"
             report_cfg = session.query(SystemConfig).filter_by(key=report_key).first()
             if not report_cfg:
                 report_cfg = SystemConfig(key=report_key, description=f"AI 賽事分析報告（racedate={date_str} R{race_no}）")
@@ -675,32 +701,37 @@ def run_ai_race_summary(session: Session, race_id: int) -> Dict[str, Any]:
                 "eliminated_horse_nos": elim,
                 "created_at": datetime.utcnow().isoformat(),
                 "race_id": int(race_id),
+                "scenario": (str(scenario_tag or "").strip() or str(going_code_override or "").strip() or None),
+                "going_code_override": (str(going_code_override or "").strip() or None),
             }
 
-            # Update prediction snapshots so AI predictions appear in member stats and hit stats tables
-            top5_key = f"top5_snapshot:{date_str}:{race_no}"
-            t5_cfg = session.query(SystemConfig).filter_by(key=top5_key).first()
-            if not t5_cfg:
-                t5_cfg = SystemConfig(key=top5_key, description=f"Top 5 預測快照（racedate={date_str} R{race_no}）")
-                session.add(t5_cfg)
-            t5_val = t5_cfg.value if isinstance(t5_cfg.value, dict) else {}
-            t5_val["🤖 AI 賽事前瞻"] = top5
-            t5_cfg.value = t5_val
+            if not save_as_scenario:
+                # Update prediction snapshots so AI predictions appear in member stats and hit stats tables
+                top5_key = f"top5_snapshot:{date_str}:{race_no}"
+                t5_cfg = session.query(SystemConfig).filter_by(key=top5_key).first()
+                if not t5_cfg:
+                    t5_cfg = SystemConfig(key=top5_key, description=f"Top 5 預測快照（racedate={date_str} R{race_no}）")
+                    session.add(t5_cfg)
+                t5_val = t5_cfg.value if isinstance(t5_cfg.value, dict) else {}
+                t5_val["🤖 AI 賽事前瞻"] = top5
+                t5_cfg.value = t5_val
 
-            elim_key = f"elim_snapshot:{date_str}:{race_no}"
-            el_cfg = session.query(SystemConfig).filter_by(key=elim_key).first()
-            if not el_cfg:
-                el_cfg = SystemConfig(key=elim_key, description=f"反向預測淘汰快照（racedate={date_str} R{race_no}）")
-                session.add(el_cfg)
-            el_val = el_cfg.value if isinstance(el_cfg.value, dict) else {}
-            el_val["🤖 AI 賽事前瞻"] = elim
-            el_cfg.value = el_val
+                elim_key = f"elim_snapshot:{date_str}:{race_no}"
+                el_cfg = session.query(SystemConfig).filter_by(key=elim_key).first()
+                if not el_cfg:
+                    el_cfg = SystemConfig(key=elim_key, description=f"反向預測淘汰快照（racedate={date_str} R{race_no}）")
+                    session.add(el_cfg)
+                el_val = el_cfg.value if isinstance(el_cfg.value, dict) else {}
+                el_val["🤖 AI 賽事前瞻"] = elim
+                el_cfg.value = el_val
 
-            session.commit()
+                session.commit()
 
-            # Update AI stats
-            from scoring_engine.ai_stats import calculate_ai_hit_stats
-            calculate_ai_hit_stats(session)
+                # Update AI stats
+                from scoring_engine.ai_stats import calculate_ai_hit_stats
+                calculate_ai_hit_stats(session)
+            else:
+                session.commit()
 
             return {"ok": True, "summary": report_text}
 
