@@ -675,6 +675,71 @@ try:
             else:
                 st.error("找不到該分組資料。")
 
+        st.markdown("---")
+        st.markdown("### 🎯 Top3 目標校準（Top5 重排）")
+        st.caption("用途：用系統客觀分數對 AI Top5 做低成本重排，目標提升「Top2 勝出率」與「Top3 ≥ 2 入圍率」。不會增加 LLM 成本。")
+
+        from scoring_engine.ai_rerank import load_ai_rerank_config, save_ai_rerank_config, backtest_rerank
+        rr_cfg = load_ai_rerank_config(session)
+        c1, c2, c3 = st.columns(3)
+        ai_prior_w = c1.number_input("AI 順序權重", value=float(rr_cfg.get("ai_prior_weight") or 0.0), step=0.1, key="rr_ai_prior_w")
+        total_score_w = c2.number_input("系統總分權重", value=float(rr_cfg.get("total_score_weight") or 0.0), step=0.1, key="rr_total_score_w")
+        speedpro_w = c3.number_input("SpeedPRO 權重", value=float(rr_cfg.get("speedpro_weight") or 0.0), step=0.1, key="rr_speedpro_w")
+
+        c1, c2, c3 = st.columns(3)
+        recent_w = c1.number_input("近期狀態 權重", value=float(rr_cfg.get("recent_weight") or 0.0), step=0.1, key="rr_recent_w")
+        jt_w = c2.number_input("騎練合作 權重", value=float(rr_cfg.get("jt_weight") or 0.0), step=0.1, key="rr_jt_w")
+
+        c1, c2 = st.columns([2, 3])
+        ok_save = _confirm_run(c1, "save_rr_cfg", label="輸入 RUN 以儲存重排參數")
+        if c2.button("💾 儲存 Top5 重排參數", use_container_width=True, disabled=not ok_save, key="save_rr_cfg_btn"):
+            save_ai_rerank_config(
+                session,
+                {
+                    "ai_prior_weight": float(ai_prior_w),
+                    "total_score_weight": float(total_score_w),
+                    "speedpro_weight": float(speedpro_w),
+                    "recent_weight": float(recent_w),
+                    "jt_weight": float(jt_w),
+                },
+            )
+            st.success("✅ 已儲存重排參數。")
+            st.rerun()
+
+        st.markdown("#### 📈 回測（Baseline vs 重排）")
+        c1, c2, c3 = st.columns([2, 2, 3])
+        bt_d1 = c1.date_input("回測開始日期", value=datetime(2026, 4, 8).date(), key="rr_bt_d1")
+        bt_d2 = c2.date_input("回測結束日期", value=datetime.today().date(), key="rr_bt_d2")
+        bt_n = int(c3.selectbox("最多回測賽事數", [100, 200, 300, 500], index=1, key="rr_bt_n"))
+        c1, c2 = st.columns([2, 3])
+        ok_bt = _confirm_run(c1, "run_rr_bt", label="輸入 RUN 以回測")
+        if c2.button("▶️ 開始回測", use_container_width=True, disabled=not ok_bt, key="run_rr_bt_btn"):
+            with st.spinner("正在回測 Top5 重排效果..."):
+                res = backtest_rerank(
+                    session,
+                    d1=datetime.combine(bt_d1, datetime.min.time()) if bt_d1 else None,
+                    d2=datetime.combine(bt_d2, datetime.max.time()) if bt_d2 else None,
+                    max_races=int(bt_n),
+                    cfg={
+                        "ai_prior_weight": float(ai_prior_w),
+                        "total_score_weight": float(total_score_w),
+                        "speedpro_weight": float(speedpro_w),
+                        "recent_weight": float(recent_w),
+                        "jt_weight": float(jt_w),
+                    },
+                )
+            if isinstance(res, dict) and res.get("ok"):
+                b = res.get("base") if isinstance(res.get("base"), dict) else {}
+                r = res.get("rerank") if isinstance(res.get("rerank"), dict) else {}
+                st.success(f"✅ 回測完成（樣本 {int(b.get('races') or 0)} 場）")
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Baseline Top2 勝出率", f"{b.get('w2_rate', 0.0)}%")
+                c2.metric("重排後 Top2 勝出率", f"{r.get('w2_rate', 0.0)}%")
+                c3.metric("Baseline Top3≥2入圍率", f"{b.get('top3_2in_rate', 0.0)}%")
+                c4.metric("重排後 Top3≥2入圍率", f"{r.get('top3_2in_rate', 0.0)}%")
+            else:
+                st.error(f"❌ 回測失敗：{res}")
+
     with tab_factor:
         st.markdown("### 💡 AI 因子優化建議")
         st.caption("用途：把命中率、因子重要性、缺失原因等摘要交給 LLM，輸出可執行建議（不會自動改全局）。")

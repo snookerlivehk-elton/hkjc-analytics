@@ -446,7 +446,8 @@ def run_ai_race_summary(session: Session, race_id: int) -> Dict[str, Any]:
         factors_by_horse[hno] = {
             "draw": e.draw,
             "weight": e.actual_weight,
-            "rating": e.rating
+            "rating": e.rating,
+            "total_score": e.total_score,
         }
         
     # Fetch computed scores for key factors
@@ -589,6 +590,20 @@ def run_ai_race_summary(session: Session, race_id: int) -> Dict[str, Any]:
             top5 = parsed.get("top5_horse_nos", [])
             elim = parsed.get("eliminated_horse_nos", [])
 
+            top5_original = top5
+            top5_rerank_debug = None
+            try:
+                from scoring_engine.ai_rerank import rerank_top5
+                rrk = rerank_top5(session, int(race_id), top5, factors_by_horse=factors_by_horse)
+                top5_reranked = rrk.get("top5") if isinstance(rrk, dict) else None
+                if isinstance(top5_reranked, list) and top5_reranked:
+                    top5 = top5_reranked
+                if isinstance(rrk, dict):
+                    top5_rerank_debug = rrk.get("debug")
+            except Exception:
+                top5_original = top5
+                top5_rerank_debug = None
+
             name_map = {}
             try:
                 q_entries = (
@@ -655,6 +670,8 @@ def run_ai_race_summary(session: Session, race_id: int) -> Dict[str, Any]:
             report_cfg.value = {
                 "report": report_text,
                 "top5_horse_nos": top5,
+                "top5_horse_nos_original": top5_original,
+                "top5_rerank_debug": top5_rerank_debug,
                 "eliminated_horse_nos": elim,
                 "created_at": datetime.utcnow().isoformat(),
                 "race_id": int(race_id),
