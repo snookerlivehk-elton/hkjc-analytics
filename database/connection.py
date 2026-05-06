@@ -1,15 +1,38 @@
 import os
+import re
+from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy import inspect, text
 from sqlalchemy.orm import sessionmaker, scoped_session
 from database.models import Base
 
 # 預設使用 SQLite，未來可改為 PostgreSQL 連線字串
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/hkjc_racing.db")
+_RAW_DATABASE_URL = os.getenv("DATABASE_URL")
+_DEFAULT_SQLITE_URL = "sqlite:///./data/hkjc_racing.db"
+
+if (not _RAW_DATABASE_URL) and (os.getenv("RAILWAY_PROJECT_ID") or os.getenv("RAILWAY_SERVICE_ID")):
+    allow_sqlite = str(os.getenv("ALLOW_SQLITE") or "").strip().lower() in ("1", "true", "yes")
+    if not allow_sqlite:
+        raise RuntimeError(
+            "未設定 DATABASE_URL。Railway 請把 service 連接到 Postgres（或在 Variables 設定 DATABASE_URL）。"
+        )
+
+DATABASE_URL = _RAW_DATABASE_URL or _DEFAULT_SQLITE_URL
 
 # 修正 Railway 的 postgres:// 網址為 postgresql://
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+if DATABASE_URL.startswith("sqlite:///") and (":memory:" not in DATABASE_URL):
+    p = DATABASE_URL.replace("sqlite:///", "", 1)
+    p = re.sub(r"[?#].*$", "", p)
+    try:
+        fp = Path(p)
+        if not fp.is_absolute():
+            fp = (Path.cwd() / fp).resolve()
+        fp.parent.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
 
 # 生產環境 (Postgres) 需要 SSL 設定
 connect_args = {}
