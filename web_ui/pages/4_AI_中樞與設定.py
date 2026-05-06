@@ -699,6 +699,28 @@ try:
     with tab_track:
         st.markdown("### 📊 跑道 / 場地狀態統計")
         st.caption("用途：統計不同跑道 × 場地狀態下，勝出/入圍馬匹的跑法比率與平均賠率，並可供 AI 賽前分析引用。")
+        with st.expander("ℹ️ 統計口徑說明（步速分布／早・中・末段跑法）", expanded=False):
+            st.markdown(
+                "\n".join(
+                    [
+                        "#### 早・中・末段跑法（前領／中置／後上）",
+                        "- 來源：賽果頁「沿途走位 running_position」，以馬號對應一串位置數字（例如 `7 6 5 3`）。",
+                        "- 早段＝第一個位置；中段＝位置序列的中位點；末段＝最後一個位置。",
+                        "- 以全場馬數做分段：前 25% 視為「前領」、25%～60% 視為「中置」、其後視為「後上」。",
+                        "- 綜合跑法：用「早段＋末段」的變化歸類（例如 前領續航／跟前／中置／後上／早放後散）。",
+                        "",
+                        "#### 步速分布（快／正常／慢）",
+                        "- 來源：賽果/派彩頁的分段時間 `sectional_times`，使用第一段時間作為該場的 first split。",
+                        "- 先按「地點×草/泥×距離分桶」建立 baseline（中位數 median + MAD；需累積足夠場次才會生效）。",
+                        "- 分類：first split 明顯快於 baseline（低於 median-閾值）＝快；明顯慢於 baseline（高於 median+閾值）＝慢；其餘＝正常。",
+                        "",
+                        "#### 入圍口徑",
+                        "- 勝出＝名次第 1；入圍＝Top4（名次 ≤ 4）。",
+                        "",
+                        "提示：若某場缺少沿途走位或分段時間，該場在對應統計項目會被自動略過。",
+                    ]
+                )
+            )
 
         from scoring_engine.track_profile import compute_track_profiles
         idx_cfg = session.query(SystemConfig).filter_by(key="trkprof_index").first()
