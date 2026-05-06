@@ -43,10 +43,42 @@ class LocalResultsScraper:
         if m:
             going = m.group(1).strip()
 
-        track = ""
-        m = re.search(r"賽道\s*:\s*([^\s]+)\s*-\s*\"([^\"]+)\"\s*賽道", text)
+        venue = ""
+        if ("跑馬地" in text) or ("Happy Valley" in text):
+            venue = "HV"
+        elif ("沙田" in text) or ("Sha Tin" in text):
+            venue = "ST"
+
+        distance = 0
+        m = re.search(r"(\d{3,4})\s*米", text)
         if m:
-            track = f"{m.group(1).strip()} - \"{m.group(2).strip()}\""
+            try:
+                distance = int(m.group(1))
+            except Exception:
+                distance = 0
+
+        surface = ""
+        course_type = ""
+        track_type = ""
+        if ("全天候" in text) or ("All Weather" in text) or ("A/W" in text) or ("AWT" in text):
+            surface = "泥地"
+            course_type = "AWT"
+            if venue == "HV":
+                track_type = "跑馬地全天候"
+            elif venue == "ST":
+                track_type = "沙田全天候"
+            else:
+                track_type = "全天候"
+        else:
+            surface = "草地"
+            m = re.search(r"賽道\s*:\s*([^\s]+)\s*-\s*\"([^\"]+)\"\s*賽道", text)
+            if m:
+                venue_txt = m.group(1).strip()
+                course_txt = m.group(2).strip()
+                course_type = course_txt
+                track_type = f"{venue_txt}草地\"{course_txt}\""
+            else:
+                track_type = ""
 
         times = re.findall(r"\(\s*(\d+:\d{2}\.\d{2}|\d+\.\d{2})\s*\)", text)
         race_time = ""
@@ -67,7 +99,17 @@ class LocalResultsScraper:
                 except ValueError:
                     pass
 
-        return {"going": going, "track": track, "race_time": race_time, "sectional_times": sectional}
+        return {
+            "venue": venue,
+            "distance": distance,
+            "surface": surface,
+            "course_type": course_type,
+            "track_type": track_type,
+            "going": going,
+            "track": track_type,
+            "race_time": race_time,
+            "sectional_times": sectional,
+        }
 
     def _find_results_table(self, soup: BeautifulSoup):
         cand = soup.select_one(".performance table")
