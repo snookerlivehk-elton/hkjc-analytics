@@ -294,6 +294,22 @@ def main():
                 empty_streak = 0
 
                 meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+                results = payload.get("results") if isinstance(payload.get("results"), list) else []
+                dividends = payload.get("dividends") if isinstance(payload.get("dividends"), list) else []
+                n_results = 0
+                n_runpos = 0
+                for r in results:
+                    if not isinstance(r, dict):
+                        continue
+                    try:
+                        hn = int(r.get("horse_no") or 0)
+                    except Exception:
+                        hn = 0
+                    if hn <= 0:
+                        continue
+                    n_results += 1
+                    if str(r.get("running_position") or "").strip():
+                        n_runpos += 1
                 venue = str(meta.get("venue") or chosen_course).strip() or chosen_course
                 race = _upsert_race(session, d, venue, rn, meta)
                 _upsert_dividend(session, int(race.id), payload)
@@ -303,7 +319,7 @@ def main():
                 session.commit()
                 ok_races += 1 if ok_rows else 0
                 print(
-                    f"    - {chosen_course} R{rn}: ok={bool(ok_rows)} going={str(meta.get('going') or '').strip()} dist={int(meta.get('distance') or 0)} course={str(meta.get('course_type') or '').strip()}"
+                    f"    - {chosen_course} R{rn}: ok={bool(ok_rows)} results={n_results} runpos={n_runpos} dividends={len(dividends)} going={str(meta.get('going') or '').strip()} dist={int(meta.get('distance') or 0)} course={str(meta.get('course_type') or '').strip()}"
                 )
                 time.sleep(max(0.0, sleep_sec))
 
