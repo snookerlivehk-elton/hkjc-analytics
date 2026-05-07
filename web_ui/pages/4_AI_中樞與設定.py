@@ -931,8 +931,8 @@ try:
                 c1, c2, c3, c4 = st.columns(4)
                 c1.metric("Baseline Top2 勝出率", f"{b.get('w2_rate', 0.0)}%")
                 c2.metric("重排後 Top2 勝出率", f"{r.get('w2_rate', 0.0)}%")
-                c3.metric("Baseline Top3≥2入圍率", f"{b.get('top3_2in_rate', 0.0)}%")
-                c4.metric("重排後 Top3≥2入圍率", f"{r.get('top3_2in_rate', 0.0)}%")
+                c3.metric("Baseline PQ(3)", f"{b.get('pq3_rate', b.get('top3_2in_rate', 0.0))}%")
+                c4.metric("重排後 PQ(3)", f"{r.get('pq3_rate', r.get('top3_2in_rate', 0.0))}%")
             else:
                 st.error(f"❌ 回測失敗：{res}")
 
@@ -1002,7 +1002,7 @@ try:
 
                 c1, c2, c3 = st.columns(3)
                 w2_w = c1.number_input("目標權重：Top2 勝出率", value=0.7, step=0.1, key="rr_obj_w2")
-                t2_w = c2.number_input("目標權重：Top3≥2入圍率", value=0.3, step=0.1, key="rr_obj_t2")
+                t2_w = c2.number_input("目標權重：PQ(3)", value=0.3, step=0.1, key="rr_obj_t2")
                 grid = c3.selectbox("搜尋強度", ["fast", "thorough"], index=0, key="rr_grid_preset")
 
                 c1, c2, c3 = st.columns([2, 2, 3])
@@ -1021,7 +1021,7 @@ try:
                             d2=datetime.combine(bd2, datetime.max.time()) if bd2 else None,
                             max_races=int(bn),
                             grid_preset=str(grid),
-                            objective={"w2_weight": float(w2_w), "top3_2in_weight": float(t2_w)},
+                            objective={"w2_weight": float(w2_w), "pq3_weight": float(t2_w)},
                             save=True,
                         )
                     if isinstance(res, dict) and res.get("ok"):
@@ -1031,8 +1031,8 @@ try:
                         c1, c2, c3, c4 = st.columns(4)
                         c1.metric("Baseline W2", f"{b.get('w2_rate', 0.0)}%")
                         c2.metric("Best W2", f"{best.get('w2_rate', 0.0)}%")
-                        c3.metric("Baseline Top3≥2", f"{b.get('top3_2in_rate', 0.0)}%")
-                        c4.metric("Best Top3≥2", f"{best.get('top3_2in_rate', 0.0)}%")
+                        c3.metric("Baseline PQ(3)", f"{b.get('pq3_rate', b.get('top3_2in_rate', 0.0))}%")
+                        c4.metric("Best PQ(3)", f"{best.get('pq3_rate', best.get('top3_2in_rate', 0.0))}%")
                         st.rerun()
                     else:
                         st.error(f"❌ 分桶調參失敗：{res.get('reason') if isinstance(res, dict) else res}")

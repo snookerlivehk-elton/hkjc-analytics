@@ -20,7 +20,7 @@ DEFAULT_RERANK_CONFIG = {
 }
 
 DEFAULT_BUCKET_TUNE = {
-    "objective": {"w2_weight": 0.7, "top3_2in_weight": 0.3},
+    "objective": {"w2_weight": 0.7, "pq3_weight": 0.3},
     "grid_preset": "fast",
 }
 
@@ -295,15 +295,17 @@ def rerank_top5(
 
 def _eval_metrics(top5: List[int], act_top4: List[int]) -> Dict[str, int]:
     if not top5 or len(act_top4) < 4:
-        return {"w2": 0, "top3_2in_top4": 0}
+        return {"w2": 0, "pq3": 0, "top3_2in_top4": 0}
     winner = act_top4[0]
-    act_set = set(act_top4)
+    act_top3 = set(act_top4[:3])
     p1 = top5[0] if len(top5) > 0 else None
     p2 = top5[1] if len(top5) > 1 else None
     w2 = 1 if winner in set([p1, p2]) else 0
     top3 = set([x for x in top5[:3] if x is not None])
-    t2 = 1 if len(top3 & act_set) >= 2 else 0
-    return {"w2": w2, "top3_2in_top4": t2}
+    pq3 = 1 if len(top3 & act_top3) >= 2 else 0
+    # Backward-compatible alias: previously this meant (pred_top3 ∩ actual_top4) >= 2.
+    # The system target is now PQ(3), so keep this key aligned with pq3.
+    return {"w2": w2, "pq3": pq3, "top3_2in_top4": pq3}
 
 
 def _grid_values(preset: str) -> List[Dict[str, float]]:
@@ -357,10 +359,15 @@ def tune_rerank_for_bucket(
                     obj[k] = float(objective.get(k))
             except Exception:
                 pass
+        if "pq3_weight" not in objective and "top3_2in_weight" in objective:
+            try:
+                obj["pq3_weight"] = float(objective.get("top3_2in_weight"))
+            except Exception:
+                pass
     w2w = float(obj.get("w2_weight") or 0.0)
-    t2w = float(obj.get("top3_2in_weight") or 0.0)
-    if (w2w + t2w) <= 0:
-        w2w, t2w = 0.7, 0.3
+    pq3w = float(obj.get("pq3_weight") or 0.0)
+    if (w2w + pq3w) <= 0:
+        w2w, pq3w = 0.7, 0.3
 
     from scoring_engine.member_stats import _actual_topk_for_race
 
@@ -492,8 +499,8 @@ def tune_rerank_for_bucket(
         if st["races"] <= 0:
             continue
         w2_rate = float(st["w2"]) / float(st["races"])
-        t2_rate = float(st["top3_2in_top4"]) / float(st["races"])
-        score = (w2w * w2_rate) + (t2w * t2_rate)
+        pq3_rate = float(st["top3_2in_top4"]) / float(st["races"])
+        score = (w2w * w2_rate) + (pq3w * pq3_rate)
         if score > best_score:
             best_score = score
             best = g
@@ -508,15 +515,15 @@ def tune_rerank_for_bucket(
         "ok": True,
         "bucket": {"venue": parts[0], "going_code": parts[1], "course_type": parts[2], "dist_bucket": parts[3]},
         "bucket_key": _bucket_key(parts),
-        "objective": {"w2_weight": w2w, "top3_2in_weight": t2w},
+        "objective": {"w2_weight": w2w, "pq3_weight": pq3w},
         "grid_preset": str(grid_preset),
         "samples": int(base["races"]),
-        "base": {"races": base["races"], "w2_rate": rate(base["w2"], base["races"]), "top3_2in_rate": rate(base["top3_2in_top4"], base["races"])},
-        "best": {"weights": best, "w2_rate": rate(best_stats["w2"], best_stats["races"]) if best_stats else 0.0, "top3_2in_rate": rate(best_stats["top3_2in_top4"], best_stats["races"]) if best_stats else 0.0},
+        "base": {"races": base["races"], "w2_rate": rate(base["w2"], base["races"]), "pq3_rate": rate(base["top3_2in_top4"], base["races"]), "top3_2in_rate": rate(base["top3_2in_top4"], base["races"])},
+        "best": {"weights": best, "w2_rate": rate(best_stats["w2"], best_stats["races"]) if best_stats else 0.0, "pq3_rate": rate(best_stats["top3_2in_top4"], best_stats["races"]) if best_stats else 0.0, "top3_2in_rate": rate(best_stats["top3_2in_top4"], best_stats["races"]) if best_stats else 0.0},
     }
 
     if save and isinstance(best, dict):
-        meta = {"tuned_at": datetime.utcnow().isoformat(), "samples": int(base["races"]), "base": out["base"], "best_rates": {"w2": out["best"]["w2_rate"], "top3_2in": out["best"]["top3_2in_rate"]}, "objective": out["objective"], "grid_preset": out["grid_preset"]}
+        meta = {"tuned_at": datetime.utcnow().isoformat(), "samples": int(base["races"]), "base": out["base"], "best_rates": {"w2": out["best"]["w2_rate"], "pq3": out["best"]["pq3_rate"]}, "objective": out["objective"], "grid_preset": out["grid_preset"]}
         save_bucket_rerank_config(session, parts, best, meta=meta)
     return out
 
@@ -555,7 +562,7 @@ def backtest_rerank(
             continue
 
         winner = act_top4[0]
-        act_set = set(act_top4)
+        act_top3 = set(act_top4[:3])
 
         def upd(bucket: Dict[str, int], t5: List[int]):
             bucket["races"] += 1
@@ -564,7 +571,7 @@ def backtest_rerank(
             if winner in set([p1, p2]):
                 bucket["w2"] += 1
             pred_top3 = set([x for x in t5[:3] if x is not None])
-            if len(pred_top3 & act_set) >= 2:
+            if len(pred_top3 & act_top3) >= 2:
                 bucket["top3_2in_top4"] += 1
 
         t5i = []
@@ -592,7 +599,7 @@ def backtest_rerank(
 
     out = {
         "ok": True,
-        "base": {"races": base["races"], "w2": base["w2"], "top3_2in_top4": base["top3_2in_top4"], "w2_rate": rate(base["w2"], base["races"]), "top3_2in_rate": rate(base["top3_2in_top4"], base["races"])},
-        "rerank": {"races": rer["races"], "w2": rer["w2"], "top3_2in_top4": rer["top3_2in_top4"], "w2_rate": rate(rer["w2"], rer["races"]), "top3_2in_rate": rate(rer["top3_2in_top4"], rer["races"])},
+        "base": {"races": base["races"], "w2": base["w2"], "top3_2in_top4": base["top3_2in_top4"], "w2_rate": rate(base["w2"], base["races"]), "pq3_rate": rate(base["top3_2in_top4"], base["races"]), "top3_2in_rate": rate(base["top3_2in_top4"], base["races"])},
+        "rerank": {"races": rer["races"], "w2": rer["w2"], "top3_2in_top4": rer["top3_2in_top4"], "w2_rate": rate(rer["w2"], rer["races"]), "pq3_rate": rate(rer["top3_2in_top4"], rer["races"]), "top3_2in_rate": rate(rer["top3_2in_top4"], rer["races"])},
     }
     return out

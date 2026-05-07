@@ -95,9 +95,10 @@ def calculate_ai_hit_stats(session: Session) -> Dict[str, Any]:
                 if k in hits:
                     stats["hit"][k] = int(stats["hit"].get(k) or 0) + int(hits.get(k) or 0)
 
-            pred_top3 = set([int(x) for x in top5[:3] if int(x or 0) > 0])
-            if len(pred_top3 & act_set) >= 2:
-                stats["hit"]["top3_2in_top4"] += 1
+            # Backward-compatible alias:
+            # top3_2in_top4 used to mean (pred_top3 ∩ actual_top4) >= 2.
+            # The system's optimization target is now PQ(3), so keep this key aligned with pq3.
+            stats["hit"]["top3_2in_top4"] += int(hits.get("pq3") or 0)
 
             p1 = int(top5[0]) if len(top5) > 0 else 0
             p2 = int(top5[1]) if len(top5) > 1 else 0

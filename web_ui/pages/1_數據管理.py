@@ -1365,19 +1365,19 @@ with tab_hits:
                 if not factor_names:
                     st.info("目前沒有可用的獨立條件因子。")
                 else:
-                    st.caption("用所選日期範圍的歷史賽果自動估計各因子重要性，目標聚焦 Top2 勝出率＋Top3≥2 入圍率（後台只作分析與下載）。")
+                    st.caption("用所選日期範圍的歷史賽果自動估計各因子重要性，目標聚焦 Top2 勝出率＋PQ(3)（後台只作分析與下載）。")
                     st.markdown(
                         """
 **方法說明（自動估計因子重要性）**
 - **資料來源**：使用所選日期範圍內、已結算賽果的場次；每匹馬取資料庫 `ScoringFactor` 的各因子分數與 `raw_data_display`。
-- **目標定義**：同一份資料會學兩個目標：`勝出(名次=1)` 與 `入圍Top4(名次≤4)`，再按目標權重加總。
+- **目標定義**：同一份資料會學兩個目標：`勝出(名次=1)` 與 `入圍Top3(名次≤3)`（更貼近 PQ(3)），再按目標權重加總。
 - **特徵**：每個因子會產生 2 個特徵：
   - `分數`：該因子在該場的相對分數（0–10）。
   - `缺失`：若 `raw_data_display` 為空白/無數據 → 1，否則 0。
 - **缺失處理**：若某因子分數缺失，分數以 5.0（中間值）補上；同時 `缺失=1` 讓模型學到「缺資料時應該如何調整」。
 - **模型**：Logistic Regression（二分類），並用 `class_weight=balanced` 減少正負例比例不均造成的偏差。
 - **建議權重**：把兩個模型的正向係數按目標權重加總，再按「最大值」比例縮放到你選的「建議權重上限」。
-- **指標**：回算同一批資料的 Top2 勝出率與 Top3≥2 入圍率（in-sample）作方向參考；建議以不同日期範圍反覆驗證。
+- **指標**：回算同一批資料的 Top2 勝出率與 PQ(3)（in-sample）作方向參考；建議以不同日期範圍反覆驗證。
                         """.strip()
                     )
                     from scoring_engine.weight_tuning import tune_weights_top3_focus
@@ -1395,7 +1395,7 @@ with tab_hits:
                     max_w = float(c1.selectbox("建議權重上限", [2.0, 3.0, 4.0, 5.0], index=1, key="tune_max_w"))
                     w2_w = float(c2.selectbox("目標權重：Top2 勝出率", [0.5, 0.7, 0.9], index=1, key="tune_w2_w"))
                     run = c3.button("生成建議", use_container_width=True, key="tune_run_btn")
-                    t2_w = float(st.selectbox("目標權重：Top3≥2 入圍率", [0.1, 0.3, 0.5], index=1, key="tune_t2_w"))
+                    t2_w = float(st.selectbox("目標權重：PQ(3)", [0.1, 0.3, 0.5], index=1, key="tune_t2_w"))
 
                     if run:
                         res = tune_weights_top3_focus(
@@ -1404,7 +1404,7 @@ with tab_hits:
                             d2=d2,
                             factor_names=factor_names,
                             max_suggest_weight=max_w,
-                            objective={"w2_weight": float(w2_w), "top3_2in_weight": float(t2_w)},
+                            objective={"w2_weight": float(w2_w), "pq3_weight": float(t2_w)},
                         )
                         st.session_state["tune_top5_result"] = res
 
@@ -1415,7 +1415,7 @@ with tab_hits:
                         m2.metric("樣本(場)", int(res.get("races") or 0))
                         ins = res.get("in_sample") if isinstance(res.get("in_sample"), dict) else {}
                         m3.metric("Top2 勝出率", f"{float(ins.get('w2_rate') or 0.0):.1f}%")
-                        m4.metric("Top3≥2入圍率", f"{float(ins.get('top3_2in_rate') or 0.0):.1f}%")
+                        m4.metric("PQ(3)", f"{float(ins.get('pq3_rate') or ins.get('top3_2in_rate') or 0.0):.1f}%")
 
                         sugg = res.get("suggested_weights") if isinstance(res.get("suggested_weights"), dict) else {}
                         cs = res.get("coef_win_score") if isinstance(res.get("coef_win_score"), dict) else {}

@@ -113,7 +113,7 @@ def _eval_top3_focus_from_weights(
     weights: Dict[str, float],
 ) -> Dict[str, Any]:
     if df.empty:
-        return {"races": 0, "w2_rate": 0.0, "top3_2in_rate": 0.0}
+        return {"races": 0, "w2_rate": 0.0, "pq3_rate": 0.0, "top3_2in_rate": 0.0}
     dfx = df.copy()
     for fn in factor_names:
         s_col = f"{fn}__score"
@@ -123,7 +123,7 @@ def _eval_top3_focus_from_weights(
 
     races = 0
     w2 = 0
-    t2 = 0
+    pq3 = 0
     for rid, g in dfx.groupby("race_id"):
         g2 = g.dropna(subset=["rank", "horse_no"], how="any")
         if g2.empty:
@@ -133,8 +133,8 @@ def _eval_top3_focus_from_weights(
         except Exception:
             continue
         act = g2.sort_values(["rank_i", "horse_no"], ascending=[True, True])
-        act_top4 = [int(x) for x in list(act["horse_no"].values)[:4] if int(x or 0) > 0]
-        if len(act_top4) < 4:
+        act_top3 = [int(x) for x in list(act["horse_no"].values)[:3] if int(x or 0) > 0]
+        if len(act_top3) < 3:
             continue
 
         s = np.zeros(len(g2), dtype=float)
@@ -149,16 +149,17 @@ def _eval_top3_focus_from_weights(
         pred_top3 = [int(x) for x in list(pred["horse_no"].values)[:3] if int(x or 0) > 0]
         pred_top2 = [int(x) for x in list(pred["horse_no"].values)[:2] if int(x or 0) > 0]
 
-        winner = act_top4[0]
+        winner = act_top3[0]
         races += 1
         if winner in set(pred_top2):
             w2 += 1
-        if len(set(pred_top3) & set(act_top4)) >= 2:
-            t2 += 1
+        if len(set(pred_top3) & set(act_top3)) >= 2:
+            pq3 += 1
 
     if races <= 0:
-        return {"races": 0, "w2_rate": 0.0, "top3_2in_rate": 0.0}
-    return {"races": int(races), "w2_rate": round(float(w2) / float(races) * 100.0, 1), "top3_2in_rate": round(float(t2) / float(races) * 100.0, 1)}
+        return {"races": 0, "w2_rate": 0.0, "pq3_rate": 0.0, "top3_2in_rate": 0.0}
+    pq3_rate = round(float(pq3) / float(races) * 100.0, 1)
+    return {"races": int(races), "w2_rate": round(float(w2) / float(races) * 100.0, 1), "pq3_rate": pq3_rate, "top3_2in_rate": pq3_rate}
 
 
 def tune_weights_top3_focus(
@@ -194,9 +195,9 @@ def tune_weights_top3_focus(
 
     rk = pd.to_numeric(df["rank"], errors="coerce").fillna(999).astype(int).values
     y_win = np.asarray([1 if int(x) == 1 else 0 for x in rk], dtype=int)
-    y_top4 = np.asarray([1 if int(x) <= 4 else 0 for x in rk], dtype=int)
+    y_top3 = np.asarray([1 if int(x) <= 3 else 0 for x in rk], dtype=int)
 
-    obj = {"w2_weight": 0.7, "top3_2in_weight": 0.3}
+    obj = {"w2_weight": 0.7, "pq3_weight": 0.3}
     if isinstance(objective, dict):
         for k in list(obj.keys()):
             try:
@@ -204,22 +205,27 @@ def tune_weights_top3_focus(
                     obj[k] = float(objective.get(k))
             except Exception:
                 pass
+        if "pq3_weight" not in objective and "top3_2in_weight" in objective:
+            try:
+                obj["pq3_weight"] = float(objective.get("top3_2in_weight"))
+            except Exception:
+                pass
     w2w = float(obj.get("w2_weight") or 0.0)
-    t2w = float(obj.get("top3_2in_weight") or 0.0)
-    if (w2w + t2w) <= 0:
-        w2w, t2w = 0.7, 0.3
+    pq3w = float(obj.get("pq3_weight") or 0.0)
+    if (w2w + pq3w) <= 0:
+        w2w, pq3w = 0.7, 0.3
 
     m_win = _fit_logit(X, y_win, random_state=random_state)
-    m_t4 = _fit_logit(X, y_top4, random_state=random_state)
-    if (m_win is None) or (m_t4 is None):
+    m_t3 = _fit_logit(X, y_top3, random_state=random_state)
+    if (m_win is None) or (m_t3 is None):
         return {"ok": False, "reason": "no_samples"}
 
     coef_win_score, coef_win_missing = _coef_maps(m_win, X_cols, factor_names)
-    coef_t4_score, coef_t4_missing = _coef_maps(m_t4, X_cols, factor_names)
+    coef_t3_score, coef_t3_missing = _coef_maps(m_t3, X_cols, factor_names)
 
     pos_win = {fn: max(0.0, float(coef_win_score.get(fn) or 0.0)) for fn in factor_names}
-    pos_t4 = {fn: max(0.0, float(coef_t4_score.get(fn) or 0.0)) for fn in factor_names}
-    combined = {fn: (w2w * float(pos_win.get(fn) or 0.0)) + (t2w * float(pos_t4.get(fn) or 0.0)) for fn in factor_names}
+    pos_t3 = {fn: max(0.0, float(coef_t3_score.get(fn) or 0.0)) for fn in factor_names}
+    combined = {fn: (w2w * float(pos_win.get(fn) or 0.0)) + (pq3w * float(pos_t3.get(fn) or 0.0)) for fn in factor_names}
     max_pos = max([float(v) for v in combined.values()] or [0.0])
 
     suggested: Dict[str, float] = {}
@@ -234,18 +240,18 @@ def tune_weights_top3_focus(
             suggested[fn] = float(combined.get(fn) or 0.0) / max_pos * cap
 
     metrics = _eval_top3_focus_from_weights(df, factor_names=factor_names, weights=suggested)
-    score = round((w2w * (float(metrics.get("w2_rate") or 0.0) / 100.0)) + (t2w * (float(metrics.get("top3_2in_rate") or 0.0) / 100.0)), 4)
+    score = round((w2w * (float(metrics.get("w2_rate") or 0.0) / 100.0)) + (pq3w * (float(metrics.get("pq3_rate") or 0.0) / 100.0)), 4)
 
     return {
         "ok": True,
         "rows": int(len(df)),
         "races": int(metrics.get("races") or 0),
-        "objective": {"w2_weight": w2w, "top3_2in_weight": t2w},
-        "in_sample": {"w2_rate": metrics.get("w2_rate"), "top3_2in_rate": metrics.get("top3_2in_rate"), "score": score},
+        "objective": {"w2_weight": w2w, "pq3_weight": pq3w},
+        "in_sample": {"w2_rate": metrics.get("w2_rate"), "pq3_rate": metrics.get("pq3_rate"), "top3_2in_rate": metrics.get("top3_2in_rate"), "score": score},
         "coef_win_score": coef_win_score,
         "coef_win_missing": coef_win_missing,
-        "coef_top4_score": coef_t4_score,
-        "coef_top4_missing": coef_t4_missing,
+        "coef_top3_score": coef_t3_score,
+        "coef_top3_missing": coef_t3_missing,
         "suggested_weights": suggested,
     }
 
