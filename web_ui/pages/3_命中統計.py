@@ -392,8 +392,19 @@ with tab_factor:
                 c2.metric("獨贏(W1)", f"{round(hit.get('w1', 0)/hraces*100, 1)}%")
                 c3.metric("Top2 勝出(W2)", f"{round(hit.get('w2', 0)/hraces*100, 1)}%")
                 c4.metric("位置Q(PQ2)", f"{round(hit.get('pq2', 0)/hraces*100, 1)}%")
-                c5.metric("Top3≥2入圍", f"{round(hit.get('top3_2in_top4', 0)/hraces*100, 1)}%")
+                c5.metric(
+                    "Top3≥2入圍Top4",
+                    f"{round(hit.get('top3_2in_top4', 0)/hraces*100, 1)}%",
+                    help="預測前3與實際前4交集≥2（口徑較寬）；PQ(3) 則是預測前3與實際三甲交集≥2（口徑較嚴）。",
+                )
                 c6.metric("三重(T3)", f"{round(hit.get('t3', 0)/hraces*100, 1)}%")
+
+                d1, d2, d3, d4, d5 = st.columns(5)
+                d1.metric("正Q(3)", f"{round(hit.get('q3', 0)/hraces*100, 1)}%")
+                d2.metric("PQ(3)", f"{round(hit.get('pq3', 0)/hraces*100, 1)}%")
+                d3.metric("三重(2+4)", f"{round(hit.get('t3e', 0)/hraces*100, 1)}%")
+                d4.metric("四連(2+5)", f"{round(hit.get('f4', 0)/hraces*100, 1)}%")
+                d5.metric("四連(5)", f"{round(hit.get('f4q', 0)/hraces*100, 1)}%")
 
                 st.markdown("##### 推薦順序入圍率 (Top 4)")
                 p1, p2, p3, p4, p5 = st.columns(5)
