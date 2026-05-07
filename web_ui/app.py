@@ -1987,6 +1987,48 @@ def main():
                                     a[kk] += int(v)
 
                         rows = []
+                        try:
+                            ai_agg = {"races": 0, **{k: 0 for k in HIT_METRICS}}
+                            race_ids = sorted(list({int(rid) for rid, _, _, _ in preds if int(rid or 0) > 0}))
+                            race_cache = {}
+                            for rid in race_ids:
+                                r0 = race_cache.get(rid)
+                                if r0 is None:
+                                    r0 = session.get(Race, rid)
+                                    race_cache[rid] = r0
+                                if not r0:
+                                    continue
+                                if not getattr(r0, "race_date", None) or not getattr(r0, "race_no", None):
+                                    continue
+                                date_str = r0.race_date.strftime("%Y/%m/%d")
+                                key = f"ai_race_report:{date_str}:{int(r0.race_no)}"
+                                cfg = session.query(SystemConfig).filter_by(key=key).first()
+                                val = cfg.value if (cfg and isinstance(cfg.value, dict)) else {}
+                                top5_ai = val.get("top5_horse_nos")
+                                if not isinstance(top5_ai, list) or len(top5_ai) < 5:
+                                    continue
+                                act = cache_act.get(int(rid))
+                                if act is None:
+                                    act = actual_top5(int(rid))
+                                    cache_act[int(rid)] = act
+                                if len(act) < 5:
+                                    continue
+                                hits_ai = _calc_hits([int(x) for x in top5_ai], act)
+                                if not hits_ai:
+                                    continue
+                                ai_agg["races"] += 1
+                                for k, v in hits_ai.items():
+                                    kk = str(k).lower()
+                                    if kk in ai_agg:
+                                        ai_agg[kk] += int(v)
+
+                            n_ai = int(ai_agg["races"] or 0)
+                            ai_row = {"條件": "🤖 AI 賽事前瞻", "代號": "ai", "樣本(場)": n_ai}
+                            for k in HIT_METRICS:
+                                ai_row[f"{METRIC_LABELS.get(k, k)}%"] = round((int(ai_agg.get(k) or 0) / n_ai * 100.0), 1) if n_ai else 0.0
+                            rows.append(ai_row)
+                        except Exception:
+                            pass
                         for fn in factor_names:
                             a = agg[fn]
                             n = int(a["races"] or 0)
