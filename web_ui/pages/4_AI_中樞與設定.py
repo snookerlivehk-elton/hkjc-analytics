@@ -1087,6 +1087,9 @@ try:
             st.session_state["ai_last_advice_result"] = res_ai
 
         res_ai = st.session_state.get("ai_last_advice_result")
+        last_raw = ""
+        if isinstance(res_ai, dict):
+            last_raw = str(res_ai.get("response_text") or "").strip()
         if isinstance(res_ai, dict) and res_ai.get("ok") is True:
             parsed = res_ai.get("parsed") if isinstance(res_ai.get("parsed"), dict) else {}
             if parsed.get("ok") is True and isinstance(parsed.get("data"), dict):
@@ -1124,6 +1127,150 @@ try:
                 st.error("❌ 未提供 API Key。")
             else:
                 st.error(f"❌ 呼叫失敗：{str(res_ai.get('error') or res_ai.get('reason') or '')}")
+
+        st.markdown("---")
+        st.markdown("**套用建議（轉成權重草稿）**")
+        st.caption("用途：把 AI 的 recommendations 轉成「全局 ScoringWeight」的變更草稿，先預覽再套用。只會處理 remove / increase_weight / reduce_weight。")
+
+        from database.models import ScoringWeight
+
+        def _try_load_advice_json(text: str):
+            t = str(text or "").strip()
+            if not t:
+                return None
+            try:
+                return json.loads(t)
+            except Exception:
+                return None
+
+        with st.expander("🧩 由 AI 建議生成權重草稿（可套用）", expanded=False):
+            default_text = last_raw or ""
+            advice_text = st.text_area("貼上 AI 建議 JSON（recommendations）", value=default_text, height=220, key="ai_advice_paste")
+            c1, c2, c3 = st.columns([2, 2, 3])
+            apply_target = c1.selectbox("套用範圍", ["全局權重（ScoringWeight）"], index=0, key="ai_advice_apply_target")
+            missing_mode = c2.selectbox("遇到不存在因子", ["略過", "自動新增（weight=0 後再調）"], index=0, key="ai_advice_missing_mode")
+            run_build = c3.button("生成草稿", use_container_width=True, key="ai_advice_build_btn")
+
+            if run_build:
+                obj = _try_load_advice_json(advice_text)
+                if not isinstance(obj, dict):
+                    st.error("❌ JSON 無法解析。請貼上完整 JSON。")
+                else:
+                    recs0 = obj.get("recommendations") if isinstance(obj.get("recommendations"), list) else []
+                    if not recs0:
+                        st.error("❌ JSON 內找不到 recommendations。")
+                    else:
+                        w_rows = session.query(ScoringWeight).order_by(ScoringWeight.factor_name.asc()).all()
+                        w_map = {str(w.factor_name): w for w in w_rows if w and str(getattr(w, "factor_name", "") or "").strip()}
+
+                        draft_rows = []
+                        updates = []
+                        for r in recs0:
+                            if not isinstance(r, dict):
+                                continue
+                            action = str(r.get("action") or "").strip()
+                            fn = str(r.get("factor_name") or "").strip()
+                            pr = str(r.get("priority") or "").strip()
+                            if not fn or action not in {"remove", "increase_weight", "reduce_weight"}:
+                                continue
+
+                            w0 = w_map.get(fn)
+                            exists = bool(w0)
+                            cur_w = float(getattr(w0, "weight", 0.0) or 0.0) if w0 else 0.0
+                            cur_active = bool(getattr(w0, "is_active", True)) if w0 else False
+                            delta = None
+                            new_w = cur_w
+                            new_active = True
+                            note = ""
+
+                            if action == "remove":
+                                new_w = 0.0
+                                new_active = False
+                                note = "停用（is_active=False）"
+                            else:
+                                try:
+                                    delta = float((r.get("proposal") or {}).get("weight_delta"))
+                                except Exception:
+                                    delta = None
+                                if delta is None:
+                                    note = "缺少 weight_delta，略過"
+                                else:
+                                    new_w = max(0.0, float(cur_w) + float(delta))
+                                    new_active = True
+
+                            if not exists and missing_mode.startswith("自動新增"):
+                                exists = True
+                                cur_active = False
+                                note = (note + "；" if note else "") + "將新增因子"
+
+                            if not exists:
+                                note = (note + "；" if note else "") + "因子不存在，略過"
+
+                            draft_rows.append(
+                                {
+                                    "優先級": pr,
+                                    "動作": action,
+                                    "因子": fn,
+                                    "目前權重": round(float(cur_w), 3),
+                                    "目前啟用": bool(cur_active),
+                                    "建議Δ": (round(float(delta), 3) if delta is not None else None),
+                                    "新權重": round(float(new_w), 3),
+                                    "新啟用": bool(new_active),
+                                    "備註": note,
+                                }
+                            )
+
+                            if exists and (("略過" not in note) and ("缺少 weight_delta" not in note)):
+                                updates.append({"factor_name": fn, "weight": float(new_w), "is_active": bool(new_active)})
+
+                        if not draft_rows:
+                            st.warning("找不到可轉換的項目（只會處理 remove / increase_weight / reduce_weight）。")
+                        else:
+                            df_draft = pd.DataFrame(draft_rows)
+                            st.dataframe(df_draft, use_container_width=True, hide_index=True)
+                            st.download_button(
+                                "下載草稿（JSON）",
+                                data=json.dumps({"updates": updates, "generated_at": datetime.utcnow().isoformat()}, ensure_ascii=False, indent=2),
+                                file_name=f"ai_advice_weight_draft_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.json",
+                                mime="application/json",
+                                use_container_width=True,
+                                key="ai_advice_draft_download",
+                            )
+                            st.session_state["ai_advice_weight_updates"] = updates
+
+            upd = st.session_state.get("ai_advice_weight_updates")
+            if isinstance(upd, list) and upd:
+                st.markdown("**套用到全局（需確認）**")
+                c1, c2 = st.columns([2, 3])
+                confirm = c1.text_input("輸入 APPLY 以套用", value="", key="ai_advice_apply_confirm")
+                ok_apply = str(confirm or "").strip().upper() == "APPLY"
+                if c2.button("✅ 套用草稿到全局權重", use_container_width=True, disabled=not ok_apply, key="ai_advice_apply_btn"):
+                    w_rows = session.query(ScoringWeight).order_by(ScoringWeight.factor_name.asc()).all()
+                    w_map = {str(w.factor_name): w for w in w_rows if w and str(getattr(w, "factor_name", "") or "").strip()}
+                    applied = 0
+                    created = 0
+                    for it in upd:
+                        if not isinstance(it, dict):
+                            continue
+                        fn = str(it.get("factor_name") or "").strip()
+                        if not fn:
+                            continue
+                        w0 = w_map.get(fn)
+                        if not w0:
+                            if not missing_mode.startswith("自動新增"):
+                                continue
+                            w0 = ScoringWeight(factor_name=fn, weight=0.0, description=fn, is_active=False)
+                            session.add(w0)
+                            w_map[fn] = w0
+                            created += 1
+                        try:
+                            w0.weight = float(it.get("weight") or 0.0)
+                            w0.is_active = bool(it.get("is_active"))
+                            applied += 1
+                        except Exception:
+                            continue
+                    session.commit()
+                    st.success(f"✅ 已套用：updated={applied} created={created}")
 
 finally:
     session.close()
