@@ -394,8 +394,12 @@ else:
                     needs_rescore = False
                     if not sample or not sample[0]:
                         needs_rescore = True
-                    elif "評分" not in str(sample[0] or ""):
-                        needs_rescore = True
+                    else:
+                        s0 = str(sample[0] or "")
+                        if "評分" not in s0:
+                            needs_rescore = True
+                        elif "SEv3" not in s0:
+                            needs_rescore = True
 
                     auto_key = f"auto_rescore_style_trkprof_edge_{selected_race_id}"
                     if needs_rescore and not st.session_state.get(auto_key, False):

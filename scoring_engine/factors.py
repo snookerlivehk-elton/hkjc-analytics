@@ -752,7 +752,7 @@ class FactorCalculator:
             edge_pct = _to_edge_score_pct(p_place, p_win)
             pw = _shrink_pct(p_win, float(max(0, winner_samples or n_races)))
             pp = _shrink_pct(p_place, float(max(0, top4_samples or n_races)))
-            disp = f"{label_guess}｜勝出{round((pw if pw is not None else baseline_pct),1)}%｜入圍Top4{round((pp if pp is not None else baseline_pct),1)}%｜樣本{n_races}｜跑法樣本(勝/入){winner_samples}/{top4_samples}｜採樣{(src_tag or 'N')}｜評分{round(edge_pct,1)}%"
+            disp = f"SEv3｜{label_guess}｜勝出{round((pw if pw is not None else baseline_pct),1)}%｜入圍Top4{round((pp if pp is not None else baseline_pct),1)}%｜樣本{n_races}｜跑法樣本(勝/入){winner_samples}/{top4_samples}｜採樣{(src_tag or 'N')}｜評分{round(edge_pct,1)}%"
             scores.append(edge_pct)
             displays.append(disp)
 
