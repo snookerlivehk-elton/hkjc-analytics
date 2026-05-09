@@ -1228,6 +1228,84 @@ with tab_hits:
                                 if keys:
                                     cfgs = session_hit.query(SystemConfig.key, SystemConfig.value).filter(SystemConfig.key.in_(keys)).all()
                                 agg_reason = {}
+
+                with st.expander("🧪 因子成效評估（單因子）", expanded=False):
+                    st.caption("用途：評估每個獨立條件「單獨使用」時的命中率與資料覆蓋，協助你判斷因子是否值得保留/加權/補數據。")
+                    from scoring_engine.diagnostics import active_factor_names, factor_label_map
+                    from scoring_engine.factor_evaluation import evaluate_factors
+
+                    label_map2 = factor_label_map(session_hit)
+                    factor_names2 = active_factor_names(session_hit)
+                    if not factor_names2:
+                        st.info("未找到可用因子（請先確認 ScoringWeight/is_active 與 get_available_factors）。")
+                    else:
+                        c1, c2, c3 = st.columns([2, 2, 3])
+                        top_k = c1.selectbox("TopK（用於命中）", [5, 4], index=0, key="factor_eval_topk")
+                        use_cache = c2.checkbox("使用快取", value=True, key="factor_eval_use_cache")
+                        ok = _confirm_run(c3, "factor_eval_run", label="輸入 RUN 以產生成效表")
+                        run = c3.button("產生成效評估表", use_container_width=True, disabled=not ok)
+
+                        if run:
+                            cache_key = ""
+                            if use_cache:
+                                cache_key = f"factor_eval:{d1.isoformat()}:{d2.isoformat()}:top{int(top_k)}:v1"
+                            res = evaluate_factors(
+                                session_hit,
+                                d1=d1,
+                                d2=d2,
+                                factor_names=factor_names2,
+                                top_k=int(top_k),
+                                cache_key=cache_key,
+                                save_cache=bool(use_cache),
+                            )
+                            if not isinstance(res, dict) or res.get("ok") is not True:
+                                st.error(f"❌ 評估失敗：{str(res.get('reason') if isinstance(res, dict) else '')}")
+                            else:
+                                rows_eval = res.get("rows") if isinstance(res.get("rows"), list) else []
+                                if not rows_eval:
+                                    st.info("所選範圍內沒有足夠已結算賽果/計分資料可評估。")
+                                else:
+                                    rows2 = []
+                                    for it in rows_eval:
+                                        if not isinstance(it, dict):
+                                            continue
+                                        fn = str(it.get("factor_name") or "").strip()
+                                        if not fn:
+                                            continue
+                                        rows2.append(
+                                            {
+                                                "條件": label_map2.get(fn, fn),
+                                                "代號": fn,
+                                                "命中樣本(場)": int(it.get("races") or 0),
+                                                "覆蓋率(%)": round(float(it.get("coverage_pct") or 0.0), 1) if it.get("coverage_pct") is not None else None,
+                                                "缺失顯示(%)": round(float(it.get("missing_display_pct") or 0.0), 1) if it.get("missing_display_pct") is not None else None,
+                                                "W2(%)": round(float(it.get("w2_rate") or 0.0), 1) if it.get("w2_rate") is not None else None,
+                                                "PQ(3)(%)": round(float(it.get("pq3_rate") or 0.0), 1) if it.get("pq3_rate") is not None else None,
+                                                "P2(%)": round(float(it.get("p2_rate") or 0.0), 1) if it.get("p2_rate") is not None else None,
+                                                "AUC(W2)": round(float(it.get("auc_w2") or 0.0), 3) if it.get("auc_w2") is not None else None,
+                                                "AUC(Top3)": round(float(it.get("auc_top3") or 0.0), 3) if it.get("auc_top3") is not None else None,
+                                            }
+                                        )
+                                    df_eval = pd.DataFrame(rows2)
+                                    st.dataframe(df_eval, use_container_width=True, hide_index=True)
+
+                                    payload = {"meta": {k: v for k, v in res.items() if k != "rows"}, "rows": rows_eval}
+                                    st.download_button(
+                                        "下載 JSON",
+                                        data=json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"),
+                                        file_name=f"factor_eval_{d1.isoformat()}_{d2.isoformat()}_top{int(top_k)}.json",
+                                        mime="application/json",
+                                        use_container_width=True,
+                                        key="factor_eval_dl_json",
+                                    )
+                                    st.download_button(
+                                        "下載 CSV",
+                                        data=df_eval.to_csv(index=False).encode("utf-8"),
+                                        file_name=f"factor_eval_{d1.isoformat()}_{d2.isoformat()}_top{int(top_k)}.csv",
+                                        mime="text/csv",
+                                        use_container_width=True,
+                                        key="factor_eval_dl_csv",
+                                    )
                                 total_missing = 0
                                 cfg_key_set = set()
                                 race_ids_with_reason = set()
