@@ -332,6 +332,25 @@ else:
                 st.markdown("---")
                 st.markdown(f"#### 📌 目前檢視：{selected_factor}")
 
+                from database.models import SystemConfig
+
+                has_official = False
+                config_key = ""
+                race = session.get(Race, selected_race_id)
+                race_date_str = ""
+                if race and hasattr(race.race_date, "strftime"):
+                    race_date_str = race.race_date.strftime("%Y/%m/%d")
+                elif race:
+                    race_date_str = str(race.race_date)[:10].replace("-", "/")
+                if race_date_str:
+                    config_key = f"draw_stats_{race_date_str}"
+                    config = session.query(SystemConfig).filter_by(key=config_key).first()
+                    has_official = bool(
+                        config
+                        and isinstance(config.value, dict)
+                        and (str(race.race_no) in config.value or race.race_no in config.value)
+                    )
+
                 if selected_factor in ("騎師＋練馬師合作 (同路程/場地)", "騎師＋練馬師合作 (不論馬匹)", "騎師＋練馬師合作 (綜合)"):
                     from database.models import SystemConfig, RaceEntry, ScoringFactor
                     
@@ -358,25 +377,6 @@ else:
                         engine = ScoringEngine(session)
                         engine.score_race(selected_race_id)
                         st.rerun()
-
-                if selected_factor == "檔位偏差 (官方 Draw Statistics)":
-                    from database.models import SystemConfig
-
-                    race = session.get(Race, selected_race_id)
-                    race_date_str = ""
-                    if race and hasattr(race.race_date, "strftime"):
-                        race_date_str = race.race_date.strftime("%Y/%m/%d")
-                    elif race:
-                        race_date_str = str(race.race_date)[:10].replace("-", "/")
-
-                    config_key = f"draw_stats_{race_date_str}" if race_date_str else ""
-                    config = session.query(SystemConfig).filter_by(key=config_key).first() if config_key else None
-                    has_official = bool(
-                        race
-                        and config
-                        and isinstance(config.value, dict)
-                        and (str(race.race_no) in config.value or race.race_no in config.value)
-                    )
 
                 if selected_factor == "跑法適配分（跑道×場地狀態｜勝出/入圍）":
                     from database.models import RaceEntry, ScoringFactor

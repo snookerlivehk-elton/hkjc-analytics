@@ -458,7 +458,7 @@ class FactorCalculator:
         from scoring_engine.track_conditions import normalize_going
         from scoring_engine.track_profile import load_track_profile
 
-        cfg_default = {"prior_races": 0.0, "w_place": 0.6, "w_win": 0.4}
+        cfg_default = {"prior_races": 12.0, "w_place": 0.6, "w_win": 0.4}
         try:
             cfg = self.session.query(SystemConfig).filter_by(key="style_trkprof_edge_config").first()
             if cfg and isinstance(cfg.value, dict):
@@ -468,11 +468,22 @@ class FactorCalculator:
         except Exception:
             pass
 
-        prior_races = float(cfg_default.get("prior_races") or 12.0)
+        prior_races = cfg_default.get("prior_races")
+        if prior_races is None:
+            prior_races = 12.0
+        prior_races = float(prior_races)
         if prior_races < 0:
             prior_races = 0.0
-        w_place = float(cfg_default.get("w_place") or 0.6)
-        w_win = float(cfg_default.get("w_win") or 0.4)
+
+        w_place = cfg_default.get("w_place")
+        if w_place is None:
+            w_place = 0.6
+        w_place = float(w_place)
+
+        w_win = cfg_default.get("w_win")
+        if w_win is None:
+            w_win = 0.4
+        w_win = float(w_win)
         tw = max(1e-9, (abs(w_place) + abs(w_win)))
         w_place = abs(w_place) / tw
         w_win = abs(w_win) / tw
@@ -643,7 +654,7 @@ class FactorCalculator:
             except Exception:
                 return None
 
-        def _shrink_pct(p: Optional[float]) -> Optional[float]:
+        def _shrink_pct(p: Optional[float], n_eff: float) -> Optional[float]:
             if p is None:
                 return None
             try:
@@ -654,14 +665,14 @@ class FactorCalculator:
                 pv = 0.0
             if pv > 100.0:
                 pv = 100.0
-            n = float(max(0, n_races))
+            n = float(max(0.0, float(n_eff or 0.0)))
             if prior_races > 0:
                 return ((pv * n) + (baseline_pct * prior_races)) / (n + prior_races)
             return pv
 
         def _to_edge_score_pct(p_place: Optional[float], p_win: Optional[float]) -> float:
-            pp = _shrink_pct(p_place)
-            pw = _shrink_pct(p_win)
+            pp = _shrink_pct(p_place, float(max(0, top4_samples or n_races)))
+            pw = _shrink_pct(p_win, float(max(0, winner_samples or n_races)))
             if pp is None and pw is None:
                 return float(baseline_pct)
             if pp is None:
@@ -723,8 +734,8 @@ class FactorCalculator:
             p_win = _pct_lookup(winner_pct, label_guess)
             p_place = _pct_lookup(top4_pct, label_guess)
             edge_pct = _to_edge_score_pct(p_place, p_win)
-            pw = _shrink_pct(p_win)
-            pp = _shrink_pct(p_place)
+            pw = _shrink_pct(p_win, float(max(0, winner_samples or n_races)))
+            pp = _shrink_pct(p_place, float(max(0, top4_samples or n_races)))
             disp = f"{label_guess}｜勝出{round((pw if pw is not None else baseline_pct),1)}%｜入圍Top4{round((pp if pp is not None else baseline_pct),1)}%｜樣本{n_races}｜跑法樣本(勝/入){winner_samples}/{top4_samples}｜採樣{(src_tag or 'N')}｜評分{round(edge_pct,1)}%"
             scores.append(edge_pct)
             displays.append(disp)
