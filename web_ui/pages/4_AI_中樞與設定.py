@@ -122,18 +122,23 @@ try:
         c1, c2 = st.columns([3, 2])
         api_key_input = c1.text_input("API Key（本次使用，可留空）", value="", type="password", placeholder="留空＝使用環境變數或 DB 保存值")
         use_env_first = c2.checkbox("優先使用環境變數", value=True, key="ai_use_env_first")
-        save_db = st.checkbox("將 API Key 儲存到資料庫（不建議）", value=False, key="ai_save_key_db")
-        if save_db:
-            ok_save = _confirm_run(st, "ai_save_key", label="輸入 RUN 以儲存 API Key")
-            btn_save = st.button("💾 儲存 API Key 到資料庫", use_container_width=True, disabled=not ok_save)
-            if btn_save:
-                key_to_save = str(api_key_input or "").strip()
-                if not key_to_save:
-                    st.error("❌ 請先輸入 API Key。")
-                else:
-                    save_ai_api_key(session, key_to_save)
-                    st.success("✅ 已儲存。建議改用 Railway 環境變數以提升安全性。")
-                    st.rerun()
+        allow_db_store = str(os.environ.get("ALLOW_DB_API_KEY_STORE") or "").strip().lower() in ("1", "true", "yes")
+        if allow_db_store:
+            with st.expander("🧨 維護工具：DB 保存 API Key（不建議）", expanded=False):
+                save_db = st.checkbox("將 API Key 儲存到資料庫", value=False, key="ai_save_key_db")
+                if save_db:
+                    ok_save = _confirm_run(st, "ai_save_key", label="輸入 RUN 以儲存 API Key")
+                    btn_save = st.button("💾 儲存 API Key 到資料庫", use_container_width=True, disabled=not ok_save)
+                    if btn_save:
+                        key_to_save = str(api_key_input or "").strip()
+                        if not key_to_save:
+                            st.error("❌ 請先輸入 API Key。")
+                        else:
+                            save_ai_api_key(session, key_to_save)
+                            st.success("✅ 已儲存。建議改用 Railway 環境變數以提升安全性。")
+                            st.rerun()
+        else:
+            st.info("已隱藏「將 API Key 儲存到資料庫」功能（安全考量）。如需臨時啟用，設定環境變數 ALLOW_DB_API_KEY_STORE=1。")
 
     with tab_batch:
         st.markdown("### ⚡ 批次生成 AI 賽事前瞻報告")

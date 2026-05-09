@@ -222,9 +222,327 @@ def cleanup_removed_factor_data(session):
         st.error(f"❌ 清理失敗: {e}")
         return 0, 0, 0
 
-tab_ops, tab_members, tab_hits = st.tabs(["🛠️ 系統操作", "👥 會員組合", "📈 命中統計"])
+tab_monitor, tab_ops, tab_members, tab_hits = st.tabs(["📡 監察面板", "🛠️ 系統操作", "👥 會員組合", "📈 命中統計"])
+
+with tab_monitor:
+    st.subheader("📡 監察面板")
+    st.caption("用途：一眼檢查各資料域最後更新時間、缺口與重算狀態；並集中提供常用更新按鈕（分層：主流程／進階修復／維護工具）。")
+
+    from datetime import date, datetime, time as dtime, timedelta
+    from database.models import Race, RaceEntry, RaceResult, RaceDividend, RaceTrackCondition, HorseHistory, OddsHistory, ScoringFactor, PredictionTop5, SystemConfig, RaceCoRunning
+    from scoring_engine.config_value import unwrap_value
+    from scoring_engine.normalization import venue_label
+
+    def _list_race_dates(session, need: int = 180):
+        take_rows = max(200, int(need) * 20)
+        rows = session.query(Race.race_date).order_by(Race.race_date.desc()).limit(int(take_rows)).all()
+        out = []
+        seen = set()
+        for (dt0,) in rows:
+            if not dt0:
+                continue
+            dd = dt0.date()
+            if dd in seen:
+                continue
+            seen.add(dd)
+            out.append(dd)
+            if len(out) >= int(need):
+                break
+        return out
+
+    def _day_range(d: date):
+        start = datetime.combine(d, dtime.min)
+        end = start + timedelta(days=1)
+        return start, end
+
+    def _max_dt(session, model, col_name: str):
+        try:
+            col = getattr(model, col_name)
+            return session.query(col).order_by(col.desc()).limit(1).scalar()
+        except Exception:
+            return None
+
+    def _syscfg_latest_by_prefix(session, prefix: str):
+        try:
+            row = (
+                session.query(SystemConfig.key, SystemConfig.updated_at, SystemConfig.value)
+                .filter(SystemConfig.key.like(f"{str(prefix)}%"))
+                .order_by(SystemConfig.updated_at.desc())
+                .limit(1)
+                .first()
+            )
+            if not row:
+                return None
+            k, upd, val = row
+            payload, meta = unwrap_value(val)
+            return {"key": str(k), "updated_at": upd, "payload": payload, "meta": meta}
+        except Exception:
+            return None
+
+    session_m = get_session()
+    try:
+        dates = _list_race_dates(session_m, need=180)
+        if not dates:
+            st.info("資料庫未有任何賽日。")
+            st.stop()
+
+        sel_date = st.selectbox("賽日", options=dates, index=0, key="monitor_date")
+        start_dt, end_dt = _day_range(sel_date)
+        date_str = sel_date.strftime("%Y/%m/%d")
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("races.updated_at", str(_max_dt(session_m, Race, "updated_at") or ""))
+        c2.metric("race_entries.updated_at", str(_max_dt(session_m, RaceEntry, "updated_at") or ""))
+        c3.metric("scoring_factors.updated_at", str(_max_dt(session_m, ScoringFactor, "updated_at") or ""))
+        c4.metric("prediction_top5.created_at", str(_max_dt(session_m, PredictionTop5, "created_at") or _max_dt(session_m, PredictionTop5, "race_date") or ""))
+
+        st.markdown("#### 🧾 快照/統計最新狀態")
+        cols = st.columns(3)
+        latest_trk = _syscfg_latest_by_prefix(session_m, "trkprof:")
+        latest_runpos = _syscfg_latest_by_prefix(session_m, "race_runpos:")
+        latest_ai = _syscfg_latest_by_prefix(session_m, "ai_race_report:")
+        cols[0].write("trkprof:*")
+        cols[0].caption((latest_trk or {}).get("key") or "—")
+        cols[0].caption(str((latest_trk or {}).get("updated_at") or ""))
+        cols[1].write("race_runpos:*")
+        cols[1].caption((latest_runpos or {}).get("key") or "—")
+        cols[1].caption(str((latest_runpos or {}).get("updated_at") or ""))
+        cols[2].write("ai_race_report:*")
+        cols[2].caption((latest_ai or {}).get("key") or "—")
+        cols[2].caption(str((latest_ai or {}).get("updated_at") or ""))
+
+        st.markdown("#### 🧩 所選賽日：各場資料完整度")
+        races = (
+            session_m.query(Race)
+            .filter(Race.race_date >= start_dt, Race.race_date < end_dt)
+            .order_by(Race.race_no.asc(), Race.id.asc())
+            .all()
+        )
+        if not races:
+            st.info("該日未有賽事資料（請先抓取排位）。")
+            st.stop()
+
+        rows = []
+        for r in races:
+            rid = int(getattr(r, "id") or 0)
+            rn = int(getattr(r, "race_no") or 0)
+            has_entries = bool(session_m.query(RaceEntry.id).filter(RaceEntry.race_id == rid).limit(1).first())
+            has_scores = bool(
+                session_m.query(RaceEntry.id)
+                .filter(RaceEntry.race_id == rid)
+                .filter(RaceEntry.total_score != None)
+                .limit(1)
+                .first()
+            )
+            has_factors = bool(session_m.query(ScoringFactor.id).join(RaceEntry, RaceEntry.id == ScoringFactor.entry_id).filter(RaceEntry.race_id == rid).limit(1).first())
+            has_results = bool(session_m.query(RaceResult.id).join(RaceEntry, RaceEntry.id == RaceResult.entry_id).filter(RaceEntry.race_id == rid).limit(1).first())
+            has_div = bool(session_m.query(RaceDividend.id).filter(RaceDividend.race_id == rid).limit(1).first())
+            has_tc = bool(session_m.query(RaceTrackCondition.id).filter(RaceTrackCondition.race_id == rid).limit(1).first())
+            has_hh = bool(session_m.query(HorseHistory.id).join(RaceEntry, RaceEntry.horse_id == HorseHistory.horse_id).filter(RaceEntry.race_id == rid).limit(1).first())
+            has_top5 = bool(session_m.query(PredictionTop5.id).filter(PredictionTop5.race_id == rid).limit(1).first())
+
+            runpos_key = f"race_runpos:{date_str}:{rn}"
+            has_runpos = bool(session_m.query(SystemConfig.id).filter_by(key=runpos_key).first())
+            has_cor = bool(session_m.query(RaceCoRunning.id).filter_by(race_id=rid).first())
+
+            rep_key = f"ai_race_report:{date_str}:{rn}"
+            has_ai = bool(session_m.query(SystemConfig.id).filter_by(key=rep_key).first())
+
+            rows.append(
+                {
+                    "RaceNo": rn,
+                    "RaceID": rid,
+                    "地點": venue_label(getattr(r, "venue", ""), track_type=getattr(r, "track_type", None)),
+                    "排位": "✅" if has_entries else "—",
+                    "往績": "✅" if has_hh else "—",
+                    "計分": "✅" if has_scores else "—",
+                    "因子": "✅" if has_factors else "—",
+                    "Top5快照": "✅" if has_top5 else "—",
+                    "賽果": "✅" if has_results else "—",
+                    "派彩": "✅" if has_div else "—",
+                    "場地狀況": "✅" if has_tc else "—",
+                    "runpos": "✅" if has_runpos else "—",
+                    "corunning": "✅" if has_cor else "—",
+                    "AI報告": "✅" if has_ai else "—",
+                }
+            )
+
+        df = pd.DataFrame(rows).sort_values(["RaceNo"])
+        st.dataframe(df, use_container_width=True, hide_index=True)
+
+        st.markdown("#### 🔎 資料內容檢視")
+        race_nos = [int(x) for x in df["RaceNo"].tolist() if int(x or 0) > 0]
+        sel_rn = st.selectbox("選擇場次", options=race_nos, index=0, key="monitor_race_no")
+        rr = next((x for x in races if int(getattr(x, "race_no") or 0) == int(sel_rn)), None)
+        sel_rid = int(getattr(rr, "id") or 0) if rr else 0
+
+        v1, v2 = st.columns(2)
+        with v1.expander("runpos 快照", expanded=False):
+            key = f"race_runpos:{date_str}:{int(sel_rn)}"
+            cfg = session_m.query(SystemConfig).filter_by(key=key).first()
+            payload, meta = unwrap_value(cfg.value) if cfg else (None, {})
+            if not cfg:
+                st.info("未找到 runpos 快照。")
+            else:
+                st.caption(f"key={key}｜updated_at={getattr(cfg,'updated_at',None)}")
+                if meta:
+                    st.caption("｜".join([f"{k}={str(meta.get(k) or '').strip()}" for k in ["source", "schema", "fetched_at", "saved_at"] if str(meta.get(k) or "").strip()]))
+                st.json(payload if isinstance(payload, dict) else {})
+
+        with v2.expander("corunning（賽後走勢評述）", expanded=False):
+            row = session_m.query(RaceCoRunning).filter_by(race_id=int(sel_rid)).first()
+            if not row or not isinstance(row.items, dict) or not row.items:
+                st.info("未找到 corunning 資料。")
+            else:
+                cap = f"race_id={sel_rid}"
+                try:
+                    if getattr(row, "fetched_at", None):
+                        cap += f"｜fetched_at={row.fetched_at.isoformat()}"
+                except Exception:
+                    pass
+                if str(getattr(row, "source", "") or "").strip():
+                    cap += f"｜source={str(getattr(row,'source','') or '').strip()}"
+                meta = row.meta if isinstance(row.meta, dict) else {}
+                if str(meta.get("schema") or "").strip():
+                    cap += f"｜schema={str(meta.get('schema') or '').strip()}"
+                st.caption(cap)
+                tbl = []
+                for k, v in row.items.items():
+                    if not isinstance(v, dict):
+                        continue
+                    try:
+                        hn = int(k)
+                    except Exception:
+                        continue
+                    tbl.append(
+                        {
+                            "馬號": hn,
+                            "馬名": str(v.get("horse_name") or v.get("name") or "").strip(),
+                            "走勢評述": str(v.get("commentary") or v.get("comment") or "").strip(),
+                        }
+                    )
+                tbl.sort(key=lambda x: int(x.get("馬號") or 0))
+                st.dataframe(tbl, use_container_width=True, hide_index=True)
+
+        st.markdown("#### ⚡ 常用更新（集中）")
+        st.caption("主流程建議只用下面幾個按鈕；進階/維護工具收合在下方，避免誤用導致資料不一致。")
+
+        c_confirm, c_btn = st.columns([2, 3])
+        ok = _confirm_run(c_confirm, "oneclick_update_monitor", label="輸入 RUN 以執行一鍵完整更新")
+        if c_btn.button("⚡ 一鍵：抓排位 → 回填馬匹往績 → 重算當日 → 生成Top5快照", use_container_width=True, disabled=not ok, key="monitor_oneclick"):
+            ok1 = trigger_scraper(target_date=date_str)
+            if not ok1:
+                st.error("❌ 抓取排位/即時數據失敗，已中止後續流程。")
+            else:
+                st.success(f"✅ {date_str} 排位/即時數據更新完成。")
+                ok2 = trigger_history_backfill(target_date=date_str, mode="date")
+                if not ok2:
+                    st.error("❌ 回填馬匹往績失敗，已中止後續流程。")
+                else:
+                    st.success(f"✅ {date_str} 馬匹往績回填完成。")
+                    session_rescore = get_session()
+                    try:
+                        races_to_score = (
+                            session_rescore.query(Race)
+                            .filter(Race.race_date >= start_dt)
+                            .filter(Race.race_date < end_dt)
+                            .order_by(Race.race_no.asc(), Race.id.asc())
+                            .all()
+                        )
+                        if not races_to_score:
+                            st.warning("⚠️ 找不到該日賽事資料（請先確認排位已成功入庫）。")
+                        else:
+                            engine = ScoringEngine(session_rescore)
+                            progress_bar = st.progress(0)
+                            status_text = st.empty()
+                            for i, race in enumerate(races_to_score):
+                                status_text.text(f"正在重算：第 {race.race_no} 場...")
+                                engine.score_race(race.id)
+                                progress_bar.progress((i + 1) / len(races_to_score))
+                            st.success(f"✅ 已完成 {date_str} {len(races_to_score)} 場賽事重新計分。")
+                    except Exception as e:
+                        st.error(f"❌ 重算當日賽事失敗: {e}")
+                    finally:
+                        session_rescore.close()
+
+                    ok4 = trigger_predictions_snapshot(date_str)
+                    if ok4:
+                        st.success(f"✅ 已生成 {date_str} Top5 預測快照（包含 factor + preset）。")
+                    else:
+                        st.error("❌ 生成 Top5 預測快照失敗。")
+            st.rerun()
+
+        c1, c2, c3 = st.columns(3)
+        ok2 = _confirm_run(c1, "monitor_fetch_results", label="輸入 RUN")
+        if c1.button("🏁 抓取賽果與派彩", use_container_width=True, disabled=not ok2, key="monitor_fetch_results_btn"):
+            if trigger_race_results_fetch(target_date=date_str):
+                st.success(f"✅ 已完成 {date_str} 賽果與派彩同步！")
+                st.rerun()
+
+        ok3 = _confirm_run(c2, "monitor_snapshot", label="輸入 RUN")
+        if c2.button("🧾 生成 Top5 快照", use_container_width=True, disabled=not ok3, key="monitor_snapshot_btn"):
+            if trigger_predictions_snapshot(date_str):
+                st.success(f"✅ 已生成 {date_str} Top5 預測快照！")
+                st.rerun()
+
+        ok4 = _confirm_run(c3, "monitor_rescore", label="輸入 RUN")
+        if c3.button("🚀 重算該日所有場次", use_container_width=True, disabled=not ok4, key="monitor_rescore_btn"):
+            session_rescore2 = get_session()
+            try:
+                races_to_score2 = (
+                    session_rescore2.query(Race)
+                    .filter(Race.race_date >= start_dt)
+                    .filter(Race.race_date < end_dt)
+                    .order_by(Race.race_no.asc(), Race.id.asc())
+                    .all()
+                )
+                engine = ScoringEngine(session_rescore2)
+                progress_bar = st.progress(0)
+                for i, race in enumerate(races_to_score2):
+                    engine.score_race(race.id)
+                    progress_bar.progress((i + 1) / max(1, len(races_to_score2)))
+                st.success(f"✅ 已重算 {date_str}（races={len(races_to_score2)}）。")
+            finally:
+                session_rescore2.close()
+            st.rerun()
+
+        with st.expander("🧰 進階修復（低頻）", expanded=False):
+            st.caption("只有在 cron/一鍵流程失敗時才需要。")
+            c1, c2 = st.columns(2)
+            ok = _confirm_run(c1, "monitor_scrape", label="輸入 RUN")
+            if c1.button("🔄 只抓取該日賽事（排位/即時）", use_container_width=True, disabled=not ok, key="monitor_scrape_btn"):
+                if trigger_scraper(target_date=date_str):
+                    st.success("✅ 已完成抓取。")
+                    st.rerun()
+            ok = _confirm_run(c2, "monitor_history", label="輸入 RUN")
+            if c2.button("📚 只回填該日馬匹往績", use_container_width=True, disabled=not ok, key="monitor_history_btn"):
+                if trigger_history_backfill(target_date=date_str, mode="date"):
+                    st.success("✅ 已完成回填。")
+                    st.rerun()
+
+        with st.expander("🧨 維護工具（高風險）", expanded=False):
+            st.caption("只在排障/遷移/清理時使用。")
+            c1, c2, c3 = st.columns(3)
+            ok = _confirm_run(c1, "monitor_fixture", label="輸入 RUN")
+            if c1.button("📅 更新賽期表 (本月+下月)", use_container_width=True, disabled=not ok, key="monitor_fixture_btn"):
+                if trigger_fixture_fetch():
+                    st.success("✅ 已更新賽期表。")
+                    st.rerun()
+            ok = _confirm_run(c2, "monitor_speedpro", label="輸入 RUN")
+            if c2.button("⚡ 立即抓取 SpeedPRO（cron 備用）", use_container_width=True, disabled=not ok, key="monitor_speedpro_btn"):
+                if trigger_speedpro_fetch(target_date=date_str, race_nos="", retry_minutes=120, force=True):
+                    st.success("✅ 已觸發 SpeedPRO 抓取。")
+                    st.rerun()
+            ok = _confirm_run(c3, "monitor_cleanup", label="輸入 RUN")
+            if c3.button("🧹 清理 trainer_horse_bond 舊記錄", use_container_width=True, disabled=not ok, key="monitor_cleanup_btn"):
+                deleted_sf, deleted_sw, deleted_cfg = cleanup_removed_factor_data(session_m)
+                st.success(f"✅ 已清理：ScoringFactor={deleted_sf} ScoringWeight={deleted_sw} SystemConfig={deleted_cfg}")
+                st.rerun()
+    finally:
+        session_m.close()
 
 with tab_ops:
+    st.info("已新增「📡 監察面板」集中日常更新操作；本分頁會逐步收合為進階/維護工具。")
     st.subheader("👥 會員白名單")
     session_cfg = get_session()
     try:
