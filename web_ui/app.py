@@ -2255,6 +2255,50 @@ def main():
                     render_dividends(div.dividends, key=f"div_{selected_race_id}")
                 else:
                     st.info("本場尚未有派彩資料。")
+
+                with st.expander("📝 沿途走勢評述（賽後）", expanded=False):
+                    from database.models import SystemConfig
+
+                    date_slash = ""
+                    try:
+                        date_slash = selected_date_input.strftime("%Y/%m/%d")
+                    except Exception:
+                        date_slash = ""
+                    try:
+                        rn = int(st.session_state.get("selected_race_no") or 0)
+                    except Exception:
+                        rn = 0
+
+                    cfg_key = f"race_corunning:{date_slash}:{rn}" if date_slash and rn else ""
+                    cfg = session.query(SystemConfig).filter_by(key=cfg_key).first() if cfg_key else None
+                    items = cfg.value.get("items") if (cfg and isinstance(cfg.value, dict)) else None
+                    if not isinstance(items, dict) or not items:
+                        st.info("未找到走勢評述快照。請先在後台執行「抓取賽果與派彩」（並確保該日已出賽後報告）。")
+                    else:
+                        try:
+                            n_items = len(items)
+                        except Exception:
+                            n_items = 0
+                        updated_at = str(getattr(cfg, "updated_at", "") or "").strip()
+                        st.caption(f"key={cfg_key}｜筆數={n_items}" + (f"｜updated_at={updated_at}" if updated_at else ""))
+
+                        rows = []
+                        for k, v in items.items():
+                            if not isinstance(v, dict):
+                                continue
+                            try:
+                                horse_no = int(k)
+                            except Exception:
+                                continue
+                            rows.append(
+                                {
+                                    "馬號": horse_no,
+                                    "馬名": str(v.get("horse_name") or "").strip(),
+                                    "走勢評述": str(v.get("commentary") or "").strip(),
+                                }
+                            )
+                        rows.sort(key=lambda x: int(x.get("馬號") or 0))
+                        st.dataframe(rows, use_container_width=True, hide_index=True)
     session.close()
 
 
