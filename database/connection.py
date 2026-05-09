@@ -172,6 +172,26 @@ def init_db():
             if sp and (sp.is_active is False) and (float(sp.weight or 0.0) == 0.0):
                 sp.is_active = True
                 sp.weight = 1.2
+
+            upserts = [
+                ("recent_running_style", "近期跑法（近6仗沿途走位）", 0.0, True),
+                ("style_trkprof_edge", "跑法適配分（跑道×場地狀態｜勝出/入圍）", 0.0, True),
+            ]
+            for fn, desc, w0, active0 in upserts:
+                row = session.query(ScoringWeight).filter_by(factor_name=str(fn)).first()
+                if not row:
+                    row = ScoringWeight(
+                        factor_name=str(fn),
+                        description=str(desc),
+                        weight=float(w0),
+                        is_active=bool(active0),
+                    )
+                    session.add(row)
+                else:
+                    if str(desc or "").strip() and (str(row.description or "").strip() != str(desc or "").strip()):
+                        row.description = str(desc)
+                    if active0 and (row.is_active is False):
+                        row.is_active = True
             session.commit()
     except Exception as e:
         print(f"預填權重失敗: {e}")
