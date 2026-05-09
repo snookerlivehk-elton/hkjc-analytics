@@ -679,7 +679,7 @@ else:
                 
                 # 重新命名欄位讓 UI 更清晰
                 score_label = "系統標準化得分 (0-10分)"
-                if selected_factor == "跑法適配分（跑道×場地狀態｜勝出/入圍）":
+                if selected_factor in {"跑法適配分（跑道×場地狀態｜勝出/入圍）", "檔位偏差 (官方 Draw Statistics)"}:
                     score_label = "評分 (0-100%)"
                 factor_df = factor_df.rename(columns={f"{selected_factor}_raw": "原始數據 (分析基礎)", selected_factor: score_label})
                 
@@ -1586,7 +1586,7 @@ else:
                 
         with tab2:
             st.markdown("### 全局因子得分總表")
-            st.markdown(f"包含所有馬匹在 {len(available_factors)} 個條件下的原始計算得分（0-10分）。")
+            st.markdown(f"包含所有馬匹在 {len(available_factors)} 個條件下的原始計算得分（大部分為 0-10 分；部分因子為 0-100%）。")
             
             # 總表按馬號排序
             full_df = df.sort_values(by="馬號").reset_index(drop=True)
