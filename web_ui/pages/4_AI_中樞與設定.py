@@ -140,43 +140,48 @@ try:
             
             c_confirm, c_btn = st.columns([2, 3])
             ok = _confirm_run(c_confirm, "batch_ai", label="輸入 RUN 以生成報告")
-            if c_btn.button("✨ 批次生成該日所有 AI 報告", use_container_width=True, disabled=not ok):
-                from scoring_engine.ai_advisor import run_ai_race_summary
-                
+            if c_btn.button("✨ 批次生成該日所有 AI 報告（排隊執行）", use_container_width=True, disabled=not ok):
+                from scoring_engine.job_queue import enqueue_job
+
                 api_key = env_key or stored_key
                 if not api_key:
                     st.error("❌ 尚未設定 AI API Key，無法生成報告。")
                 else:
                     target_date_str = selected_date.strftime("%Y/%m/%d")
-                    races = session.query(Race).filter(func.date(Race.race_date) == selected_date).order_by(Race.race_no).all()
-                    if not races:
-                        st.warning(f"⚠️ {target_date_str} 沒有賽事資料。")
-                    else:
-                        progress_text = "生成進度"
-                        my_bar = st.progress(0, text=progress_text)
-                        success_count = 0
-                        
-                        for i, r in enumerate(races):
-                            my_bar.progress((i) / len(races), text=f"正在為 第 {r.race_no} 場 閱讀評述並生成報告...")
-                            fg_key = f"speedpro_formguide:{target_date_str}:{r.race_no}"
-                            cfg = session.query(SystemConfig).filter_by(key=fg_key).first()
-                            
-                            if not cfg or not cfg.value:
-                                st.warning(f"第 {r.race_no} 場缺乏 FormGuide 資料，跳過。")
-                                continue
-                                
-                            if f"ai_summary_{r.id}" not in st.session_state:
-                                res = run_ai_race_summary(session, r.id)
-                                if res.get("ok"):
-                                    st.session_state[f"ai_summary_{r.id}"] = res.get("summary")
-                                    success_count += 1
-                                else:
-                                    st.error(f"第 {r.race_no} 場生成失敗: {res.get('reason')} - {res.get('error')}")
-                            else:
-                                success_count += 1
-                                
-                        my_bar.progress(1.0, text="批次生成完成！")
-                        st.success(f"✅ 完成！成功為 {success_count} / {len(races)} 場賽事生成或載入報告。")
+                    job = enqueue_job(session, "ai_batch_generate", {"date": target_date_str})
+                    st.success(f"✅ 已排隊：job={str(job.get('id'))[:10]}…（可在下方查看進度）")
+                    st.session_state["last_ai_batch_job_id"] = str(job.get("id") or "")
+                    st.rerun()
+
+            with st.expander("🧾 批次任務狀態", expanded=True):
+                from scoring_engine.job_queue import get_job, list_recent_jobs
+
+                last_id = str(st.session_state.get("last_ai_batch_job_id") or "").strip()
+                if last_id:
+                    job = get_job(session, last_id)
+                    if isinstance(job, dict):
+                        st.markdown(f"- 最近一次：`{str(job.get('id'))[:10]}…`｜{str(job.get('status') or '-')}")
+                        pr = job.get("progress") if isinstance(job.get("progress"), dict) else {}
+                        try:
+                            total = int(pr.get("total") or 0)
+                            done = int(pr.get("done") or 0)
+                        except Exception:
+                            total, done = 0, 0
+                        if total > 0:
+                            st.progress(min(1.0, max(0.0, float(done) / float(total))), text=f"{done}/{total} {str(pr.get('current') or '')}")
+                        if isinstance(job.get("result"), dict):
+                            st.json(job.get("result"))
+                        if job.get("error"):
+                            st.error(str(job.get("error")))
+                        lg = job.get("log")
+                        if isinstance(lg, list) and lg:
+                            st.code("\n".join([str(x) for x in lg[-60:]]))
+
+                rows = list_recent_jobs(session, limit=10)
+                if rows:
+                    st.markdown("最近 10 個任務：")
+                    for j in rows:
+                        st.markdown(f"- `{str(j.get('id'))[:10]}…`｜{str(j.get('type') or '-')}`｜{str(j.get('status') or '-')}`")
 
             st.markdown("---")
             st.markdown("### 🎯 單場生成 / 補回報告")

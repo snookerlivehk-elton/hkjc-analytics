@@ -33,6 +33,7 @@ from utils.logger import logger
 import asyncio
 import subprocess
 from datetime import datetime
+from datetime import date, time, timedelta
 
 # 設定頁面配置
 st.set_page_config(page_title="HKJC 每場賽事獨立計分排名系統", page_icon="🏇", layout="wide")
@@ -188,6 +189,133 @@ def load_races(session: Session):
     """載入所有可選賽事 (日期由新到舊排序)"""
     return session.query(Race).order_by(Race.race_date.desc(), Race.race_no.asc()).all()
 
+@st.cache_data(ttl=60)
+def _cached_race_dates(limit_days: int = 365):
+    from sqlalchemy import func
+
+    s = get_session()
+    try:
+        rows = (
+            s.query(func.date(Race.race_date))
+            .distinct()
+            .order_by(func.date(Race.race_date).desc())
+            .limit(int(limit_days or 365))
+            .all()
+        )
+        return [r[0] for r in rows if r and r[0]]
+    finally:
+        s.close()
+
+
+@st.cache_data(ttl=60)
+def _cached_races_on_date(date_iso: str):
+    s = get_session()
+    try:
+        d0 = datetime.strptime(str(date_iso), "%Y-%m-%d").date()
+        start = datetime.combine(d0, time.min)
+        end = start + timedelta(days=1)
+        rows = (
+            s.query(Race.id, Race.race_no)
+            .filter(Race.race_date >= start)
+            .filter(Race.race_date < end)
+            .order_by(Race.race_no.asc())
+            .all()
+        )
+        out = []
+        for rid, rno in rows:
+            try:
+                out.append({"id": int(rid), "race_no": int(rno)})
+            except Exception:
+                continue
+        return out
+    finally:
+        s.close()
+
+
+@st.cache_data(ttl=60)
+def _cached_active_scoring_weights():
+    s = get_session()
+    try:
+        rows = (
+            s.query(ScoringWeight.factor_name, ScoringWeight.weight, ScoringWeight.description)
+            .filter(ScoringWeight.is_active == True)
+            .filter(~ScoringWeight.factor_name.in_(DISABLED_FACTORS))
+            .order_by(ScoringWeight.factor_name.asc())
+            .all()
+        )
+        out = []
+        for fn, w, desc in rows:
+            fns = str(fn or "").strip()
+            if not fns:
+                continue
+            out.append({"factor_name": fns, "weight": float(w or 0.0), "description": str(desc or fns)})
+        return out
+    finally:
+        s.close()
+
+
+@st.cache_data(ttl=120)
+def _cached_race_entries_ui(race_id: int):
+    from sqlalchemy.orm import selectinload
+
+    s = get_session()
+    try:
+        entries = (
+            s.query(RaceEntry)
+            .options(selectinload(RaceEntry.horse), selectinload(RaceEntry.jockey), selectinload(RaceEntry.trainer))
+            .filter(RaceEntry.race_id == int(race_id))
+            .all()
+        )
+        out = []
+        for e in entries:
+            out.append(
+                {
+                    "entry_id": int(e.id),
+                    "horse_no": int(e.horse_no or 0),
+                    "horse_name": str(getattr(getattr(e, "horse", None), "name_ch", "") or "").strip() or "未知",
+                    "horse_code": str(getattr(getattr(e, "horse", None), "code", "") or "").strip(),
+                    "jockey": str(getattr(getattr(e, "jockey", None), "name_ch", "") or "").strip(),
+                    "trainer": str(getattr(getattr(e, "trainer", None), "name_ch", "") or "").strip(),
+                    "draw": int(getattr(e, "draw", 0) or 0),
+                    "actual_weight": int(getattr(e, "actual_weight", 0) or 0),
+                    "rating": int(getattr(e, "rating", 0) or 0),
+                }
+            )
+        return out
+    finally:
+        s.close()
+
+
+@st.cache_data(ttl=120)
+def _cached_race_factor_scores(race_id: int, factor_names: tuple):
+    s = get_session()
+    try:
+        entries = s.query(RaceEntry.id).filter(RaceEntry.race_id == int(race_id)).all()
+        entry_ids = [int(x[0]) for x in entries if x and x[0]]
+        if not entry_ids:
+            return {}
+        fnames = [str(x) for x in list(factor_names or []) if str(x).strip()]
+        if not fnames:
+            return {}
+        rows = (
+            s.query(ScoringFactor.entry_id, ScoringFactor.factor_name, ScoringFactor.score)
+            .filter(ScoringFactor.entry_id.in_(entry_ids))
+            .filter(ScoringFactor.factor_name.in_(fnames))
+            .all()
+        )
+        out = {int(eid): {} for eid in entry_ids}
+        for entry_id, factor_name, score in rows:
+            eid = int(entry_id)
+            fn = str(factor_name or "").strip()
+            if not fn:
+                continue
+            if eid not in out:
+                out[eid] = {}
+            out[eid][fn] = float(score or 0.0)
+        return out
+    finally:
+        s.close()
+
 def get_db_status(session: Session):
     """獲取資料庫各表統計數量"""
     from database.models import Race, Horse, Jockey, Trainer, RaceEntry, ScoringFactor
@@ -262,39 +390,34 @@ def _predict_top4_for_race(session: Session, race_id: int, weight_map: dict):
     return _predict_topk_for_race(session, race_id, weight_map, 4)
 
 def load_scoring_data(session: Session, race_id: int, weight_map: dict):
-    entries = session.query(RaceEntry).filter_by(race_id=race_id).all()
+    wkeys = sorted([str(k) for k in (weight_map or {}).keys() if str(k).strip()])
+    entries = _cached_race_entries_ui(int(race_id))
     if not entries:
         return pd.DataFrame()
+    score_map = _cached_race_factor_scores(int(race_id), tuple(wkeys))
 
-    factor_names = list(weight_map.keys())
     data = []
-    for entry in entries:
+    for e in entries:
+        eid = int(e.get("entry_id") or 0)
         row = {
-            "馬號": entry.horse_no,
-            "馬名": entry.horse.name_ch if entry.horse else "未知",
-            "馬匹編號": entry.horse.code if entry.horse else "",
+            "馬號": int(e.get("horse_no") or 0),
+            "馬名": str(e.get("horse_name") or "未知"),
+            "馬匹編號": str(e.get("horse_code") or ""),
             "排名": 0,
-            "騎師": entry.jockey.name_ch if entry.jockey else "",
-            "練馬師": entry.trainer.name_ch if entry.trainer else "",
-            "檔位": entry.draw,
-            "負磅": entry.actual_weight,
-            "評分": entry.rating,
+            "騎師": str(e.get("jockey") or ""),
+            "練馬師": str(e.get("trainer") or ""),
+            "檔位": int(e.get("draw") or 0),
+            "負磅": int(e.get("actual_weight") or 0),
+            "評分": int(e.get("rating") or 0),
         }
 
-        factor_scores = (
-            session.query(ScoringFactor)
-            .filter_by(entry_id=entry.id)
-            .filter(ScoringFactor.factor_name.in_(factor_names))
-            .all()
-        )
-        factor_map = {f.factor_name: float(f.score or 0.0) for f in factor_scores}
+        factor_map = score_map.get(eid) or {}
         total = 0.0
-        wkeys = sorted([str(k) for k in (weight_map or {}).keys() if str(k).strip()])
         for k in wkeys:
-            total += float(factor_map.get(str(k), 0.0)) * float(weight_map.get(k, 0.0) or 0.0)
+            total += float(factor_map.get(k, 0.0)) * float(weight_map.get(k, 0.0) or 0.0)
         row["總分"] = total
         for k, v in factor_map.items():
-            row[k] = round(v, 1)
+            row[k] = round(float(v or 0.0), 1)
         data.append(row)
 
     df = pd.DataFrame(data)
@@ -397,18 +520,10 @@ def main():
     # Sidebar: 賽事選擇
     st.sidebar.header("🔍 賽事選擇")
 
-    races = load_races(session)
-    if not races:
+    available_dates = _cached_race_dates(limit_days=365)
+    if not available_dates:
         st.sidebar.warning("資料庫中尚無賽事數據，請先執行抓取與計分。")
         return
-
-    # 提取所有可用的日期 (去重複並降序排列)
-    # 將 datetime object 轉換為 date 來進行去重，避免因為時間部分不同而導致重複日期
-    available_dates = sorted(list(set(r.race_date.date() if hasattr(r.race_date, 'date') else r.race_date for r in races)), reverse=True)
-    
-    # 將 datetime.date 陣列轉換回 datetime，以相容後面的比較
-    from datetime import datetime
-    available_datetimes = [datetime.combine(d, datetime.min.time()) for d in available_dates]
     
     # 1. 選擇日期 (日曆選擇器 Date Input)
     st.sidebar.markdown("📅 **選擇賽事日期**")
@@ -426,11 +541,9 @@ def main():
         selected_date_input = available_dates[0]
         
     selected_date_str = selected_date_input.strftime('%Y-%m-%d')
-    selected_datetime = datetime.combine(selected_date_input, datetime.min.time())
     
     # 過濾出該日期的所有場次
-    # 比較時只比對 date 部分
-    races_on_date = [r for r in races if (r.race_date.date() if hasattr(r.race_date, 'date') else r.race_date) == selected_date_input]
+    races_on_date = _cached_races_on_date(selected_date_str)
     
     st.sidebar.markdown("🏁 **選擇場次**")
 
@@ -438,8 +551,8 @@ def main():
         st.sidebar.warning("該日期沒有場次資料。")
         return
 
-    race_no_options = [r.race_no for r in races_on_date]
-    race_no_to_id = {r.race_no: r.id for r in races_on_date}
+    race_no_options = [int(r.get("race_no") or 0) for r in races_on_date if int(r.get("race_no") or 0) > 0]
+    race_no_to_id = {int(r.get("race_no")): int(r.get("id")) for r in races_on_date if int(r.get("race_no") or 0) > 0 and int(r.get("id") or 0) > 0}
 
     if "selected_race_no" not in st.session_state or st.session_state.selected_race_no not in race_no_options:
         st.session_state.selected_race_no = race_no_options[0]
@@ -456,13 +569,8 @@ def main():
 
     # Sidebar: 權重動態調整 (可折疊)
     with st.sidebar.expander("⚙️ 權重配置 (動態調整)"):
-        weights = (
-            session.query(ScoringWeight)
-            .filter(ScoringWeight.is_active == True)
-            .filter(~ScoringWeight.factor_name.in_(DISABLED_FACTORS))
-            .all()
-        )
-        base_weight_map = {w.factor_name: float(w.weight) for w in weights}
+        weights_rows = _cached_active_scoring_weights()
+        base_weight_map = {w["factor_name"]: float(w["weight"]) for w in weights_rows}
         if "active_weight_map" not in st.session_state:
             st.session_state["active_weight_map"] = dict(base_weight_map)
 
@@ -506,11 +614,15 @@ def main():
             st.rerun()
 
         updated_weights = {}
-        for w in weights:
-            key = f"weight_{w.factor_name}"
-            default_val = st.session_state.get(key, float(st.session_state["active_weight_map"].get(w.factor_name, w.weight)))
-            updated_weights[w.factor_name] = st.slider(
-                f"{w.description}",
+        for w in weights_rows:
+            fn = str(w.get("factor_name") or "").strip()
+            if not fn:
+                continue
+            desc = str(w.get("description") or fn)
+            key = f"weight_{fn}"
+            default_val = st.session_state.get(key, float(st.session_state["active_weight_map"].get(fn, w.get("weight"))))
+            updated_weights[fn] = st.slider(
+                f"{desc}",
                 0.0,
                 5.0,
                 float(default_val),
