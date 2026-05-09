@@ -64,6 +64,8 @@ def init_db():
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_scoring_factors_entry_factor ON scoring_factors (entry_id, factor_name)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_odds_history_entry_id ON odds_history (entry_id)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_prediction_top5_race_date_no ON prediction_top5 (race_date, race_no)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_prediction_top5_type_key_date ON prediction_top5 (predictor_type, predictor_key, race_date)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_prediction_top5_type_email_date ON prediction_top5 (predictor_type, member_email, race_date)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_system_configs_updated_at ON system_configs (updated_at)"))
     except Exception:
         pass
@@ -202,36 +204,83 @@ def init_db():
         from database.models import Race
         import re
 
+        try:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        """
+                        UPDATE races
+                        SET surface='泥地'
+                        WHERE (surface IS NULL OR surface='')
+                          AND (
+                            track_type LIKE '%全天候%'
+                            OR UPPER(track_type) LIKE '%ALL WEATHER%'
+                            OR UPPER(track_type) LIKE '%A/W%'
+                            OR UPPER(track_type) LIKE '%AW%'
+                            OR track_type LIKE '%泥地%'
+                          )
+                        """
+                    )
+                )
+                conn.execute(
+                    text(
+                        """
+                        UPDATE races
+                        SET surface='草地'
+                        WHERE (surface IS NULL OR surface='')
+                          AND (
+                            track_type LIKE '%草地%'
+                            OR UPPER(track_type) LIKE '%TURF%'
+                          )
+                        """
+                    )
+                )
+                conn.execute(
+                    text(
+                        """
+                        UPDATE races
+                        SET surface=going
+                        WHERE (surface IS NULL OR surface='')
+                          AND (going IN ('草地','泥地'))
+                        """
+                    )
+                )
+                conn.execute(
+                    text(
+                        """
+                        UPDATE races
+                        SET course_type='AWT'
+                        WHERE (course_type IS NULL OR course_type='' OR course_type='U' OR course_type='u')
+                          AND (
+                            track_type LIKE '%全天候%'
+                            OR UPPER(track_type) LIKE '%ALL WEATHER%'
+                            OR UPPER(track_type) LIKE '%A/W%'
+                            OR UPPER(track_type) LIKE '%AW%'
+                            OR track_type LIKE '%泥地%'
+                          )
+                        """
+                    )
+                )
+        except Exception:
+            pass
+
         session2 = Session()
         try:
-            q = session2.query(Race)
+            q = (
+                session2.query(Race)
+                .filter((Race.course_type == None) | (Race.course_type == "") | (Race.course_type == "U") | (Race.course_type == "u"))
+                .filter(Race.track_type != None)
+                .filter(Race.track_type.like("%\"%"))
+                .limit(5000)
+                .all()
+            )
             changed = 0
-            for r in q.all():
+            for r in q:
                 tt = str(getattr(r, "track_type", "") or "")
-                go = str(getattr(r, "going", "") or "")
-
-                if not (getattr(r, "surface", None) and str(getattr(r, "surface") or "").strip()):
-                    if any(x in tt for x in ["全天候", "ALL WEATHER", "A/W", "AW", "泥地"]):
-                        r.surface = "泥地"
-                        changed += 1
-                    elif any(x in tt for x in ["草地", "TURF"]):
-                        r.surface = "草地"
-                        changed += 1
-                    elif go in {"草地", "泥地"}:
-                        r.surface = go
-                        changed += 1
-
-                ct0 = str(getattr(r, "course_type", "") or "").strip()
-                if (not ct0) or ct0.upper() == "U":
-                    if "草地" in tt:
-                        m = re.search(r"\"([A-Z0-9\\+]+)\"", tt)
-                        if m:
-                            r.course_type = str(m.group(1))
-                            changed += 1
-                    elif any(x in tt for x in ["全天候", "ALL WEATHER", "A/W", "AW", "泥地"]):
-                        r.course_type = "AWT"
-                        changed += 1
-
+                m = re.search(r"\"([A-Z0-9\\+]+)\"", tt)
+                if m:
+                    r.course_type = str(m.group(1))
+                    changed += 1
             if changed:
                 session2.commit()
         finally:

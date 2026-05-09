@@ -353,6 +353,7 @@ class FactorCalculator:
         from datetime import datetime
         from sqlalchemy import func
         from database.models import Race, RaceEntry, RaceResult, SystemConfig
+        from scoring_engine.config_value import unwrap_value
 
         cutoff_dt = self._race_cutoff_dt()
 
@@ -409,13 +410,16 @@ class FactorCalculator:
                 date_str = rdt.strftime("%Y/%m/%d")
                 key = f"race_runpos:{date_str}:{int(rno)}"
                 cfg = self.session.query(SystemConfig).filter_by(key=key).first()
-                if not cfg or not isinstance(cfg.value, dict):
+                if not cfg:
+                    continue
+                payload, _ = unwrap_value(cfg.value)
+                if not isinstance(payload, dict):
                     continue
                 runpos = None
-                if isinstance(cfg.value.get("runpos"), dict):
-                    runpos = (cfg.value.get("runpos") or {}).get(str(int(horse_no)))
+                if isinstance(payload.get("runpos"), dict):
+                    runpos = (payload.get("runpos") or {}).get(str(int(horse_no)))
                 else:
-                    runpos = cfg.value.get(str(int(horse_no)))
+                    runpos = payload.get(str(int(horse_no)))
                 runpos = str(runpos or "").strip()
                 if not runpos:
                     continue
@@ -457,14 +461,16 @@ class FactorCalculator:
         from database.models import Race, RaceTrackCondition, SystemConfig
         from scoring_engine.track_conditions import normalize_going
         from scoring_engine.track_profile import load_track_profile, _venue_code
+        from scoring_engine.config_value import unwrap_value
 
         cfg_default = {"prior_races": 12.0, "w_place": 0.6, "w_win": 0.4}
         try:
             cfg = self.session.query(SystemConfig).filter_by(key="style_trkprof_edge_config").first()
-            if cfg and isinstance(cfg.value, dict):
+            payload, _ = unwrap_value(cfg.value) if cfg else (None, {})
+            if isinstance(payload, dict):
                 for k in cfg_default.keys():
-                    if k in cfg.value:
-                        cfg_default[k] = type(cfg_default[k])(cfg.value[k])
+                    if k in payload:
+                        cfg_default[k] = type(cfg_default[k])(payload[k])
         except Exception:
             pass
 
@@ -546,11 +552,12 @@ class FactorCalculator:
             for k, v in rows:
                 if key_pred and (not key_pred(str(k or ""))):
                     continue
-                if not isinstance(v, dict):
+                payload, _ = unwrap_value(v)
+                if not isinstance(payload, dict):
                     continue
                 nr = 0
                 try:
-                    nr = int(v.get("n_races") or 0)
+                    nr = int(payload.get("n_races") or 0)
                 except Exception:
                     nr = 0
                 if nr > 0:
@@ -559,16 +566,16 @@ class FactorCalculator:
                 w_samples = 0
                 t_samples = 0
                 try:
-                    w_samples = int(v.get("winner_style_early_samples") or 0)
+                    w_samples = int(payload.get("winner_style_early_samples") or 0)
                 except Exception:
                     w_samples = 0
                 try:
-                    t_samples = int(v.get("top4_style_early_samples") or 0)
+                    t_samples = int(payload.get("top4_style_early_samples") or 0)
                 except Exception:
                     t_samples = 0
 
-                w_pct = v.get("winner_style_early_pct") or v.get("winner_style_pct") or {}
-                t_pct = v.get("top4_style_early_pct") or v.get("top4_style_pct") or {}
+                w_pct = payload.get("winner_style_early_pct") or payload.get("winner_style_pct") or {}
+                t_pct = payload.get("top4_style_early_pct") or payload.get("top4_style_pct") or {}
                 if isinstance(w_pct, dict) and w_samples > 0:
                     for lab in w_counts.keys():
                         try:

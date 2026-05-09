@@ -5,6 +5,7 @@ from typing import Dict, Any, List, Optional, Tuple
 
 from database.models import Race, RaceEntry, SystemConfig
 from scoring_engine.ai_advisor import load_ai_settings, load_ai_api_key, call_chat_completions
+from scoring_engine.config_value import build_meta, unwrap_value, wrap_value
 
 def _normalize_rule_items(val: Any) -> List[Dict[str, Any]]:
     if not isinstance(val, list):
@@ -35,7 +36,8 @@ def _normalize_rule_items(val: Any) -> List[Dict[str, Any]]:
 
 def get_learned_rule_items(session: Session) -> List[Dict[str, Any]]:
     cfg = session.query(SystemConfig).filter_by(key="ai_learned_rules").first()
-    return _normalize_rule_items(cfg.value if cfg else None)
+    val, _ = unwrap_value(cfg.value) if cfg else (None, {})
+    return _normalize_rule_items(val)
 
 
 def get_learned_rules(session: Session, include_disabled: bool = False) -> List[str]:
@@ -51,7 +53,7 @@ def save_learned_rule_items(session: Session, items: List[Dict[str, Any]]) -> No
         cfg = SystemConfig(key="ai_learned_rules", description="AI 賽後反思學習到的法則")
         session.add(cfg)
     norm = _normalize_rule_items(items)
-    cfg.value = norm[-30:]
+    cfg.value = wrap_value(norm[-30:], build_meta(source="AI_REFLECTION", fetched_at=datetime.utcnow().isoformat(), schema="ai_learned_rules:v1"))
     session.commit()
 
 
@@ -62,7 +64,8 @@ def save_learned_rules(session: Session, new_rules: List[str], source: Optional[
         session.add(cfg)
         existing_items: List[Dict[str, Any]] = []
     else:
-        existing_items = _normalize_rule_items(cfg.value)
+        val0, _ = unwrap_value(cfg.value)
+        existing_items = _normalize_rule_items(val0)
 
     now = datetime.utcnow().isoformat()
     by_rule = {str(x.get("rule") or "").strip(): x for x in existing_items if str(x.get("rule") or "").strip()}
@@ -75,7 +78,7 @@ def save_learned_rules(session: Session, new_rules: List[str], source: Optional[
         by_rule[rr] = {"rule": rr, "enabled": True, "created_at": now, "source": str(source or "").strip() or None}
 
     merged = list(by_rule.values())
-    cfg.value = merged[-30:]
+    cfg.value = wrap_value(merged[-30:], build_meta(source="AI_REFLECTION", fetched_at=datetime.utcnow().isoformat(), schema="ai_learned_rules:v1"))
     session.commit()
 
 
@@ -111,9 +114,12 @@ def _build_corunning_excerpt(
     max_comment_len: int = 180,
 ) -> str:
     cfg = session.query(SystemConfig).filter_by(key=_corunning_key(date_str, int(race_no))).first()
-    if not cfg or not isinstance(cfg.value, dict):
+    if not cfg:
         return ""
-    items = cfg.value.get("items")
+    payload, _ = unwrap_value(cfg.value)
+    if not isinstance(payload, dict):
+        return ""
+    items = payload.get("items")
     if not isinstance(items, dict) or not items:
         return ""
 
@@ -184,7 +190,10 @@ def list_reflection_candidates(
             continue
         rep_key = _report_key(ds, int(r.race_no or 0))
         rep_cfg = session.query(SystemConfig).filter_by(key=rep_key).first()
-        if not rep_cfg or not isinstance(rep_cfg.value, dict):
+        if not rep_cfg:
+            continue
+        rep_val, _ = unwrap_value(rep_cfg.value)
+        if not isinstance(rep_val, dict):
             continue
         if only_unreflected:
             ref_key = f"ai_race_reflection:{ds}:{int(r.race_no or 0)}"
@@ -195,8 +204,8 @@ def list_reflection_candidates(
         if len(act) < 4:
             continue
 
-        top5 = rep_cfg.value.get("top5_horse_nos")
-        elim = rep_cfg.value.get("eliminated_horse_nos")
+        top5 = rep_val.get("top5_horse_nos")
+        elim = rep_val.get("eliminated_horse_nos")
         top5 = top5 if isinstance(top5, list) else []
         elim = elim if isinstance(elim, list) else []
         try:
@@ -276,12 +285,15 @@ def generate_race_reflection(session: Session, race_id: int) -> Dict[str, Any]:
     
     report_key = f"ai_race_report:{date_str}:{race_no}"
     report_cfg = session.query(SystemConfig).filter_by(key=report_key).first()
-    if not report_cfg or not isinstance(report_cfg.value, dict) or "report" not in report_cfg.value:
+    if not report_cfg:
+        return {"ok": False, "reason": "no_pre_race_report"}
+    report_val, _ = unwrap_value(report_cfg.value)
+    if not isinstance(report_val, dict) or "report" not in report_val:
         return {"ok": False, "reason": "no_pre_race_report"}
         
-    pre_race_report = report_cfg.value["report"]
-    pred_top5 = report_cfg.value.get("top5_horse_nos")
-    elim = report_cfg.value.get("eliminated_horse_nos")
+    pre_race_report = report_val["report"]
+    pred_top5 = report_val.get("top5_horse_nos")
+    elim = report_val.get("eliminated_horse_nos")
     pred_top5 = pred_top5 if isinstance(pred_top5, list) else []
     elim = elim if isinstance(elim, list) else []
     focus = []
@@ -310,7 +322,10 @@ def generate_race_reflection(session: Session, race_id: int) -> Dict[str, Any]:
     reflection_key = f"ai_race_reflection:{date_str}:{race_no}"
     ref_cfg = session.query(SystemConfig).filter_by(key=reflection_key).first()
     if ref_cfg:
-        return {"ok": True, "reason": "already_reflected", "reflection": ref_cfg.value.get("reflection"), "learned_rules": ref_cfg.value.get("learned_rules")}
+        ref_val, _ = unwrap_value(ref_cfg.value)
+        if isinstance(ref_val, dict):
+            return {"ok": True, "reason": "already_reflected", "reflection": ref_val.get("reflection"), "learned_rules": ref_val.get("learned_rules")}
+        return {"ok": True, "reason": "already_reflected"}
         
     settings = load_ai_settings(session)
     api_key_info = load_ai_api_key(session)
@@ -356,7 +371,7 @@ def generate_race_reflection(session: Session, race_id: int) -> Dict[str, Any]:
             
             new_ref_cfg = SystemConfig(key=reflection_key, description=f"AI 賽後反思（racedate={date_str} R{race_no}）")
             session.add(new_ref_cfg)
-            new_ref_cfg.value = {
+            payload_ref = {
                 "actual_results": actual_results_str,
                 "reflection": parsed.get("reflection_analysis", ""),
                 "learned_rules": parsed.get("learned_rules", []),
@@ -364,6 +379,21 @@ def generate_race_reflection(session: Session, race_id: int) -> Dict[str, Any]:
                 "corunning_used": bool(corunning_excerpt),
                 "created_at": datetime.utcnow().isoformat()
             }
+            meta = build_meta(
+                source="AI_REFLECTION",
+                fetched_at=datetime.utcnow().isoformat(),
+                schema="ai_race_reflection:v1",
+                extra={
+                    "race_id": int(race_id),
+                    "date": str(date_str),
+                    "race_no": int(race_no),
+                    "sources": {
+                        "system_config_keys": [report_key, _corunning_key(date_str, int(race_no))],
+                        "model_id": str(settings.get("model_id") or ""),
+                    },
+                },
+            )
+            new_ref_cfg.value = wrap_value(payload_ref, meta)
             
             new_rules = parsed.get("learned_rules", [])
             if new_rules:

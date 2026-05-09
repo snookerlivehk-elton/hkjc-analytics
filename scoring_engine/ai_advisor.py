@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from database.models import Race, RaceEntry, RaceResult, ScoringFactor, ScoringWeight, SystemConfig
 from scoring_engine.constants import DISABLED_FACTORS
+from scoring_engine.config_value import build_meta, unwrap_value, wrap_value
 from scoring_engine.weight_tuning import build_topk_training_frame, tune_weights_topk
 
 
@@ -429,8 +430,9 @@ def run_ai_race_summary(
         
     # Get custom prompt from DB or use default
     prompt_cfg = session.query(SystemConfig).filter_by(key="ai_race_summary_prompt").first()
-    if prompt_cfg and isinstance(prompt_cfg.value, dict) and "prompt" in prompt_cfg.value:
-        base_prompt = prompt_cfg.value["prompt"]
+    prompt_payload, _ = unwrap_value(prompt_cfg.value) if prompt_cfg else (None, {})
+    if isinstance(prompt_payload, dict) and "prompt" in prompt_payload:
+        base_prompt = str(prompt_payload.get("prompt") or "")
     else:
         base_prompt = (
             "你是專業香港賽馬分析師。現在我提供這場賽事各匹馬的近期走勢評述（FormGuide），以及系統量化出來的客觀數據（包含檔位、負磅、評分、SpeedPRO能量分、騎練合作分、近期狀態分等）。\n"
@@ -712,7 +714,7 @@ def run_ai_race_summary(
                 report_cfg = SystemConfig(key=report_key, description=f"AI 賽事分析報告（racedate={date_str} R{race_no}）")
                 session.add(report_cfg)
 
-            report_cfg.value = {
+            payload_report = {
                 "report": report_text,
                 "top5_horse_nos": top5,
                 "top5_horse_nos_original": top5_original,
@@ -723,6 +725,23 @@ def run_ai_race_summary(
                 "scenario": (str(scenario_tag or "").strip() or str(going_code_override or "").strip() or None),
                 "going_code_override": (str(going_code_override or "").strip() or None),
             }
+            report_cfg.value = wrap_value(
+                payload_report,
+                build_meta(
+                    source="AI_ADVISOR",
+                    fetched_at=datetime.utcnow().isoformat(),
+                    schema="ai_race_report:v1",
+                    extra={
+                        "race_id": int(race_id),
+                        "date": str(date_str),
+                        "race_no": int(race_no),
+                        "model_id": str(settings.get("model_id") or ""),
+                        "endpoint": str(settings.get("endpoint") or ""),
+                        "save_as_scenario": bool(save_as_scenario),
+                        "report_key": str(report_key),
+                    },
+                ),
+            )
 
             if not save_as_scenario:
                 # Update prediction snapshots so AI predictions appear in member stats and hit stats tables
@@ -761,11 +780,20 @@ def run_ai_race_summary(
         if not report_cfg:
             report_cfg = SystemConfig(key=report_key, description=f"AI 賽事分析報告（racedate={date_str} R{race_no}）")
             session.add(report_cfg)
-        report_cfg.value = {
+        payload_report2 = {
             "report": report_text,
             "created_at": datetime.utcnow().isoformat(),
             "parse_error": str(parsed_res.get("error") or ""),
         }
+        report_cfg.value = wrap_value(
+            payload_report2,
+            build_meta(
+                source="AI_ADVISOR",
+                fetched_at=datetime.utcnow().isoformat(),
+                schema="ai_race_report:v1",
+                extra={"race_id": int(race_id), "date": str(date_str), "race_no": int(race_no), "report_key": str(report_key)},
+            ),
+        )
         session.commit()
         return {"ok": True, "summary": report_text, "reason": "json_parse_failed"}
     else:

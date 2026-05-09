@@ -16,6 +16,7 @@ from database.connection import get_session
 from database.models import SystemConfig, Race
 from web_ui.utils import _confirm_run
 from web_ui.nav import render_admin_nav
+from scoring_engine.config_value import unwrap_value, wrap_value, build_meta
 
 st.set_page_config(page_title="AI 顧問與設定 - HKJC Analytics", page_icon="🤖", layout="wide")
 
@@ -49,8 +50,10 @@ try:
         
         prompt_cfg = session.query(SystemConfig).filter_by(key="ai_race_summary_prompt").first()
         current_summary_prompt = ""
-        if prompt_cfg and isinstance(prompt_cfg.value, dict) and "prompt" in prompt_cfg.value:
-            current_summary_prompt = prompt_cfg.value["prompt"]
+        if prompt_cfg:
+            payload, _meta = unwrap_value(prompt_cfg.value)
+            if isinstance(payload, dict) and "prompt" in payload:
+                current_summary_prompt = str(payload.get("prompt") or "")
         else:
             current_summary_prompt = (
                 "你是專業香港賽馬分析師。現在我提供這場賽事各匹馬的近期走勢評述（FormGuide），以及系統量化出來的客觀數據（包含檔位、負磅、評分、SpeedPRO能量分、騎練合作分、近期狀態分等）。\n"
@@ -91,7 +94,14 @@ try:
                 if not p_cfg:
                     p_cfg = SystemConfig(key="ai_race_summary_prompt", description="AI 賽事前瞻分析 Prompt")
                     session.add(p_cfg)
-                p_cfg.value = {"prompt": summary_prompt}
+                p_cfg.value = wrap_value(
+                    {"prompt": summary_prompt},
+                    build_meta(
+                        source="AI_HUB",
+                        schema="ai_race_summary_prompt:v1",
+                        extra={"endpoint": str(settings.get("endpoint") or ""), "model_id": str(settings.get("model_id") or "")},
+                    ),
+                )
                 session.commit()
                 
                 st.success("✅ 已儲存 LLM 設定與分析 Prompt。")
@@ -130,9 +140,19 @@ try:
         st.caption("一次過為選定日期所有場次生成 AI 賽事前瞻，稍後於「獨立條件分析」頁面即可極速查看，無需逐場等待。")
         
         # Date selection
-        from sqlalchemy import func
-        dates_q = session.query(func.date(Race.race_date)).distinct().order_by(func.date(Race.race_date).desc()).all()
-        available_dates = [d[0] for d in dates_q if d and d[0]]
+        drows = session.query(Race.race_date).order_by(Race.race_date.desc()).limit(5000).all()
+        available_dates = []
+        seen = set()
+        for (dt,) in drows:
+            if not dt:
+                continue
+            dd = dt.date()
+            if dd in seen:
+                continue
+            seen.add(dd)
+            available_dates.append(dd)
+            if len(available_dates) >= 365:
+                break
         if not available_dates:
             st.warning("資料庫中無任何賽事日期。")
         else:
@@ -215,10 +235,11 @@ try:
                     has_report = bool(session.query(SystemConfig.id).filter_by(key=report_key).first())
                     fg_key = f"speedpro_formguide:{target_date_str}:{int(rr.race_no)}"
                     fg_cfg = session.query(SystemConfig).filter_by(key=fg_key).first()
-                    has_fg = bool(fg_cfg and isinstance(fg_cfg.value, dict) and fg_cfg.value)
+                    fg_payload, _ = unwrap_value(fg_cfg.value) if fg_cfg else (None, {})
+                    has_fg = bool(isinstance(fg_payload, dict) and fg_payload)
                     fg_has_comments = False
-                    if has_fg and isinstance(fg_cfg.value, dict):
-                        for _, vv in fg_cfg.value.items():
+                    if has_fg and isinstance(fg_payload, dict):
+                        for _, vv in fg_payload.items():
                             if isinstance(vv, dict) and (("intro_comment" in vv) or ("trial_comment" in vv)):
                                 fg_has_comments = True
                                 break
@@ -312,10 +333,19 @@ try:
                     if scen_rows:
                         with st.expander("查看本場已生成的備用情境報告", expanded=False):
                             for i, row in enumerate(sorted(scen_rows, key=lambda x: str(x.key or ""))):
-                                v = row.value if isinstance(row.value, dict) else {}
+                                v, vmeta = unwrap_value(row.value)
+                                v = v if isinstance(v, dict) else {}
                                 tag = str(v.get("scenario") or "").strip() or str(row.key).split(":")[-1]
                                 st.markdown(f"#### 情境：{tag}")
                                 st.markdown(str(v.get("report") or ""))
+                                if isinstance(vmeta, dict) and vmeta:
+                                    cap = []
+                                    for kk in ["source", "schema", "fetched_at", "saved_at"]:
+                                        vv = str(vmeta.get(kk) or "").strip()
+                                        if vv:
+                                            cap.append(f"{kk}={vv}")
+                                    if cap:
+                                        st.caption("｜".join(cap))
                                 with st.expander("📋 點擊顯示可複製的原始文字", expanded=False):
                                     st.code(str(v.get("report") or ""), language="markdown")
 
@@ -383,7 +413,8 @@ try:
 
             missing_cnt = 0
             for r in reports:
-                v = r.value if isinstance(r.value, dict) else {}
+                v, _ = unwrap_value(r.value)
+                v = v if isinstance(v, dict) else {}
                 if not isinstance(v, dict):
                     continue
                 if "report" not in v:
@@ -407,9 +438,10 @@ try:
                 filled_elim = 0
                 snap_upd = 0
                 for r in reports:
-                    if not isinstance(r.value, dict) or "report" not in r.value:
+                    payload0, meta0 = unwrap_value(r.value)
+                    if not isinstance(payload0, dict) or "report" not in payload0:
                         continue
-                    val = r.value
+                    val = dict(payload0)
                     has_top5 = isinstance(val.get("top5_horse_nos"), list)
                     has_elim = isinstance(val.get("eliminated_horse_nos"), list)
                     report_text = str(val.get("report") or "")
@@ -426,7 +458,14 @@ try:
                             elim = e2
                             val["eliminated_horse_nos"] = elim
                             filled_elim += 1
-                        r.value = val
+                        m2 = dict(meta0 or {})
+                        m2["saved_at"] = datetime.utcnow().isoformat()
+                        if "schema" not in m2:
+                            m2["schema"] = "ai_race_report:v1"
+                        if "source" not in m2:
+                            m2["source"] = "AI_HUB"
+                        m2["updated_reason"] = "fill_struct_fields"
+                        r.value = wrap_value(val, m2)
                         updated += 1
 
                     if not has_top5 and not has_elim and (not top5 and not elim):
@@ -472,9 +511,12 @@ try:
                     race_no = parts[2]
                     
                     created_at = ""
-                    if isinstance(r.value, dict) and "created_at" in r.value:
+                    payload, meta = unwrap_value(r.value)
+                    payload = payload if isinstance(payload, dict) else {}
+                    meta = meta if isinstance(meta, dict) else {}
+                    if "created_at" in payload:
                         try:
-                            dt = datetime.fromisoformat(r.value["created_at"])
+                            dt = datetime.fromisoformat(payload["created_at"])
                             created_at = dt.strftime("%Y/%m/%d %H:%M:%S")
                         except:
                             pass
@@ -484,7 +526,8 @@ try:
                         "RaceNo": int(race_no),
                         "Key": r.key,
                         "Created": created_at,
-                        "Value": r.value
+                        "Payload": payload,
+                        "Meta": meta,
                     })
                     
             if data:
@@ -505,7 +548,16 @@ try:
                 
                 for idx, row in df.iterrows():
                     with st.expander(f"📅 {row['Date']} 第 {row['RaceNo']} 場 (建立於: {row['Created']})", expanded=False):
-                        val = row["Value"]
+                        val = row["Payload"] if isinstance(row.get("Payload"), dict) else {}
+                        meta = row["Meta"] if isinstance(row.get("Meta"), dict) else {}
+                        if meta:
+                            cap = []
+                            for kk in ["source", "schema", "fetched_at", "saved_at"]:
+                                vv = str(meta.get(kk) or "").strip()
+                                if vv:
+                                    cap.append(f"{kk}={vv}")
+                            if cap:
+                                st.caption("｜".join(cap))
                         if isinstance(val, dict) and "report" in val:
                             report_text = str(val.get("report") or "")
                             if not report_text.lstrip().startswith("# J18.HK AI 賽事前瞻分析"):
@@ -567,8 +619,9 @@ try:
                             with st.expander("🔍 檢視原始 FormGuide 數據", expanded=False):
                                 fg_key = f"speedpro_formguide:{row['Date']}:{int(row['RaceNo'])}"
                                 fg_cfg = session.query(SystemConfig).filter_by(key=fg_key).first()
-                                if fg_cfg and fg_cfg.value:
-                                    st.code(json.dumps(fg_cfg.value, ensure_ascii=False, indent=2), language="json")
+                                fg_payload, _ = unwrap_value(fg_cfg.value) if fg_cfg else (None, {})
+                                if fg_payload:
+                                    st.code(json.dumps(fg_payload, ensure_ascii=False, indent=2), language="json")
                                 else:
                                     st.info("找不到此場次的 FormGuide 暫存資料。")
 
@@ -668,15 +721,19 @@ try:
         st.markdown("### ⚡ 批次反思（自動挑選最失準場次）")
         st.caption("省資源策略：只挑選同一賽日中最失準的 1～3 場做反思，提升法則品質並避免每場都耗費 AI。")
 
-        from sqlalchemy import func
-        dates_q = session.query(func.date(Race.race_date)).distinct().order_by(func.date(Race.race_date).desc()).limit(180).all()
+        drows = session.query(Race.race_date).order_by(Race.race_date.desc()).limit(5000).all()
         available_dates = []
-        for d in dates_q:
-            if d and d[0]:
-                try:
-                    available_dates.append(d[0].strftime("%Y/%m/%d"))
-                except Exception:
-                    pass
+        seen = set()
+        for (dt,) in drows:
+            if not dt:
+                continue
+            ds = dt.date().strftime("%Y/%m/%d")
+            if ds in seen:
+                continue
+            seen.add(ds)
+            available_dates.append(ds)
+            if len(available_dates) >= 180:
+                break
         if available_dates:
             sel_date = st.selectbox("選擇賽日", options=available_dates, index=0, key="batch_reflect_date")
             top_n = st.slider("最多反思幾場（挑最失準）", min_value=1, max_value=5, value=3, step=1, key="batch_reflect_topn")
@@ -729,9 +786,18 @@ try:
         else:
             sel_key = st.selectbox("選擇反思報告", options=list(ref_opts.keys()), format_func=lambda x: ref_opts[x], key="reflection_view_key")
             cfg = session.query(SystemConfig).filter_by(key=str(sel_key)).first()
-            val = cfg.value if (cfg and isinstance(cfg.value, dict)) else {}
+            payload, meta = unwrap_value(cfg.value) if cfg else ({}, {})
+            val = payload if isinstance(payload, dict) else {}
             created_at = str(val.get("created_at") or "").strip()
-            st.caption(f"key={sel_key}" + (f"｜created_at={created_at}" if created_at else ""))
+            cap = f"key={sel_key}"
+            if created_at:
+                cap += f"｜created_at={created_at}"
+            if isinstance(meta, dict) and meta:
+                for kk in ["source", "schema", "fetched_at", "saved_at"]:
+                    vv = str(meta.get(kk) or "").strip()
+                    if vv:
+                        cap += f"｜{kk}={vv}"
+            st.caption(cap)
             actual = str(val.get("actual_results") or "").strip()
             reflection = str(val.get("reflection") or "").strip()
             rules = val.get("learned_rules") if isinstance(val.get("learned_rules"), list) else []
@@ -830,10 +896,19 @@ try:
 
         from scoring_engine.track_profile import compute_track_profiles
         idx_cfg = session.query(SystemConfig).filter_by(key="trkprof_index").first()
-        if idx_cfg and isinstance(idx_cfg.value, dict):
+        idx_payload, idx_meta = unwrap_value(idx_cfg.value) if idx_cfg else (None, {})
+        if isinstance(idx_payload, dict):
             st.info(
-                f"最近更新：{str(idx_cfg.value.get('updated_at') or '')}｜已掃描賽事：{int(idx_cfg.value.get('seen_races') or 0)}｜分組：{len(idx_cfg.value.get('items') or [])}"
+                f"最近更新：{str(idx_payload.get('updated_at') or '')}｜已掃描賽事：{int(idx_payload.get('seen_races') or 0)}｜分組：{len(idx_payload.get('items') or [])}"
             )
+            if isinstance(idx_meta, dict) and idx_meta:
+                cap = []
+                for kk in ["source", "schema", "fetched_at", "saved_at"]:
+                    vv = str(idx_meta.get(kk) or "").strip()
+                    if vv:
+                        cap.append(f"{kk}={vv}")
+                if cap:
+                    st.caption("｜".join(cap))
         else:
             st.warning("尚未建立跑道/場地統計。請先按下方按鈕計算一次。")
 
@@ -884,8 +959,9 @@ try:
             )
         idx_cfg = session.query(SystemConfig).filter_by(key="trkprof_index").first()
         items = []
-        if idx_cfg and isinstance(idx_cfg.value, dict):
-            items = idx_cfg.value.get("items") if isinstance(idx_cfg.value.get("items"), list) else []
+        idx_payload, _ = unwrap_value(idx_cfg.value) if idx_cfg else (None, {})
+        if isinstance(idx_payload, dict):
+            items = idx_payload.get("items") if isinstance(idx_payload.get("items"), list) else []
         keys = [str(x.get("key") or "") for x in items if isinstance(x, dict) and str(x.get("key") or "")]
         if not keys:
             st.info("尚無可查詢的分組。請先計算。")
@@ -930,9 +1006,18 @@ try:
 
             sel_key = st.selectbox("選擇分組", options=keys, format_func=_fmt_trkprof_key, index=0, key="trkprof_sel_key")
             cfg = session.query(SystemConfig).filter_by(key=str(sel_key)).first()
-            if cfg and isinstance(cfg.value, dict):
-                v = cfg.value
+            payload, meta = unwrap_value(cfg.value) if cfg else (None, {})
+            if isinstance(payload, dict):
+                v = payload
                 st.success(_fmt_trkprof_key(str(sel_key)))
+                if isinstance(meta, dict) and meta:
+                    cap = []
+                    for kk in ["source", "schema", "fetched_at", "saved_at"]:
+                        vv = str(meta.get(kk) or "").strip()
+                        if vv:
+                            cap.append(f"{kk}={vv}")
+                    if cap:
+                        st.caption("｜".join(cap))
                 c1, c2 = st.columns(2)
                 c1.markdown("**勝出馬跑法分布**")
                 c1.dataframe(pd.DataFrame([v.get("winner_style_composite_pct") or v.get("winner_style_pct") or {}]), use_container_width=True, hide_index=True)
@@ -1048,8 +1133,9 @@ try:
 
         idx_cfg = session.query(SystemConfig).filter_by(key="trkprof_index").first()
         items = []
-        if idx_cfg and isinstance(idx_cfg.value, dict):
-            items = idx_cfg.value.get("items") if isinstance(idx_cfg.value.get("items"), list) else []
+        idx_payload, _ = unwrap_value(idx_cfg.value) if idx_cfg else (None, {})
+        if isinstance(idx_payload, dict):
+            items = idx_payload.get("items") if isinstance(idx_payload.get("items"), list) else []
         keys = [str(x.get("key") or "") for x in items if isinstance(x, dict) and str(x.get("key") or "").startswith("trkprof:")]
         if not keys:
             st.info("尚無跑道/場地分組索引。請先到上方「📊 跑道 / 場地狀態統計」計算一次。")

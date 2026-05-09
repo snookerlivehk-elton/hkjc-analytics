@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from database.models import Race, RaceEntry, RaceResult, RaceTrackCondition, SystemConfig, RaceDividend
 from scoring_engine.track_conditions import normalize_going
+from scoring_engine.config_value import build_meta, unwrap_value, wrap_value
 
 COURSE_TIME_CFG_KEY = "course_time_reference:v1"
 
@@ -110,9 +111,12 @@ def _safe_mad(vals: List[float], med: float) -> Optional[float]:
 def _load_runpos_snapshot(session: Session, date_str: str, race_no: int) -> Dict[str, str]:
     key = f"race_runpos:{date_str}:{int(race_no)}"
     cfg = session.query(SystemConfig).filter_by(key=key).first()
-    if not cfg or not isinstance(cfg.value, dict):
+    if not cfg:
         return {}
-    runpos = cfg.value.get("runpos")
+    payload, _ = unwrap_value(cfg.value)
+    if not isinstance(payload, dict):
+        return {}
+    runpos = payload.get("runpos")
     if not isinstance(runpos, dict):
         return {}
     out = {}
@@ -184,9 +188,15 @@ def _race_class_label_for_course_time(race_class: str) -> Optional[str]:
 
 def _load_course_time_ref(session: Session) -> Optional[Dict[str, Any]]:
     cfg = session.query(SystemConfig).filter_by(key=COURSE_TIME_CFG_KEY).first()
-    if not cfg or not isinstance(cfg.value, dict):
+    if not cfg:
         return None
-    return cfg.value
+    payload, meta = unwrap_value(cfg.value)
+    if not isinstance(payload, dict):
+        return None
+    out = dict(payload)
+    if isinstance(meta, dict) and meta:
+        out["_meta"] = dict(meta)
+    return out
 
 
 def _lookup_ref_first_split(course_time_ref: Optional[Dict[str, Any]], venue: str, surface: str, distance: Optional[int], race_class: str) -> Optional[float]:
@@ -500,14 +510,21 @@ def compute_track_profiles(
         if not cfg:
             cfg = SystemConfig(key=key, description="跑道/場地狀態統計（跑法分布＋賠率）")
             session.add(cfg)
-        cfg.value = val
+        m = build_meta(
+            source="TRACK_PROFILE",
+            fetched_at=datetime.utcnow().isoformat(),
+            schema="trkprof:v1",
+            extra={"bucket_key": key, "n_races": int(val.get("n_races") or 0)},
+        )
+        cfg.value = wrap_value(val, m)
         index.append({"key": key, "n_races": val["n_races"], "updated_at": val["updated_at"]})
 
     idx_cfg = session.query(SystemConfig).filter_by(key="trkprof_index").first()
     if not idx_cfg:
         idx_cfg = SystemConfig(key="trkprof_index", description="跑道/場地狀態統計索引")
         session.add(idx_cfg)
-    idx_cfg.value = {"updated_at": datetime.utcnow().isoformat(), "seen_races": int(seen_races), "items": index}
+    idx_payload = {"updated_at": datetime.utcnow().isoformat(), "seen_races": int(seen_races), "items": index}
+    idx_cfg.value = wrap_value(idx_payload, build_meta(source="TRACK_PROFILE", fetched_at=datetime.utcnow().isoformat(), schema="trkprof_index:v1"))
     session.commit()
 
     return {"ok": True, "groups": len(agg), "seen_races": int(seen_races), "index": index}
@@ -518,8 +535,13 @@ def load_track_profile(
 ) -> Optional[Dict[str, Any]]:
     key = _trkprof_key(_venue_code(venue), str(going_code or "").strip(), str(course_type or "").strip() or "U", _dist_bucket(distance))
     cfg = session.query(SystemConfig).filter_by(key=key).first()
-    if not cfg or not isinstance(cfg.value, dict):
+    if not cfg:
         return None
-    val = dict(cfg.value)
+    payload, meta = unwrap_value(cfg.value)
+    if not isinstance(payload, dict):
+        return None
+    val = dict(payload)
     val["key"] = key
+    if meta:
+        val["_meta"] = meta
     return val

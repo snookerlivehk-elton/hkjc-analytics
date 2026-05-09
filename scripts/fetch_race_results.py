@@ -15,6 +15,7 @@ from data_scraper.corunning import CoRunningScraper
 from scoring_engine.member_stats import update_all_members_preset_stats_for_race_date
 from scoring_engine.prediction_snapshots import finalize_prediction_top5_hits_for_race_date
 from scoring_engine.track_conditions import normalize_going
+from scoring_engine.config_value import build_meta, unwrap_value, wrap_value
 
 
 def parse_finish_time_to_seconds(s: str):
@@ -140,13 +141,21 @@ def main():
             if not cfg:
                 cfg = SystemConfig(key=key, description="賽果沿途走位（running_position）快照")
                 session.add(cfg)
-            cfg.value = {"race_id": int(race.id), "race_date": target_date, "race_no": int(race.race_no), "runpos": runpos_by_horse_no}
+            payload_runpos = {"race_id": int(race.id), "race_date": target_date, "race_no": int(race.race_no), "runpos": runpos_by_horse_no}
+            m = build_meta(
+                source="HKJC_LOCALRESULTS",
+                fetched_at=datetime.utcnow().isoformat(),
+                url=f"https://racing.hkjc.com/zh-hk/local/information/localresults?racedate={target_date}&Racecourse={racecourse}&RaceNo={int(race.race_no)}",
+                schema="race_runpos:v1",
+            )
+            cfg.value = wrap_value(payload_runpos, m)
 
         try:
             date_yyyymmdd = race_date_dt.strftime("%Y%m%d")
             key2 = f"race_corunning:{target_date}:{int(race.race_no)}"
             cfg2 = session.query(SystemConfig).filter_by(key=key2).first()
-            has_items = bool(cfg2 and isinstance(cfg2.value, dict) and isinstance(cfg2.value.get("items"), dict) and cfg2.value.get("items"))
+            val2, _ = unwrap_value(cfg2.value) if cfg2 else (None, {})
+            has_items = bool(cfg2 and isinstance(val2, dict) and isinstance(val2.get("items"), dict) and val2.get("items"))
             force = str(os.environ.get("FORCE_CORUNNING") or "").strip().lower() in ("1", "true", "yes")
             if (not has_items) or force:
                 res2 = corunning.scrape_single_race(date_yyyymmdd=date_yyyymmdd, race_no=int(race.race_no))
@@ -156,13 +165,20 @@ def main():
                     if not cfg2:
                         cfg2 = SystemConfig(key=key2, description="賽後沿途走勢評述（corunning）快照")
                         session.add(cfg2)
-                    cfg2.value = {
+                    payload_cor = {
                         "race_id": int(race.id),
                         "race_date": target_date,
                         "race_no": int(race.race_no),
                         "date_yyyymmdd": date_yyyymmdd,
                         "items": by_no,
                     }
+                    m2 = build_meta(
+                        source="HKJC_CORUNNING",
+                        fetched_at=datetime.utcnow().isoformat(),
+                        url=f"https://racing.hkjc.com/zh-hk/local/information/corunning?date={date_yyyymmdd}&raceno={int(race.race_no)}",
+                        schema="race_corunning:v1",
+                    )
+                    cfg2.value = wrap_value(payload_cor, m2)
         except Exception as e:
             print(f"[警告] 走勢評述抓取失敗：R{int(race.race_no)} {e}")
 

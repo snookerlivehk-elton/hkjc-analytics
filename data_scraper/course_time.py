@@ -9,6 +9,7 @@ import requests
 from sqlalchemy.orm import Session
 
 from database.models import SystemConfig
+from scoring_engine.config_value import build_meta, wrap_value
 
 
 COURSE_TIME_URL = "https://racing.hkjc.com/zh-hk/local/page/racing-course-time"
@@ -299,6 +300,19 @@ class CourseTimeScraper:
         if not cfg:
             cfg = SystemConfig(key=COURSE_TIME_CFG_KEY, description="跑道標準時間/參考分段時間（HKJC racing-course-time）")
             db_session.add(cfg)
-        cfg.value = json.loads(json.dumps(payload, ensure_ascii=False))
+        payload_clean = json.loads(json.dumps(payload, ensure_ascii=False))
+        cfg.value = wrap_value(
+            payload_clean,
+            build_meta(
+                source="COURSE_TIME",
+                fetched_at=str(payload_clean.get("fetched_at") or "").strip() or None,
+                url=COURSE_TIME_URL,
+                schema="course_time_reference:v1",
+                extra={
+                    "standard_update_at": str(payload_clean.get("standard_update_at") or "").strip() or None,
+                    "sectional_update_at": str(payload_clean.get("sectional_update_at") or "").strip() or None,
+                },
+            ),
+        )
         db_session.commit()
         return {"ok": True, "key": COURSE_TIME_CFG_KEY, "standard_tracks": len(payload.get("standard_times") or {}), "sectional_tracks": len(payload.get("reference_sectionals") or {})}

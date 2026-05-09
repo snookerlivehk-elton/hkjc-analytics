@@ -5,6 +5,7 @@ from typing import Dict, Any, List
 
 from database.models import SystemConfig, Race, RaceEntry, RaceResult
 from scoring_engine.member_stats import HIT_METRICS, _actual_topk_for_race, _calc_hits
+from scoring_engine.config_value import build_meta, unwrap_value, wrap_value
 
 def _try_parse_date(s: str):
     t = str(s or "").strip()
@@ -44,7 +45,7 @@ def calculate_ai_hit_stats(session: Session) -> Dict[str, Any]:
     }
     
     for r in reports:
-        val = r.value
+        val, _ = unwrap_value(r.value)
         if not isinstance(val, dict):
             continue
             
@@ -143,10 +144,8 @@ def calculate_ai_hit_stats(session: Session) -> Dict[str, Any]:
         cfg = SystemConfig(key="ai_overall_stats", description="AI 整體命中與淘汰統計")
         session.add(cfg)
     
-    cfg.value = {
-        "stats": stats,
-        "updated_at": datetime.utcnow().isoformat()
-    }
+    payload_out = {"stats": stats, "updated_at": datetime.utcnow().isoformat()}
+    cfg.value = wrap_value(payload_out, build_meta(source="AI_STATS", schema="ai_overall_stats:v1"))
     session.commit()
     
     return stats

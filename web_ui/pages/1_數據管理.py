@@ -566,7 +566,6 @@ with tab_ops:
             from scoring_engine.calibration import fit_winprob_temperature, load_winprob_temperature, save_winprob_temperature
             from database.models import Race, RaceEntry, RaceResult
             from scoring_engine.core import ScoringEngine
-            from sqlalchemy import func
             from datetime import date, timedelta
 
             current_t = load_winprob_temperature(session_cal)
@@ -576,16 +575,26 @@ with tab_ops:
                 st.info("目前未設定 temperature（預設 1.0）。")
 
             drows = (
-                session_cal.query(func.date(Race.race_date))
+                session_cal.query(Race.race_date)
                 .join(RaceEntry, RaceEntry.race_id == Race.id)
                 .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
                 .filter(RaceResult.rank != None)
-                .distinct()
-                .order_by(func.date(Race.race_date).desc())
-                .limit(365)
+                .order_by(Race.race_date.desc())
+                .limit(5000)
                 .all()
             )
-            available_dates = [r[0] for r in drows if r and r[0]]
+            available_dates = []
+            seen = set()
+            for (dt,) in drows:
+                if not dt:
+                    continue
+                dd = dt.date()
+                if dd in seen:
+                    continue
+                seen.add(dd)
+                available_dates.append(dd)
+                if len(available_dates) >= 365:
+                    break
             if not available_dates:
                 st.info("目前未有任何已結算賽果可供校準。")
             else:
@@ -1028,8 +1037,7 @@ with tab_hits:
 
     with sub_factor:
         st.subheader("📈 獨立條件命中率統計")
-        from datetime import date, timedelta
-        from sqlalchemy import func
+        from datetime import date, datetime, time as dtime, timedelta
         from database.models import PredictionTop5, RaceResult, RaceEntry, ScoringWeight
         from scoring_engine.constants import DISABLED_FACTORS
 
@@ -1046,14 +1054,24 @@ with tab_hits:
             factor_names = list(factor_desc.keys())
 
             drows = (
-                session_hit.query(func.date(PredictionTop5.race_date))
+                session_hit.query(PredictionTop5.race_date)
                 .filter(PredictionTop5.predictor_type == "factor")
-                .distinct()
-                .order_by(func.date(PredictionTop5.race_date).desc())
-                .limit(90)
+                .order_by(PredictionTop5.race_date.desc())
+                .limit(5000)
                 .all()
             )
-            available_dates = [r[0] for r in drows if r and r[0]]
+            available_dates = []
+            seen = set()
+            for (dt,) in drows:
+                if not dt:
+                    continue
+                dd = dt.date()
+                if dd in seen:
+                    continue
+                seen.add(dd)
+                available_dates.append(dd)
+                if len(available_dates) >= 90:
+                    break
             end_default = available_dates[0] if available_dates else date.today()
             start_default = (
                 max(end_default - timedelta(days=30), min(available_dates)) if available_dates else (end_default - timedelta(days=30))
@@ -1067,6 +1085,8 @@ with tab_hits:
 
             preds = []
             if available_dates and factor_names:
+                start_dt = datetime.combine(d1, dtime.min)
+                end_dt = datetime.combine(d2, dtime.min) + timedelta(days=1)
                 preds = (
                     session_hit.query(
                         PredictionTop5.race_id,
@@ -1076,8 +1096,8 @@ with tab_hits:
                     )
                     .filter(PredictionTop5.predictor_type == "factor")
                     .filter(PredictionTop5.predictor_key.in_(factor_names))
-                    .filter(func.date(PredictionTop5.race_date) >= d1.isoformat())
-                    .filter(func.date(PredictionTop5.race_date) <= d2.isoformat())
+                    .filter(PredictionTop5.race_date >= start_dt)
+                    .filter(PredictionTop5.race_date < end_dt)
                     .all()
                 )
 
@@ -1561,21 +1581,30 @@ with tab_hits:
 
     with sub_preset:
         st.subheader("👥 會員儲存組合命中率統計")
-        from datetime import date, timedelta
-        from sqlalchemy import func
+        from datetime import date, datetime, time as dtime, timedelta
         from database.models import PredictionTop5
 
         session_p = get_session()
         try:
             drows = (
-                session_p.query(func.date(PredictionTop5.race_date))
+                session_p.query(PredictionTop5.race_date)
                 .filter(PredictionTop5.predictor_type == "preset")
-                .distinct()
-                .order_by(func.date(PredictionTop5.race_date).desc())
-                .limit(90)
+                .order_by(PredictionTop5.race_date.desc())
+                .limit(5000)
                 .all()
             )
-            available_dates = [r[0] for r in drows if r and r[0]]
+            available_dates = []
+            seen = set()
+            for (dt,) in drows:
+                if not dt:
+                    continue
+                dd = dt.date()
+                if dd in seen:
+                    continue
+                seen.add(dd)
+                available_dates.append(dd)
+                if len(available_dates) >= 90:
+                    break
             if not available_dates:
                 st.info("目前未有任何會員組合 Top5 快照。請先抓取排位並生成預測快照。")
             else:
@@ -1585,6 +1614,8 @@ with tab_hits:
                 if isinstance(d1, date) and isinstance(d2, date) and d1 > d2:
                     d1, d2 = d2, d1
 
+                start_dt = datetime.combine(d1, dtime.min)
+                end_dt = datetime.combine(d2, dtime.min) + timedelta(days=1)
                 preds = (
                     session_p.query(
                         PredictionTop5.member_email,
@@ -1592,8 +1623,8 @@ with tab_hits:
                         PredictionTop5.meta,
                     )
                     .filter(PredictionTop5.predictor_type == "preset")
-                    .filter(func.date(PredictionTop5.race_date) >= d1.isoformat())
-                    .filter(func.date(PredictionTop5.race_date) <= d2.isoformat())
+                    .filter(PredictionTop5.race_date >= start_dt)
+                    .filter(PredictionTop5.race_date < end_dt)
                     .all()
                 )
                 if not preds:

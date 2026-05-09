@@ -53,18 +53,21 @@ def load_races(session: Session):
 def _cached_race_dates(limit_days: int = 365):
     s = get_session()
     try:
-        rows = (
-            s.query(func.date(Race.race_date))
-            .distinct()
-            .order_by(func.date(Race.race_date).desc())
-            .limit(int(limit_days or 365))
-            .all()
-        )
+        need = int(limit_days or 365)
+        take_rows = max(200, need * 20)
+        rows = s.query(Race.race_date).order_by(Race.race_date.desc()).limit(int(take_rows)).all()
         out = []
-        for r in rows:
-            if not r or not r[0]:
+        seen = set()
+        for (dt,) in rows:
+            if not dt:
                 continue
-            out.append(r[0])
+            dd = dt.date()
+            if dd in seen:
+                continue
+            seen.add(dd)
+            out.append(dd)
+            if len(out) >= need:
+                break
         return out
     finally:
         s.close()

@@ -16,6 +16,7 @@ from scoring_engine.core import ScoringEngine
 from scoring_engine.constants import DISABLED_FACTORS
 from scoring_engine.utils import estimate_win_probability
 from scoring_engine import ranking
+from scoring_engine.config_value import unwrap_value
 from scoring_engine.member_stats import (
     update_member_preset_stats_incremental,
     load_member_preset_stats,
@@ -191,18 +192,24 @@ def load_races(session: Session):
 
 @st.cache_data(ttl=60)
 def _cached_race_dates(limit_days: int = 365):
-    from sqlalchemy import func
-
     s = get_session()
     try:
-        rows = (
-            s.query(func.date(Race.race_date))
-            .distinct()
-            .order_by(func.date(Race.race_date).desc())
-            .limit(int(limit_days or 365))
-            .all()
-        )
-        return [r[0] for r in rows if r and r[0]]
+        need = int(limit_days or 365)
+        take_rows = max(200, need * 20)
+        rows = s.query(Race.race_date).order_by(Race.race_date.desc()).limit(int(take_rows)).all()
+        out = []
+        seen = set()
+        for (dt,) in rows:
+            if not dt:
+                continue
+            dd = dt.date()
+            if dd in seen:
+                continue
+            seen.add(dd)
+            out.append(dd)
+            if len(out) >= need:
+                break
+        return out
     finally:
         s.close()
 
@@ -654,7 +661,6 @@ def main():
 - **指標**：會回算同一批資料的 Top2 勝出率與 PQ(3)（in-sample）作方向參考；建議以不同日期範圍反覆驗證再決定是否套用。
                     """.strip()
                 )
-                from sqlalchemy import func
                 from datetime import date, timedelta
                 import json
                 from scoring_engine.weight_tuning import tune_weights_top3_focus
@@ -664,16 +670,26 @@ def main():
 
                 factor_names = list(base_weight_map.keys())
                 drows = (
-                    session.query(func.date(Race.race_date))
+                    session.query(Race.race_date)
                     .join(RaceEntry, RaceEntry.race_id == Race.id)
                     .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
                     .filter(RaceResult.rank != None)
-                    .distinct()
-                    .order_by(func.date(Race.race_date).desc())
-                    .limit(365)
+                    .order_by(Race.race_date.desc())
+                    .limit(5000)
                     .all()
                 )
-                available_dates = [r[0] for r in drows if r and r[0]]
+                available_dates = []
+                seen = set()
+                for (dt,) in drows:
+                    if not dt:
+                        continue
+                    dd = dt.date()
+                    if dd in seen:
+                        continue
+                    seen.add(dd)
+                    available_dates.append(dd)
+                    if len(available_dates) >= 365:
+                        break
 
                 if not available_dates:
                     st.info("目前未有任何已結算賽果可供訓練。請先抓取賽果再試。")
@@ -1134,20 +1150,29 @@ def main():
                         """)
 
                     st.markdown("### 🧾 分享字段（會員組合 Top5）")
-                    from sqlalchemy import func
                     from database.models import PredictionTop5
                     import json
 
                     drows = (
-                        session.query(func.date(PredictionTop5.race_date))
+                        session.query(PredictionTop5.race_date)
                         .filter(PredictionTop5.predictor_type == "preset")
                         .filter(PredictionTop5.member_email == str(member_email).strip().lower())
-                        .distinct()
-                        .order_by(func.date(PredictionTop5.race_date).desc())
-                        .limit(180)
+                        .order_by(PredictionTop5.race_date.desc())
+                        .limit(5000)
                         .all()
                     )
-                    available_dates = [r[0] for r in drows if r and r[0]]
+                    available_dates = []
+                    seen = set()
+                    for (dt,) in drows:
+                        if not dt:
+                            continue
+                        dd = dt.date()
+                        if dd in seen:
+                            continue
+                        seen.add(dd)
+                        available_dates.append(dd)
+                        if len(available_dates) >= 180:
+                            break
                     preset_names = [str(p.get("name", "")).strip() for p in (presets or []) if str(p.get("name", "")).strip()]
 
                     if not available_dates:
@@ -1171,12 +1196,15 @@ def main():
                         )
 
                         if c3.button("生成分享字段", use_container_width=True, key="member_preset_share_btn"):
+                            start = datetime.combine(share_date, time.min)
+                            end = start + timedelta(days=1)
                             rows2 = (
                                 session.query(PredictionTop5.race_no, PredictionTop5.top5)
                                 .filter(PredictionTop5.predictor_type == "preset")
                                 .filter(PredictionTop5.member_email == str(member_email).strip().lower())
                                 .filter(PredictionTop5.predictor_key == str(share_preset))
-                                .filter(func.date(PredictionTop5.race_date) == share_date.isoformat())
+                                .filter(PredictionTop5.race_date >= start)
+                                .filter(PredictionTop5.race_date < end)
                                 .order_by(PredictionTop5.race_no.asc())
                                 .all()
                             )
@@ -1832,9 +1860,10 @@ def main():
                             .filter(PredictionTop5.predictor_type == "preset")
                             .filter(PredictionTop5.member_email == str(member_email).strip().lower())
                             .filter(PredictionTop5.predictor_key == str(preset_sel))
-                            .filter(func.date(PredictionTop5.race_date) >= d1.isoformat())
-                            .filter(func.date(PredictionTop5.race_date) <= d2.isoformat())
                         )
+                        start_dt = datetime.combine(d1, time.min)
+                        end_dt = datetime.combine(d2, time.min) + timedelta(days=1)
+                        q = q.filter(PredictionTop5.race_date >= start_dt).filter(PredictionTop5.race_date < end_dt)
                         if venue_sel != "全部":
                             q = q.filter(Race.venue == ("HV" if venue_sel == "跑馬地" else "ST"))
                         if surface_sel != "全部":
@@ -1990,7 +2019,6 @@ def main():
         if member_email:
             with st.expander("📈 各獨立條件命中統計", expanded=False):
                 from datetime import date, timedelta
-                from sqlalchemy import func
                 from database.models import PredictionTop5
                 from scoring_engine.member_stats import _calc_hits
 
@@ -2005,14 +2033,24 @@ def main():
                 factor_names = list(factor_desc.keys())
 
                 drows = (
-                    session.query(func.date(PredictionTop5.race_date))
+                    session.query(PredictionTop5.race_date)
                     .filter(PredictionTop5.predictor_type == "factor")
-                    .distinct()
-                    .order_by(func.date(PredictionTop5.race_date).desc())
-                    .limit(90)
+                    .order_by(PredictionTop5.race_date.desc())
+                    .limit(5000)
                     .all()
                 )
-                available_dates = [r[0] for r in drows if r and r[0]]
+                available_dates = []
+                seen = set()
+                for (dt,) in drows:
+                    if not dt:
+                        continue
+                    dd = dt.date()
+                    if dd in seen:
+                        continue
+                    seen.add(dd)
+                    available_dates.append(dd)
+                    if len(available_dates) >= 90:
+                        break
                 if not available_dates:
                     st.info("目前未有任何獨立條件 Top5 快照。")
                 else:
@@ -2049,10 +2087,10 @@ def main():
                         )
                         .filter(PredictionTop5.predictor_type == "factor")
                         .filter(PredictionTop5.predictor_key.in_(factor_names))
-                        .filter(func.date(PredictionTop5.race_date) >= d1.isoformat())
-                        .filter(func.date(PredictionTop5.race_date) <= d2.isoformat())
-                        .all()
                     )
+                    start_dt = datetime.combine(d1, time.min)
+                    end_dt = datetime.combine(d2, time.min) + timedelta(days=1)
+                    preds = preds.filter(PredictionTop5.race_date >= start_dt).filter(PredictionTop5.race_date < end_dt).all()
 
                     if not preds:
                         st.info("選定範圍內沒有任何獨立條件 Top5 快照。")
@@ -2119,8 +2157,9 @@ def main():
                                 date_str = r0.race_date.strftime("%Y/%m/%d")
                                 key = f"ai_race_report:{date_str}:{int(r0.race_no)}"
                                 cfg = session.query(SystemConfig).filter_by(key=key).first()
-                                val = cfg.value if (cfg and isinstance(cfg.value, dict)) else {}
-                                top5_ai = val.get("top5_horse_nos")
+                                payload_ai, _ = unwrap_value(cfg.value) if cfg else (None, {})
+                                payload_ai = payload_ai if isinstance(payload_ai, dict) else {}
+                                top5_ai = payload_ai.get("top5_horse_nos")
                                 if not isinstance(top5_ai, list) or len(top5_ai) < 5:
                                     continue
                                 act = cache_act.get(int(rid))
@@ -2269,7 +2308,8 @@ def main():
 
                     cfg_key = f"race_corunning:{date_slash}:{rn}" if date_slash and rn else ""
                     cfg = session.query(SystemConfig).filter_by(key=cfg_key).first() if cfg_key else None
-                    items = cfg.value.get("items") if (cfg and isinstance(cfg.value, dict)) else None
+                    payload, meta = unwrap_value(cfg.value) if cfg else (None, {})
+                    items = payload.get("items") if isinstance(payload, dict) else None
                     if not isinstance(items, dict) or not items:
                         st.info("未找到走勢評述快照。請先在後台執行「抓取賽果與派彩」（並確保該日已出賽後報告）。")
                     else:
@@ -2277,8 +2317,20 @@ def main():
                             n_items = len(items)
                         except Exception:
                             n_items = 0
-                        updated_at = str(getattr(cfg, "updated_at", "") or "").strip()
-                        st.caption(f"key={cfg_key}｜筆數={n_items}" + (f"｜updated_at={updated_at}" if updated_at else ""))
+                        saved_at = str((meta or {}).get("saved_at") or "").strip()
+                        source = str((meta or {}).get("source") or "").strip()
+                        fetched_at = str((meta or {}).get("fetched_at") or "").strip()
+                        schema = str((meta or {}).get("schema") or "").strip()
+                        cap = f"key={cfg_key}｜筆數={n_items}"
+                        if source:
+                            cap += f"｜source={source}"
+                        if schema:
+                            cap += f"｜schema={schema}"
+                        if fetched_at:
+                            cap += f"｜fetched_at={fetched_at}"
+                        elif saved_at:
+                            cap += f"｜saved_at={saved_at}"
+                        st.caption(cap)
 
                         rows = []
                         for k, v in items.items():

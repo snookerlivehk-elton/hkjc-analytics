@@ -16,6 +16,7 @@ from database.connection import get_session, init_db
 from database.models import Horse, Race, RaceDividend, RaceEntry, RaceResult, RaceTrackCondition, SystemConfig
 from data_scraper.local_results import LocalResultsScraper
 from scoring_engine.track_conditions import normalize_going
+from scoring_engine.config_value import build_meta, wrap_value
 
 
 def _parse_ymd(s: str) -> Optional[date]:
@@ -209,7 +210,14 @@ def _upsert_results(session, race: Race, payload: Dict[str, Any]) -> bool:
             if not cfg:
                 cfg = SystemConfig(key=key, description="賽果沿途走位（running_position）快照")
                 session.add(cfg)
-            cfg.value = {"race_id": int(race.id), "race_date": date_str, "race_no": race_no, "runpos": runpos_by_horse_no}
+            payload_runpos = {"race_id": int(race.id), "race_date": date_str, "race_no": race_no, "runpos": runpos_by_horse_no}
+            m = build_meta(
+                source="HKJC_LOCALRESULTS",
+                fetched_at=datetime.utcnow().isoformat(),
+                url=f"https://racing.hkjc.com/zh-hk/local/information/localresults?racedate={date_str}&Racecourse={str(race.venue or 'ST')}&RaceNo={race_no}",
+                schema="race_runpos:v1",
+            )
+            cfg.value = wrap_value(payload_runpos, m)
 
     return True
 

@@ -1,9 +1,8 @@
-from datetime import date, datetime
+from datetime import date, datetime, time as dtime, timedelta
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import func
 
 from database.connection import init_db, get_session
 from database.models import PredictionTop5
@@ -19,6 +18,12 @@ def _parse_date(s: str) -> Optional[date]:
         except Exception:
             continue
     return None
+
+
+def _day_range(d: date) -> tuple[datetime, datetime]:
+    start = datetime.combine(d, dtime.min)
+    end = start + timedelta(days=1)
+    return start, end
 
 
 app = FastAPI(title="HKJC Analytics API", version="1.0")
@@ -83,7 +88,7 @@ def top5(
                 PredictionTop5.meta,
             )
             .order_by(
-                func.date(PredictionTop5.race_date).asc(),
+                PredictionTop5.race_date.asc(),
                 PredictionTop5.race_no.asc(),
                 PredictionTop5.predictor_type.asc(),
                 PredictionTop5.predictor_key.asc(),
@@ -94,9 +99,11 @@ def top5(
         if type_ != "all":
             q = q.filter(PredictionTop5.predictor_type == type_)
         if d1:
-            q = q.filter(func.date(PredictionTop5.race_date) >= d1.isoformat())
+            start, _ = _day_range(d1)
+            q = q.filter(PredictionTop5.race_date >= start)
         if d2:
-            q = q.filter(func.date(PredictionTop5.race_date) <= d2.isoformat())
+            _, end = _day_range(d2)
+            q = q.filter(PredictionTop5.race_date < end)
 
         if factor:
             q = q.filter(PredictionTop5.predictor_type == "factor").filter(PredictionTop5.predictor_key == str(factor))
@@ -149,7 +156,6 @@ def like(
                 PredictionTop5.top5,
                 PredictionTop5.meta,
             )
-            .filter(func.date(PredictionTop5.race_date) == d.isoformat())
             .order_by(
                 PredictionTop5.predictor_type.asc(),
                 PredictionTop5.member_email.asc(),
@@ -157,6 +163,8 @@ def like(
                 PredictionTop5.race_no.asc(),
             )
         )
+        start, end = _day_range(d)
+        q = q.filter(PredictionTop5.race_date >= start).filter(PredictionTop5.race_date < end)
         if type_ != "all":
             q = q.filter(PredictionTop5.predictor_type == type_)
 

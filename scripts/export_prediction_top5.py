@@ -1,14 +1,12 @@
 import argparse
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, time as dtime, timedelta
 from pathlib import Path
 
 root_path = str(Path(__file__).resolve().parent.parent)
 if root_path not in sys.path:
     sys.path.insert(0, root_path)
-
-from sqlalchemy import func
 
 from database.connection import init_db, get_session
 from database.models import PredictionTop5
@@ -19,6 +17,12 @@ def _parse_ymd(s: str):
         return datetime.strptime(str(s), "%Y/%m/%d").date()
     except Exception:
         return None
+
+
+def _day_range(d):
+    start = datetime.combine(d, dtime.min)
+    end = start + timedelta(days=1)
+    return start, end
 
 
 def main():
@@ -42,16 +46,19 @@ def main():
             d = _parse_ymd(args.date)
             if not d:
                 raise ValueError("--date must be YYYY/MM/DD")
-            q = q.filter(func.date(PredictionTop5.race_date) == d.isoformat())
+            start, end = _day_range(d)
+            q = q.filter(PredictionTop5.race_date >= start).filter(PredictionTop5.race_date < end)
         else:
             d1 = _parse_ymd(args.date_from) if args.date_from else None
             d2 = _parse_ymd(args.date_to) if args.date_to else None
             if d1 and d2 and d1 > d2:
                 d1, d2 = d2, d1
             if d1:
-                q = q.filter(func.date(PredictionTop5.race_date) >= d1.isoformat())
+                start, _ = _day_range(d1)
+                q = q.filter(PredictionTop5.race_date >= start)
             if d2:
-                q = q.filter(func.date(PredictionTop5.race_date) <= d2.isoformat())
+                _, end = _day_range(d2)
+                q = q.filter(PredictionTop5.race_date < end)
 
         out = []
         for r in q.all():
