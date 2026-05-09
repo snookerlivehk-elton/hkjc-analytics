@@ -516,6 +516,7 @@ class FactorCalculator:
 
         sc = _surface_code(getattr(race, "surface", None), track_type=getattr(race, "track_type", None), course_type=getattr(race, "course_type", None))
         course_type = _norm_course_type(getattr(race, "course_type", None), surface_code_=sc)
+        is_awt = (str(course_type or "").strip().upper() == "AWT") or (str(sc or "").strip().upper() == "AW")
         venue = str(getattr(race, "venue", "") or "").strip()
         venue_key = _venue_code(venue, track_type=getattr(race, "track_type", None))
         distance = getattr(race, "distance", None)
