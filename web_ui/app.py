@@ -2257,8 +2257,6 @@ def main():
                     st.info("本場尚未有派彩資料。")
 
                 with st.expander("📝 沿途走勢評述（賽後）", expanded=False):
-                    from database.models import SystemConfig
-
                     date_slash = ""
                     try:
                         date_slash = selected_date_input.strftime("%Y/%m/%d")
