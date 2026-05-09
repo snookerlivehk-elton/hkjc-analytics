@@ -2,6 +2,18 @@ import json
 import requests
 from typing import Dict, Any
 
+def _pick_text(obj: Dict[str, Any], keys) -> str:
+    if not isinstance(obj, dict):
+        return ""
+    for k in list(keys or []):
+        v = obj.get(k)
+        if v is None:
+            continue
+        s = str(v).strip()
+        if s and s.lower() not in ("na", "n/a", "null", "-"):
+            return s
+    return ""
+
 class SpeedProFormGuideScraper:
     def __init__(self):
         # The frontend loads FormGuide data from this JSON endpoint
@@ -68,9 +80,35 @@ class SpeedProFormGuideScraper:
                         "health": str(rec.get("healthissue_chi", "")).strip()
                     })
                     
+            comments_chi = _pick_text(
+                runner,
+                [
+                    "comments_chi",
+                    "comment_chi",
+                    "remark_chi",
+                    "profile_chi",
+                    "intro_chi",
+                    "introduction_chi",
+                    "horseintro_chi",
+                ],
+            )
+            trial_chi = _pick_text(
+                runner,
+                [
+                    "trialcomment_chi",
+                    "trialcomments_chi",
+                    "trial_chi",
+                    "workoutcomment_chi",
+                ],
+            )
+            if not trial_chi and ("試閘" in comments_chi or "試闸" in comments_chi):
+                trial_chi = comments_chi
+
             out[horse_no] = {
                 "horse_name": str(runner.get("horse_chi", "")).strip(),
-                "history": parsed_records
+                "history": parsed_records,
+                "intro_comment": comments_chi,
+                "trial_comment": trial_chi,
             }
 
         return out

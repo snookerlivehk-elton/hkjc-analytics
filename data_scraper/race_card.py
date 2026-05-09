@@ -58,6 +58,25 @@ class RaceCardScraper:
             soup = BeautifulSoup(resp.text, 'lxml')
             
             full_text = soup.get_text(separator=' ', strip=True)
+            race_text = full_text
+            try:
+                m0 = re.search(rf"第\\s*{int(race_no)}\\s*場", full_text)
+                if m0:
+                    start_i = int(m0.start())
+                    tail = full_text[start_i:]
+                    cut_marks = []
+                    m_next = re.search(rf"第\\s*{int(race_no) + 1}\\s*場", tail)
+                    if m_next:
+                        cut_marks.append(start_i + int(m_next.start()))
+                    for mark in ["設 定 我 的 排 位 表", "設定我的排位表", "我的排位表"]:
+                        mi = tail.find(mark)
+                        if mi >= 0:
+                            cut_marks.append(start_i + int(mi))
+                    end_i = min(cut_marks) if cut_marks else len(full_text)
+                    if end_i > start_i:
+                        race_text = full_text[start_i:end_i]
+            except Exception:
+                race_text = full_text
             venue = "HV" if "跑馬地" in full_text else "ST"
             
             # 定位賽事資訊 (如：第 1 場 - 寶靈平磅賽2026年4月12日, 星期日, 沙田, 12:30草地, "C" 賽道, 1000米)
@@ -67,38 +86,40 @@ class RaceCardScraper:
             going = "未知"
             
             # 嘗試擷取距離 (例如 1000米)
-            dist_match = re.search(r'(\d+)米', full_text)
+            dist_match = re.search(r'(\d+)米', race_text)
             if dist_match:
                 distance = int(dist_match.group(1))
                 
-            # 嘗試擷取班次（優先抓「第X班/Class X」，避免被賽事名稱中的「平磅賽」誤判）
-            class_match = re.search(r'(?:Class\s*([1-5])|第\s*([1-5])\s*班|第\s*([一二三四五])\s*班)', full_text, re.IGNORECASE)
-            if class_match:
-                n = class_match.group(1) or class_match.group(2) or class_match.group(3)
-                if n in {"一", "二", "三", "四", "五"}:
-                    race_class = f"第{n}班"
-                else:
-                    race_class = f"第{int(n)}班"
+            special_match = re.search(r'(新馬賽|新馬|平磅賽)', race_text, re.IGNORECASE)
+            if special_match:
+                rc = str(special_match.group(1) or "").strip()
+                if rc == "新馬":
+                    rc = "新馬賽"
+                race_class = rc
             else:
-                grade_match = re.search(r'(?:國際)?([一二三])級賽|Group\s*([1-3])|\bG\s*([1-3])\b', full_text, re.IGNORECASE)
-                if grade_match:
-                    g = grade_match.group(1) or grade_match.group(2) or grade_match.group(3)
-                    if g in {"一", "二", "三"}:
-                        race_class = f"{g}級賽"
+                class_match = re.search(r'(?:Class\s*([1-5])|第\s*([1-5])\s*班|第\s*([一二三四五])\s*班)', race_text, re.IGNORECASE)
+                if class_match:
+                    n = class_match.group(1) or class_match.group(2) or class_match.group(3)
+                    if n in {"一", "二", "三", "四", "五"}:
+                        race_class = f"第{n}班"
                     else:
-                        race_class = f"{['一', '二', '三'][int(g) - 1]}級賽"
+                        race_class = f"第{int(n)}班"
                 else:
-                    special_match = re.search(r'(新馬賽|平磅賽)', full_text, re.IGNORECASE)
-                    if special_match:
-                        race_class = special_match.group(1)
+                    grade_match = re.search(r'(?:國際)?([一二三])級賽|Group\s*([1-3])|\bG\s*([1-3])\b', race_text, re.IGNORECASE)
+                    if grade_match:
+                        g = grade_match.group(1) or grade_match.group(2) or grade_match.group(3)
+                        if g in {"一", "二", "三"}:
+                            race_class = f"{g}級賽"
+                        else:
+                            race_class = f"{['一', '二', '三'][int(g) - 1]}級賽"
                 
             # 擷取跑道資訊，並組合成類似 "沙田草地"C"" 的格式，以便與歷史往績匹配
             track_type_info = ""
             surface = ""
             course_type = ""
             venue_str = "沙田" if venue == "ST" else "跑馬地"
-            track_match = re.search(r'(草地|全天候跑道|全天候|泥地|AWT|A/W|ALL\s*WEATHER)', full_text, re.IGNORECASE)
-            course_match = re.search(r'(\"[A-Z0-9\+]+\")\s*賽道', full_text)
+            track_match = re.search(r'(草地|全天候跑道|全天候|泥地|AWT|A/W|ALL\s*WEATHER)', race_text, re.IGNORECASE)
+            course_match = re.search(r'(\"[A-Z0-9\+]+\")\s*賽道', race_text)
             
             if track_match:
                 t = track_match.group(1)
@@ -114,11 +135,11 @@ class RaceCardScraper:
                     
             # 嘗試擷取場地狀況 (通常在排位表階段不會有場地狀況，只會有草地/泥地)
             going_raw = ""
-            m_go = re.search(r"(?:場地狀況|場地狀態)\\s*[:：]?\\s*([\\u4e00-\\u9fff]{1,6})", full_text)
+            m_go = re.search(r"(?:場地狀況|場地狀態)\\s*[:：]?\\s*([\\u4e00-\\u9fff]{1,6})", race_text)
             if m_go:
                 going_raw = str(m_go.group(1) or "").strip()
             if not going_raw:
-                m_go2 = re.search(r"(好快地?|好至快地?|好地|快地|黏地|黏至軟地?|軟至黏地?|軟地|大爛地|濕快地?|濕慢地?)", full_text)
+                m_go2 = re.search(r"(好快地?|好至快地?|好地|快地|黏地|黏至軟地?|軟至黏地?|軟地|大爛地|濕快地?|濕慢地?)", race_text)
                 if m_go2:
                     going_raw = str(m_go2.group(1) or "").strip()
             if going_raw:

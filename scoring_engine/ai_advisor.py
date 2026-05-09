@@ -545,7 +545,17 @@ def run_ai_race_summary(
             input_lines.append("系統量化因子: " + ", ".join(f_scores))
             
         if not history:
-            input_lines.append("無近期紀錄\n")
+            intro = str(h_data.get("intro_comment") or "").strip()
+            trial = str(h_data.get("trial_comment") or "").strip()
+            if intro and trial and intro == trial:
+                trial = ""
+            if intro:
+                input_lines.append(f"賽績指引評述: {intro}")
+            if trial:
+                input_lines.append(f"試閘/晨操評語: {trial}")
+            if (not intro) and (not trial):
+                input_lines.append("無近期紀錄")
+            input_lines.append("")
             continue
             
         for i, rec in enumerate(history[:3]):  # Limit to last 3 runs to save tokens

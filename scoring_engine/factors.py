@@ -79,6 +79,9 @@ class FactorCalculator:
         if not raw:
             return {"kind": "unknown", "level": None, "raw": raw}
 
+        if "新馬" in raw:
+            return {"kind": "newcomer", "level": None, "raw": raw}
+
         m = re.search(r'Class\s*([0-9]+)', raw, re.IGNORECASE)
         if m:
             try:
