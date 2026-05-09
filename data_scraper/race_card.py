@@ -90,28 +90,31 @@ class RaceCardScraper:
             if dist_match:
                 distance = int(dist_match.group(1))
                 
-            special_match = re.search(r'(新馬賽|新馬|平磅賽)', race_text, re.IGNORECASE)
-            if special_match:
-                rc = str(special_match.group(1) or "").strip()
-                if rc == "新馬":
-                    rc = "新馬賽"
-                race_class = rc
-            else:
-                class_match = re.search(r'(?:Class\s*([1-5])|第\s*([1-5])\s*班|第\s*([一二三四五])\s*班)', race_text, re.IGNORECASE)
-                if class_match:
-                    n = class_match.group(1) or class_match.group(2) or class_match.group(3)
-                    if n in {"一", "二", "三", "四", "五"}:
-                        race_class = f"第{n}班"
-                    else:
-                        race_class = f"第{int(n)}班"
+            class_match = re.search(r'(?:Class\s*([1-5])|第\s*([1-5])\s*班|第\s*([一二三四五])\s*班)', race_text, re.IGNORECASE)
+            if class_match:
+                n = class_match.group(1) or class_match.group(2) or class_match.group(3)
+                if n in {"一", "二", "三", "四", "五"}:
+                    race_class = f"第{n}班"
                 else:
-                    grade_match = re.search(r'(?:國際)?([一二三])級賽|Group\s*([1-3])|\bG\s*([1-3])\b', race_text, re.IGNORECASE)
-                    if grade_match:
-                        g = grade_match.group(1) or grade_match.group(2) or grade_match.group(3)
-                        if g in {"一", "二", "三"}:
-                            race_class = f"{g}級賽"
-                        else:
-                            race_class = f"{['一', '二', '三'][int(g) - 1]}級賽"
+                    race_class = f"第{int(n)}班"
+            else:
+                grade_match = re.search(r'(?:國際)?([一二三])級賽|Group\s*([1-3])|\bG\s*([1-3])\b', race_text, re.IGNORECASE)
+                if grade_match:
+                    g = grade_match.group(1) or grade_match.group(2) or grade_match.group(3)
+                    if g in {"一", "二", "三"}:
+                        race_class = f"{g}級賽"
+                    else:
+                        race_class = f"{['一', '二', '三'][int(g) - 1]}級賽"
+                else:
+                    flat_match = re.search(r'平磅賽', race_text, re.IGNORECASE)
+                    if flat_match:
+                        race_class = "平磅賽"
+                    else:
+                        maiden_match = re.search(r'新馬賽', race_text, re.IGNORECASE)
+                        if maiden_match:
+                            race_class = "新馬賽"
+                        elif "新馬" in str(race_text or ""):
+                            race_class = "新馬賽"
                 
             # 擷取跑道資訊，並組合成類似 "沙田草地"C"" 的格式，以便與歷史往績匹配
             track_type_info = ""
