@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 from sqlalchemy.orm import Session
 from database.models import RaceResult, RaceEntry, OddsHistory, Workout, VetReport
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 class FactorCalculator:
     """獨立計分條件的具體計算邏輯"""
@@ -449,6 +449,166 @@ class FactorCalculator:
 
             disp = f"{label}｜近{n_used}：前領{round(front_pct*100,1)}%/中置{round((counts['mid']/n_used)*100,1)}%/後上{round(back_pct*100,1)}%"
             scores.append(float(sc))
+            displays.append(disp)
+
+        return pd.Series(scores, index=self.df.index), pd.Series(displays, index=self.df.index)
+
+    def _calculate_style_trkprof_edge(self):
+        from database.models import Race, RaceTrackCondition, SystemConfig
+        from scoring_engine.track_conditions import normalize_going
+        from scoring_engine.track_profile import load_track_profile
+
+        cfg_default = {"prior_races": 12.0, "w_place": 0.6, "w_win": 0.4}
+        try:
+            cfg = self.session.query(SystemConfig).filter_by(key="style_trkprof_edge_config").first()
+            if cfg and isinstance(cfg.value, dict):
+                for k in cfg_default.keys():
+                    if k in cfg.value:
+                        cfg_default[k] = type(cfg_default[k])(cfg.value[k])
+        except Exception:
+            pass
+
+        prior_races = float(cfg_default.get("prior_races") or 12.0)
+        if prior_races < 0:
+            prior_races = 0.0
+        w_place = float(cfg_default.get("w_place") or 0.6)
+        w_win = float(cfg_default.get("w_win") or 0.4)
+        tw = max(1e-9, (abs(w_place) + abs(w_win)))
+        w_place = abs(w_place) / tw
+        w_win = abs(w_win) / tw
+
+        race_id = self.df.iloc[0].get("race_id") if "race_id" in self.df.columns else None
+        race_id = self._to_int(race_id, default=0)
+        race = self.session.get(Race, race_id) if race_id else None
+
+        scores = []
+        displays = []
+
+        if not race:
+            return pd.Series(0.5, index=self.df.index), pd.Series("無賽事資料", index=self.df.index)
+
+        tc = self.session.query(RaceTrackCondition).filter_by(race_id=int(race.id)).first()
+        going_code = str(getattr(tc, "going_code", "") or "").strip()
+        if not going_code:
+            _, gc = normalize_going(str(getattr(race, "going", "") or ""))
+            going_code = str(gc or "").strip()
+
+        course_type = str(getattr(race, "course_type", "") or "").strip()
+        if not course_type:
+            s0 = (str(getattr(race, "surface", "") or "") + " " + str(getattr(race, "track_type", "") or "")).upper()
+            if ("A/W" in s0) or ("ALL WEATHER" in s0) or ("AW" in s0) or ("全天候" in s0) or ("泥" in s0):
+                course_type = "AWT"
+        venue = str(getattr(race, "venue", "") or "").strip()
+        distance = getattr(race, "distance", None)
+
+        prof = None
+        if going_code and venue:
+            try:
+                prof = load_track_profile(self.session, venue=venue, going_code=going_code, course_type=course_type or "U", distance=distance)
+            except Exception:
+                prof = None
+
+        n_races = int(prof.get("n_races") or 0) if isinstance(prof, dict) else 0
+        winner_pct = (prof.get("winner_style_early_pct") if isinstance(prof, dict) else None) or {}
+        top4_pct = (prof.get("top4_style_early_pct") if isinstance(prof, dict) else None) or {}
+
+        baseline = 1.0 / 3.0
+
+        def _pct_lookup(m: Any, label: str) -> Optional[float]:
+            if not isinstance(m, dict):
+                return None
+            v = m.get(label)
+            try:
+                return float(v) / 100.0
+            except Exception:
+                return None
+
+        def _shrink(p: Optional[float]) -> Optional[float]:
+            if p is None:
+                return None
+            try:
+                pv = float(p)
+            except Exception:
+                return None
+            if pv < 0.0:
+                pv = 0.0
+            if pv > 1.0:
+                pv = 1.0
+            n = float(max(0, n_races))
+            if prior_races > 0:
+                return ((pv * n) + (baseline * prior_races)) / (n + prior_races)
+            return pv
+
+        def _to_edge_score(p_place: Optional[float], p_win: Optional[float]) -> float:
+            pp = _shrink(p_place)
+            pw = _shrink(p_win)
+            if pp is None and pw is None:
+                return 0.5
+            if pp is None:
+                pp = baseline
+            if pw is None:
+                pw = baseline
+            p = (w_place * float(pp)) + (w_win * float(pw))
+            p = max(0.0, min(1.0, p))
+            sc = 0.5 + ((p - baseline) / (1.0 - baseline)) * 0.5
+            return float(max(0.0, min(1.0, sc)))
+
+        _, style_disp = self._calculate_recent_running_style()
+
+        def _style_label_from_disp(disp: str) -> str:
+            s = str(disp or "").strip()
+            if s.startswith("前領"):
+                return "前領"
+            if s.startswith("後上"):
+                return "後上"
+            if s.startswith("中置"):
+                return "中置"
+            return ""
+
+        style_label_by_index = {}
+        try:
+            for idx, disp in style_disp.items():
+                lab = _style_label_from_disp(disp)
+                if lab:
+                    style_label_by_index[idx] = lab
+        except Exception:
+            style_label_by_index = {}
+
+        for idx, row in self.df.iterrows():
+            horse_id = row.get("horse_id", None)
+            try:
+                horse_id = int(horse_id or 0)
+            except Exception:
+                horse_id = 0
+
+            if horse_id <= 0:
+                scores.append(0.5)
+                displays.append("無馬匹資料")
+                continue
+
+            label_guess = str(style_label_by_index.get(idx) or "").strip()
+
+            if not label_guess:
+                disp0 = ""
+                try:
+                    disp0 = str(style_disp.get(idx) or "").strip()
+                except Exception:
+                    disp0 = ""
+                if disp0:
+                    scores.append(0.5)
+                    displays.append(f"{disp0}｜中性0.50")
+                else:
+                    scores.append(0.5)
+                    displays.append("無跑法｜中性0.50")
+                continue
+
+            p_win = _pct_lookup(winner_pct, label_guess)
+            p_place = _pct_lookup(top4_pct, label_guess)
+            sc = _to_edge_score(p_place, p_win)
+            pw = _shrink(p_win)
+            pp = _shrink(p_place)
+            disp = f"{label_guess}｜勝出{round((pw or baseline)*100,1)}%｜入圍Top4{round((pp or baseline)*100,1)}%｜樣本{n_races}｜score{round(sc,3)}"
+            scores.append(sc)
             displays.append(disp)
 
         return pd.Series(scores, index=self.df.index), pd.Series(displays, index=self.df.index)

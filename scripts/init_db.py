@@ -27,6 +27,7 @@ def populate_default_weights():
         ("speedpro_energy", "HKJC SpeedPRO 能量分", 1.2, True),
         ("recent_form", "近期狀態 (Last 6 Runs)", 1.4, True),
         ("recent_running_style", "近期跑法（沿途走位｜近6仗）", 0.0, False),
+        ("style_trkprof_edge", "跑法×跑道/場地狀態優勢（勝出/入圍機率）", 0.0, False),
         ("vet_rest_days", "獸醫報告／休息天數", 0.5, False),
         ("debut_long_rest", "初出／長休後表現", 0.7, True)
     ]
