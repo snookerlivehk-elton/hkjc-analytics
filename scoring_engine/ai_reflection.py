@@ -99,6 +99,67 @@ def _actual_top4(session: Session, race_id: int) -> List[int]:
 def _report_key(date_str: str, race_no: int) -> str:
     return f"ai_race_report:{str(date_str)}:{int(race_no)}"
 
+def _corunning_key(date_str: str, race_no: int) -> str:
+    return f"race_corunning:{str(date_str)}:{int(race_no)}"
+
+def _build_corunning_excerpt(
+    session: Session,
+    date_str: str,
+    race_no: int,
+    focus_horse_nos: Optional[List[int]] = None,
+    max_items: int = 12,
+    max_comment_len: int = 180,
+) -> str:
+    cfg = session.query(SystemConfig).filter_by(key=_corunning_key(date_str, int(race_no))).first()
+    if not cfg or not isinstance(cfg.value, dict):
+        return ""
+    items = cfg.value.get("items")
+    if not isinstance(items, dict) or not items:
+        return ""
+
+    picked: List[Tuple[int, Dict[str, Any]]] = []
+    if isinstance(focus_horse_nos, list) and focus_horse_nos:
+        for hn in focus_horse_nos:
+            k = str(int(hn))
+            v = items.get(k)
+            if isinstance(v, dict):
+                picked.append((int(hn), v))
+    else:
+        for k, v in items.items():
+            if not isinstance(v, dict):
+                continue
+            try:
+                hn = int(k)
+            except Exception:
+                continue
+            picked.append((hn, v))
+
+    if not picked:
+        return ""
+
+    seen = set()
+    out_lines = []
+    for hn, v in picked:
+        if hn in seen:
+            continue
+        seen.add(hn)
+        name = str(v.get("horse_name") or "").strip()
+        comment = str(v.get("commentary") or "").strip()
+        if not comment:
+            continue
+        if max_comment_len and len(comment) > int(max_comment_len):
+            comment = comment[: int(max_comment_len)].rstrip() + "..."
+        prefix = f"[{hn}]"
+        if name:
+            prefix = f"[{hn}] {name}"
+        out_lines.append(f"- {prefix}: {comment}")
+        if max_items and len(out_lines) >= int(max_items):
+            break
+
+    if not out_lines:
+        return ""
+    return "\n".join(out_lines)
+
 
 def list_reflection_candidates(
     session: Session,
@@ -211,6 +272,32 @@ def generate_race_reflection(session: Session, race_id: int) -> Dict[str, Any]:
         return {"ok": False, "reason": "no_pre_race_report"}
         
     pre_race_report = report_cfg.value["report"]
+    pred_top5 = report_cfg.value.get("top5_horse_nos")
+    elim = report_cfg.value.get("eliminated_horse_nos")
+    pred_top5 = pred_top5 if isinstance(pred_top5, list) else []
+    elim = elim if isinstance(elim, list) else []
+    focus = []
+    try:
+        focus.extend([int(x) for x in pred_top5 if str(x).strip().isdigit()])
+    except Exception:
+        pass
+    try:
+        focus.extend([int(x) for x in elim if str(x).strip().isdigit()])
+    except Exception:
+        pass
+    try:
+        focus.extend([int(x.get("horse_no") or 0) for x in top_4 if int(x.get("horse_no") or 0) > 0])
+    except Exception:
+        pass
+    focus = [int(x) for x in focus if int(x or 0) > 0]
+    seen_focus = set()
+    focus2 = []
+    for x in focus:
+        if x in seen_focus:
+            continue
+        seen_focus.add(x)
+        focus2.append(x)
+    corunning_excerpt = _build_corunning_excerpt(session, date_str=date_str, race_no=int(race_no), focus_horse_nos=focus2)
     
     reflection_key = f"ai_race_reflection:{date_str}:{race_no}"
     ref_cfg = session.query(SystemConfig).filter_by(key=reflection_key).first()
@@ -225,6 +312,7 @@ def generate_race_reflection(session: Session, race_id: int) -> Dict[str, Any]:
         
     system_prompt = (
         "你是專業賽馬 AI 檢討專家。以下是你在賽前寫的分析報告，以及該場賽事最終的真實 Top 4 賽果。\n"
+        "如果提供了賽後『沿途走勢評述』，請優先用它來判斷賽事關鍵事件（例如出閘快慢、受阻、走外疊、步速形勢、留放策略），並反推你賽前分析有哪些盲點。\n"
         "請檢視你的預測與實際結果的落差。找出你可能漏看的盲點（例如：高估了某種走勢、低估了檔位或負磅的影響、忽視了特定意外紀錄等）。\n"
         "請將『檢討分析過程』的字數嚴格控制在 200 到 400 字以內，精簡扼要。\n"
         "請總結出 1-2 條簡潔、通用、可供未來參考的『賽事預測黃金法則』。\n\n"
@@ -237,6 +325,8 @@ def generate_race_reflection(session: Session, race_id: int) -> Dict[str, Any]:
     )
     
     user_text = f"【賽前分析報告】\n{pre_race_report}\n\n【實際賽果 Top 4】\n{actual_results_str}"
+    if corunning_excerpt:
+        user_text += f"\n\n【沿途走勢評述（賽後）】\n{corunning_excerpt}"
     
     resp = call_chat_completions(
         endpoint=settings["endpoint"],
@@ -262,6 +352,8 @@ def generate_race_reflection(session: Session, race_id: int) -> Dict[str, Any]:
                 "actual_results": actual_results_str,
                 "reflection": parsed.get("reflection_analysis", ""),
                 "learned_rules": parsed.get("learned_rules", []),
+                "corunning_excerpt": corunning_excerpt or "",
+                "corunning_used": bool(corunning_excerpt),
                 "created_at": datetime.utcnow().isoformat()
             }
             
