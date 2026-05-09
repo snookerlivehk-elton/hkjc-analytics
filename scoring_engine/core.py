@@ -17,6 +17,8 @@ from utils.logger import logger
 from scoring_engine.utils import calculate_relative_percentile, estimate_win_probability
 from scoring_engine.constants import DISABLED_FACTORS
 
+ABSOLUTE_SCORE_FACTORS = {"style_trkprof_edge"}
+
 class ScoringEngine:
     """每場賽事獨立計分排名系統"""
 
@@ -183,7 +185,17 @@ class ScoringEngine:
         scored_df = df.copy()
         for factor_name, raw_vals in factor_raw_scores.items():
             scored_df[f"{factor_name}_raw"] = raw_vals
-            scored_df[f"{factor_name}_score"] = calculate_relative_percentile(raw_vals, score_range=(0, 10))
+            if factor_name in ABSOLUTE_SCORE_FACTORS:
+                try:
+                    v = pd.to_numeric(raw_vals, errors="coerce").fillna(0.0)
+                except Exception:
+                    v = raw_vals
+                try:
+                    scored_df[f"{factor_name}_score"] = v.clip(lower=0.0, upper=100.0)
+                except Exception:
+                    scored_df[f"{factor_name}_score"] = v
+            else:
+                scored_df[f"{factor_name}_score"] = calculate_relative_percentile(raw_vals, score_range=(0, 10))
             scored_df[f"{factor_name}_display"] = factor_displays[factor_name]
 
         # 5. 計算加權總分與排名

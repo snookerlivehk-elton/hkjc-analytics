@@ -458,7 +458,7 @@ class FactorCalculator:
         from scoring_engine.track_conditions import normalize_going
         from scoring_engine.track_profile import load_track_profile
 
-        cfg_default = {"prior_races": 12.0, "w_place": 0.6, "w_win": 0.4}
+        cfg_default = {"prior_races": 0.0, "w_place": 0.6, "w_win": 0.4}
         try:
             cfg = self.session.query(SystemConfig).filter_by(key="style_trkprof_edge_config").first()
             if cfg and isinstance(cfg.value, dict):
@@ -527,18 +527,18 @@ class FactorCalculator:
             except Exception:
                 pass
 
-        baseline = 1.0 / 3.0
+        baseline_pct = 100.0 / 3.0
 
         def _pct_lookup(m: Any, label: str) -> Optional[float]:
             if not isinstance(m, dict):
                 return None
             v = m.get(label)
             try:
-                return float(v) / 100.0
+                return float(v)
             except Exception:
                 return None
 
-        def _shrink(p: Optional[float]) -> Optional[float]:
+        def _shrink_pct(p: Optional[float]) -> Optional[float]:
             if p is None:
                 return None
             try:
@@ -547,26 +547,24 @@ class FactorCalculator:
                 return None
             if pv < 0.0:
                 pv = 0.0
-            if pv > 1.0:
-                pv = 1.0
+            if pv > 100.0:
+                pv = 100.0
             n = float(max(0, n_races))
             if prior_races > 0:
-                return ((pv * n) + (baseline * prior_races)) / (n + prior_races)
+                return ((pv * n) + (baseline_pct * prior_races)) / (n + prior_races)
             return pv
 
-        def _to_edge_score(p_place: Optional[float], p_win: Optional[float]) -> float:
-            pp = _shrink(p_place)
-            pw = _shrink(p_win)
+        def _to_edge_score_pct(p_place: Optional[float], p_win: Optional[float]) -> float:
+            pp = _shrink_pct(p_place)
+            pw = _shrink_pct(p_win)
             if pp is None and pw is None:
-                return 0.5
+                return float(baseline_pct)
             if pp is None:
-                pp = baseline
+                pp = baseline_pct
             if pw is None:
-                pw = baseline
+                pw = baseline_pct
             p = (w_place * float(pp)) + (w_win * float(pw))
-            p = max(0.0, min(1.0, p))
-            sc = 0.5 + ((p - baseline) / (1.0 - baseline)) * 0.5
-            return float(max(0.0, min(1.0, sc)))
+            return float(max(0.0, min(100.0, p)))
 
         _, style_disp = self._calculate_recent_running_style()
 
@@ -597,8 +595,8 @@ class FactorCalculator:
                 horse_id = 0
 
             if horse_id <= 0:
-                scores.append(0.5)
-                displays.append("無馬匹資料")
+                scores.append(float(baseline_pct))
+                displays.append(f"無馬匹資料｜中性{round(baseline_pct,1)}%")
                 continue
 
             label_guess = str(style_label_by_index.get(idx) or "").strip()
@@ -610,20 +608,20 @@ class FactorCalculator:
                 except Exception:
                     disp0 = ""
                 if disp0:
-                    scores.append(0.5)
-                    displays.append(f"{disp0}｜中性0.50")
+                    scores.append(float(baseline_pct))
+                    displays.append(f"{disp0}｜中性{round(baseline_pct,1)}%")
                 else:
-                    scores.append(0.5)
-                    displays.append("無跑法｜中性0.50")
+                    scores.append(float(baseline_pct))
+                    displays.append(f"無跑法｜中性{round(baseline_pct,1)}%")
                 continue
 
             p_win = _pct_lookup(winner_pct, label_guess)
             p_place = _pct_lookup(top4_pct, label_guess)
-            sc = _to_edge_score(p_place, p_win)
-            pw = _shrink(p_win)
-            pp = _shrink(p_place)
-            disp = f"{label_guess}｜勝出{round((pw or baseline)*100,1)}%｜入圍Top4{round((pp or baseline)*100,1)}%｜樣本{n_races}｜跑法樣本(勝/入){winner_samples}/{top4_samples}｜score{round(sc,3)}"
-            scores.append(sc)
+            edge_pct = _to_edge_score_pct(p_place, p_win)
+            pw = _shrink_pct(p_win)
+            pp = _shrink_pct(p_place)
+            disp = f"{label_guess}｜勝出{round((pw if pw is not None else baseline_pct),1)}%｜入圍Top4{round((pp if pp is not None else baseline_pct),1)}%｜樣本{n_races}｜跑法樣本(勝/入){winner_samples}/{top4_samples}｜評分{round(edge_pct,1)}%"
+            scores.append(edge_pct)
             displays.append(disp)
 
         return pd.Series(scores, index=self.df.index), pd.Series(displays, index=self.df.index)
