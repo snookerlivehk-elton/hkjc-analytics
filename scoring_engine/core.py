@@ -17,7 +17,7 @@ from utils.logger import logger
 from scoring_engine.utils import calculate_relative_percentile, estimate_win_probability
 from scoring_engine.constants import DISABLED_FACTORS
 
-ABSOLUTE_SCORE_FACTORS = {"style_trkprof_edge"}
+ABSOLUTE_SCORE_FACTORS = {"style_trkprof_edge", "draw_stats"}
 
 class ScoringEngine:
     """每場賽事獨立計分排名系統"""
@@ -332,7 +332,10 @@ class ScoringEngine:
 
         total_score = np.zeros(len(scored_df))
         for factor_name, weight in weights_at_time.items():
-            total_score += scored_df[f"{factor_name}_score"] * float(weight or 0.0)
+            contrib = scored_df[f"{factor_name}_score"]
+            if factor_name in ABSOLUTE_SCORE_FACTORS:
+                contrib = contrib / 10.0
+            total_score += contrib * float(weight or 0.0)
         
         scored_df["total_score"] = total_score
         # 總分越高，名次越前 (rank 1)

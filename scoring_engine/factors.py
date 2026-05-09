@@ -1384,12 +1384,7 @@ class FactorCalculator:
                 conf = ((runs + ps) / (runs + ps + float(cfg["confidence_runs"]))) if (runs + ps + float(cfg["confidence_runs"])) > 0 else 0.0
                 per_draw[dd] = {"runs": runs, "win": win_rate, "place": place_rate, "sw": sw, "sp": sp, "conf": conf}
 
-            best_sw = max([v["sw"] for v in per_draw.values()]) if per_draw else 0.0
-            best_sp = max([v["sp"] for v in per_draw.values()]) if per_draw else 0.0
-            if best_sw <= 0:
-                best_sw = 1.0
-            if best_sp <= 0:
-                best_sp = 1.0
+            prior_edge = (float(cfg["win_w"]) * float(cfg["prior_win_rate"])) + (float(cfg["place_w"]) * float(cfg["prior_place_rate"]))
             
             for _, row in self.df.iterrows():
                 try:
@@ -1399,41 +1394,25 @@ class FactorCalculator:
                     
                 if draw in per_draw:
                     st = per_draw[draw]
-                    base = (float(cfg["win_w"]) * (st["sw"] / best_sw)) + (float(cfg["place_w"]) * (st["sp"] / best_sp))
-                    if base < 0.0:
-                        base = 0.0
-                    score = 10.0 * float(base) * float(st["conf"])
-                    scores.append(score)
+                    edge0 = (float(cfg["win_w"]) * float(st["sw"])) + (float(cfg["place_w"]) * float(st["sp"]))
+                    edge_pct = float(prior_edge) + (float(st["conf"]) * (float(edge0) - float(prior_edge)))
+                    scores.append(edge_pct)
                     lab_p = "Top4" if use_top4 else "上名"
                     displays.append(
-                        f"第{draw}檔 | 勝{st['win']:.1f}%→{st['sw']:.1f}% | {lab_p}{st['place']:.1f}%→{st['sp']:.1f}% | n{st['runs']:.0f} | conf{st['conf']:.2f}"
+                        f"第{draw}檔 | 勝{st['win']:.1f}%→{st['sw']:.1f}% | {lab_p}{st['place']:.1f}%→{st['sp']:.1f}% | n{st['runs']:.0f} | conf{st['conf']:.2f} | 評分{edge_pct:.1f}%"
                     )
                 else:
-                    scores.append(None)
-                    displays.append(f"第{draw}檔 | 無統計數據")
+                    scores.append(float(prior_edge))
+                    displays.append(f"第{draw}檔 | 無統計數據 | 評分{float(prior_edge):.1f}%")
         else:
-            # 預設簡單邏輯：檔位越小，分數越高 (1檔 10分, 14檔 1分)
-            max_draw = 0
-            for _, row in self.df.iterrows():
-                try:
-                    d = int(row.get("draw", 0))
-                except (ValueError, TypeError):
-                    d = 0
-                if d > max_draw:
-                    max_draw = d
-            if max_draw <= 1:
-                max_draw = 14
+            prior_edge = (float(cfg["win_w"]) * float(cfg["prior_win_rate"])) + (float(cfg["place_w"]) * float(cfg["prior_place_rate"]))
             for _, row in self.df.iterrows():
                 try:
                     draw = int(row.get("draw", 0))
                 except (ValueError, TypeError):
                     draw = 0
-                if draw > 0:
-                    score = 10.0 * float(max_draw - draw) / float(max_draw - 1)
-                else:
-                    score = 0.0
-                scores.append(score)
-                displays.append(f"第 {draw} 檔 (未載入官方統計)")
+                scores.append(float(prior_edge))
+                displays.append(f"第{draw}檔 | 未載入官方統計 | 評分{float(prior_edge):.1f}%")
 
         non_missing = [v for v in scores if v is not None]
         mid = float(pd.Series(non_missing).median()) if non_missing else 0.0
