@@ -10,7 +10,24 @@ from sqlalchemy import func
 from sklearn.metrics import roc_auc_score
 
 from database.models import Race, RaceEntry, RaceResult, ScoringFactor, SystemConfig
-from scoring_engine.member_stats import HIT_METRICS, _calc_hits
+
+
+def _calc_hits_partial(pred: List[int], act: List[int]) -> Dict[str, int]:
+    p2 = pred[:2]
+    p3 = pred[:3]
+    a1 = act[:1]
+    a3 = act[:3]
+    if len(a1) < 1 or len(p2) < 2 or len(p3) < 3 or len(a3) < 3:
+        return {}
+
+    winner = int(a1[0])
+    top3 = {int(x) for x in a3}
+    return {
+        "w2": int(winner in set(p2)),
+        "p2": int(len(set(p2) & top3) >= 1),
+        "p3": int(len(set(p3) & top3) >= 1),
+        "pq3": int(len(set(p3) & top3) >= 2),
+    }
 
 
 def _is_missing_display(x: Any) -> bool:
@@ -84,7 +101,7 @@ def _auc_safe(y: List[int], s: List[float]) -> Optional[float]:
 def evaluate_single_factor(
     session: Session,
     race_ids: List[int],
-    actual_top5_by_race: Dict[int, List[int]],
+    actual_topk_by_race: Dict[int, List[int]],
     factor_name: str,
     top_k: int = 5,
 ) -> Dict[str, Any]:
@@ -98,6 +115,7 @@ def evaluate_single_factor(
         .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
         .filter(RaceEntry.race_id.in_(list(race_ids)))
         .filter(ScoringFactor.factor_name == fn)
+        .filter(RaceResult.rank != None)
         .all()
     )
 
@@ -125,29 +143,27 @@ def evaluate_single_factor(
             miss_disp += 1
         by_race.setdefault(rid_i, []).append((sc_f, hn_i))
         scores_all.append(sc_f)
-        if rk_i > 0:
-            y_w2.append(1 if rk_i <= 2 else 0)
-            y_top3.append(1 if rk_i <= 3 else 0)
-            score_sum += sc_f
-            score_sum2 += sc_f * sc_f
+        y_w2.append(1 if rk_i <= 2 else 0)
+        y_top3.append(1 if rk_i <= 3 else 0)
+        score_sum += sc_f
+        score_sum2 += sc_f * sc_f
 
     races = 0
-    hit_sum = {str(k): 0 for k in list(HIT_METRICS)}
-    for rid, act_top5 in actual_top5_by_race.items():
+    hit_sum = {"w2": 0, "pq3": 0, "p2": 0, "p3": 0}
+    for rid, act_topk in actual_topk_by_race.items():
         if rid not in by_race:
             continue
         items = by_race.get(rid) or []
-        if len(items) < int(top_k or 0) or not act_top5 or len(act_top5) < int(top_k or 0):
+        if len(items) < int(top_k or 0) or not act_topk or len(act_topk) < int(top_k or 0):
             continue
         items.sort(key=lambda x: (-x[0], x[1]))
         pred = [hn for _, hn in items[: int(top_k or 0)]]
-        hits = _calc_hits(pred, act_top5[: int(top_k or 0)])
+        hits = _calc_hits_partial(pred, act_topk[: int(top_k or 0)])
         if not hits:
             continue
         races += 1
-        for k in list(HIT_METRICS):
-            if k in hits:
-                hit_sum[str(k)] = int(hit_sum.get(str(k)) or 0) + int(hits.get(k) or 0)
+        for k in ("w2", "pq3", "p2", "p3"):
+            hit_sum[str(k)] = int(hit_sum.get(str(k)) or 0) + int(hits.get(k) or 0)
 
     auc_w2 = _auc_safe(y_w2, scores_all)
     auc_top3 = _auc_safe(y_top3, scores_all)
@@ -212,11 +228,11 @@ def evaluate_factors(
         return res
 
     total_entries = int(session.query(RaceEntry.id).filter(RaceEntry.race_id.in_(list(race_ids))).count() or 0)
-    actual_top5_by_race = _actual_topk_by_race(session, race_ids, int(top_k or 0))
+    actual_topk_by_race = _actual_topk_by_race(session, race_ids, int(top_k or 0))
 
     rows_out: List[Dict[str, Any]] = []
     for fn in fnames:
-        r = evaluate_single_factor(session, race_ids=race_ids, actual_top5_by_race=actual_top5_by_race, factor_name=fn, top_k=int(top_k or 0))
+        r = evaluate_single_factor(session, race_ids=race_ids, actual_topk_by_race=actual_topk_by_race, factor_name=fn, top_k=int(top_k or 0))
         entries = int(r.get("entries") or 0)
         if total_entries > 0:
             r["coverage_pct"] = float(entries) / float(total_entries) * 100.0
@@ -250,4 +266,3 @@ def evaluate_factors(
         session.commit()
 
     return res
-

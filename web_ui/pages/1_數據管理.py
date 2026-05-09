@@ -1249,7 +1249,7 @@ with tab_hits:
                         if run:
                             cache_key = ""
                             if use_cache:
-                                cache_key = f"factor_eval:{d1.isoformat()}:{d2.isoformat()}:top{int(top_k)}:v1"
+                                cache_key = f"factor_eval:{d1.isoformat()}:{d2.isoformat()}:top{int(top_k)}:v2"
                             res = evaluate_factors(
                                 session_hit,
                                 d1=d1,
