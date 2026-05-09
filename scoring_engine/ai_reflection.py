@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from typing import Dict, Any, List, Optional, Tuple
 
@@ -167,7 +167,15 @@ def list_reflection_candidates(
     only_unreflected: bool = True,
     limit: int = 200,
 ) -> List[Dict[str, Any]]:
-    q = session.query(Race).order_by(Race.race_date.desc(), Race.race_no.asc()).limit(int(limit or 200))
+    q = session.query(Race)
+    if date_str:
+        try:
+            d0 = datetime.strptime(str(date_str), "%Y/%m/%d")
+            d1 = d0 + timedelta(days=1)
+            q = q.filter(Race.race_date >= d0, Race.race_date < d1)
+        except Exception:
+            pass
+    q = q.order_by(Race.race_date.desc(), Race.race_no.asc()).limit(int(limit or 200))
     races = q.all()
     out: List[Dict[str, Any]] = []
     for r in races:
