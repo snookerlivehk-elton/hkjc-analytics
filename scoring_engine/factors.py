@@ -456,7 +456,7 @@ class FactorCalculator:
     def _calculate_style_trkprof_edge(self):
         from database.models import Race, RaceTrackCondition, SystemConfig
         from scoring_engine.track_conditions import normalize_going
-        from scoring_engine.track_profile import load_track_profile
+        from scoring_engine.track_profile import load_track_profile, _venue_code
 
         cfg_default = {"prior_races": 12.0, "w_place": 0.6, "w_win": 0.4}
         try:
@@ -511,6 +511,7 @@ class FactorCalculator:
             if is_awt:
                 course_type = "AWT"
         venue = str(getattr(race, "venue", "") or "").strip()
+        venue_key = _venue_code(venue)
         distance = getattr(race, "distance", None)
 
         def _dist_bucket(d: Any) -> str:
@@ -519,7 +520,7 @@ class FactorCalculator:
             except Exception:
                 di = 0
             if di <= 0:
-                return ""
+                return "U"
             if di <= 1200:
                 return "S"
             if di <= 1600:
@@ -618,23 +619,23 @@ class FactorCalculator:
 
         prof = None
         src_tag = ""
-        if going_code and venue:
+        if going_code and venue_key:
             try:
-                prof = load_track_profile(self.session, venue=venue, going_code=going_code, course_type=course_type or "U", distance=distance)
+                prof = load_track_profile(self.session, venue=venue_key, going_code=going_code, course_type=course_type or "U", distance=distance)
                 src_tag = "A"
             except Exception:
                 prof = None
 
         dist_b = _dist_bucket(distance)
         if (not isinstance(prof, dict)) or (int(prof.get("winner_style_early_samples") or 0) <= 0 and int(prof.get("top4_style_early_samples") or 0) <= 0):
-            if venue and going_code and dist_b:
-                p2 = _aggregate_profiles_like(f"trkprof:{venue}:{going_code}:%:{dist_b}", key_pred=_match_surface_key)
+            if venue_key and going_code and dist_b:
+                p2 = _aggregate_profiles_like(f"trkprof:{venue_key}:{going_code}:%:{dist_b}", key_pred=_match_surface_key)
                 if isinstance(p2, dict):
                     prof = p2
                     src_tag = "B"
         if (not isinstance(prof, dict)) or (int(prof.get("winner_style_early_samples") or 0) <= 0 and int(prof.get("top4_style_early_samples") or 0) <= 0):
-            if venue and dist_b:
-                p3 = _aggregate_profiles_like(f"trkprof:{venue}:%:%:{dist_b}", key_pred=_match_surface_key)
+            if venue_key and dist_b:
+                p3 = _aggregate_profiles_like(f"trkprof:{venue_key}:%:%:{dist_b}", key_pred=_match_surface_key)
                 if isinstance(p3, dict):
                     prof = p3
                     src_tag = "C"
