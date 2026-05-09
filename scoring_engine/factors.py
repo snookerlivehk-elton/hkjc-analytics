@@ -501,12 +501,117 @@ class FactorCalculator:
         venue = str(getattr(race, "venue", "") or "").strip()
         distance = getattr(race, "distance", None)
 
+        def _dist_bucket(d: Any) -> str:
+            try:
+                di = int(d or 0)
+            except Exception:
+                di = 0
+            if di <= 0:
+                return ""
+            if di <= 1200:
+                return "S"
+            if di <= 1600:
+                return "M"
+            return "L"
+
+        def _aggregate_profiles_like(like_pat: str) -> Optional[Dict[str, Any]]:
+            rows = (
+                self.session.query(SystemConfig.key, SystemConfig.value)
+                .filter(SystemConfig.key.like(like_pat))
+                .limit(300)
+                .all()
+            )
+            if not rows:
+                return None
+
+            w_counts = {"前領": 0.0, "中置": 0.0, "後上": 0.0}
+            t_counts = {"前領": 0.0, "中置": 0.0, "後上": 0.0}
+            w_samples_total = 0.0
+            t_samples_total = 0.0
+            n_races_total = 0
+
+            for _, v in rows:
+                if not isinstance(v, dict):
+                    continue
+                nr = 0
+                try:
+                    nr = int(v.get("n_races") or 0)
+                except Exception:
+                    nr = 0
+                if nr > 0:
+                    n_races_total += nr
+
+                w_samples = 0
+                t_samples = 0
+                try:
+                    w_samples = int(v.get("winner_style_early_samples") or 0)
+                except Exception:
+                    w_samples = 0
+                try:
+                    t_samples = int(v.get("top4_style_early_samples") or 0)
+                except Exception:
+                    t_samples = 0
+
+                w_pct = v.get("winner_style_early_pct") or v.get("winner_style_pct") or {}
+                t_pct = v.get("top4_style_early_pct") or v.get("top4_style_pct") or {}
+                if isinstance(w_pct, dict) and w_samples > 0:
+                    for lab in w_counts.keys():
+                        try:
+                            w_counts[lab] += (float(w_pct.get(lab) or 0.0) / 100.0) * float(w_samples)
+                        except Exception:
+                            continue
+                    w_samples_total += float(w_samples)
+                if isinstance(t_pct, dict) and t_samples > 0:
+                    for lab in t_counts.keys():
+                        try:
+                            t_counts[lab] += (float(t_pct.get(lab) or 0.0) / 100.0) * float(t_samples)
+                        except Exception:
+                            continue
+                    t_samples_total += float(t_samples)
+
+            if w_samples_total <= 0.0 and t_samples_total <= 0.0:
+                return None
+
+            w_out = {}
+            t_out = {}
+            if w_samples_total > 0.0:
+                for lab in w_counts.keys():
+                    w_out[lab] = float(max(0.0, min(100.0, (w_counts[lab] / w_samples_total) * 100.0)))
+            if t_samples_total > 0.0:
+                for lab in t_counts.keys():
+                    t_out[lab] = float(max(0.0, min(100.0, (t_counts[lab] / t_samples_total) * 100.0)))
+
+            return {
+                "n_races": int(n_races_total),
+                "winner_style_early_pct": w_out,
+                "top4_style_early_pct": t_out,
+                "winner_style_early_samples": int(round(w_samples_total)),
+                "top4_style_early_samples": int(round(t_samples_total)),
+                "agg_like": str(like_pat),
+            }
+
         prof = None
+        src_tag = ""
         if going_code and venue:
             try:
                 prof = load_track_profile(self.session, venue=venue, going_code=going_code, course_type=course_type or "U", distance=distance)
+                src_tag = "A"
             except Exception:
                 prof = None
+
+        dist_b = _dist_bucket(distance)
+        if (not isinstance(prof, dict)) or (int(prof.get("winner_style_early_samples") or 0) <= 0 and int(prof.get("top4_style_early_samples") or 0) <= 0):
+            if venue and course_type and dist_b:
+                p2 = _aggregate_profiles_like(f"trkprof:{venue}:%:{course_type}:{dist_b}")
+                if isinstance(p2, dict):
+                    prof = p2
+                    src_tag = "B"
+        if (not isinstance(prof, dict)) or (int(prof.get("winner_style_early_samples") or 0) <= 0 and int(prof.get("top4_style_early_samples") or 0) <= 0):
+            if venue and dist_b:
+                p3 = _aggregate_profiles_like(f"trkprof:{venue}:%:%:{dist_b}")
+                if isinstance(p3, dict):
+                    prof = p3
+                    src_tag = "C"
 
         n_races = int(prof.get("n_races") or 0) if isinstance(prof, dict) else 0
         winner_pct = (prof.get("winner_style_early_pct") if isinstance(prof, dict) else None) or {}
@@ -620,7 +725,7 @@ class FactorCalculator:
             edge_pct = _to_edge_score_pct(p_place, p_win)
             pw = _shrink_pct(p_win)
             pp = _shrink_pct(p_place)
-            disp = f"{label_guess}｜勝出{round((pw if pw is not None else baseline_pct),1)}%｜入圍Top4{round((pp if pp is not None else baseline_pct),1)}%｜樣本{n_races}｜跑法樣本(勝/入){winner_samples}/{top4_samples}｜評分{round(edge_pct,1)}%"
+            disp = f"{label_guess}｜勝出{round((pw if pw is not None else baseline_pct),1)}%｜入圍Top4{round((pp if pp is not None else baseline_pct),1)}%｜樣本{n_races}｜跑法樣本(勝/入){winner_samples}/{top4_samples}｜採樣{(src_tag or 'N')}｜評分{round(edge_pct,1)}%"
             scores.append(edge_pct)
             displays.append(disp)
 

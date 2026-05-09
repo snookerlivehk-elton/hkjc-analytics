@@ -378,6 +378,34 @@ else:
                         and (str(race.race_no) in config.value or race.race_no in config.value)
                     )
 
+                if selected_factor == "跑法適配分（跑道×場地狀態｜勝出/入圍）":
+                    from database.models import RaceEntry, ScoringFactor
+
+                    sample = (
+                        session.query(ScoringFactor.raw_data_display)
+                        .join(RaceEntry, RaceEntry.id == ScoringFactor.entry_id)
+                        .filter(
+                            RaceEntry.race_id == selected_race_id,
+                            ScoringFactor.factor_name == "style_trkprof_edge",
+                        )
+                        .first()
+                    )
+
+                    needs_rescore = False
+                    if not sample or not sample[0]:
+                        needs_rescore = True
+                    elif "評分" not in str(sample[0] or ""):
+                        needs_rescore = True
+
+                    auto_key = f"auto_rescore_style_trkprof_edge_{selected_race_id}"
+                    if needs_rescore and not st.session_state.get(auto_key, False):
+                        st.session_state[auto_key] = True
+                        from scoring_engine.core import ScoringEngine
+
+                        engine = ScoringEngine(session)
+                        engine.score_race(selected_race_id)
+                        st.rerun()
+
                     sample = (
                         session.query(ScoringFactor.raw_data_display)
                         .join(RaceEntry, RaceEntry.id == ScoringFactor.entry_id)
@@ -646,13 +674,13 @@ else:
                 factor_df = df[view_cols].copy()
                 
                 # 重新命名欄位讓 UI 更清晰
-                factor_df = factor_df.rename(columns={
-                    f"{selected_factor}_raw": "原始數據 (分析基礎)",
-                    selected_factor: "系統標準化得分 (0-10分)"
-                })
+                score_label = "系統標準化得分 (0-10分)"
+                if selected_factor == "跑法適配分（跑道×場地狀態｜勝出/入圍）":
+                    score_label = "評分 (0-100%)"
+                factor_df = factor_df.rename(columns={f"{selected_factor}_raw": "原始數據 (分析基礎)", selected_factor: score_label})
                 
                 # 根據該因子分數進行降序排序
-                factor_df = factor_df.sort_values(by="系統標準化得分 (0-10分)", ascending=False).reset_index(drop=True)
+                factor_df = factor_df.sort_values(by=score_label, ascending=False).reset_index(drop=True)
                 
                 # 加上名次標籤
                 factor_df = factor_df.reset_index(drop=True)
@@ -666,6 +694,42 @@ else:
                         "馬名": st.column_config.TextColumn(width="medium"),
                     }
                 )
+
+                if selected_factor == "跑法適配分（跑道×場地狀態｜勝出/入圍）":
+                    st.markdown("---")
+                    with st.expander("⚙️ 調整勝出% / 入圍% 比重（即時儲存並重算）"):
+                        from database.models import SystemConfig
+                        cfg = session.query(SystemConfig).filter_by(key="style_trkprof_edge_config").first()
+                        cur = {"w_win": 0.4, "w_place": 0.6, "prior_races": 0.0}
+                        if cfg and isinstance(cfg.value, dict):
+                            for k in cur.keys():
+                                if k in cfg.value:
+                                    try:
+                                        cur[k] = float(cfg.value[k])
+                                    except Exception:
+                                        pass
+
+                        c1, c2, c3 = st.columns([1, 1, 1])
+                        w_win = c1.slider("勝出% 比重", min_value=0.0, max_value=1.0, value=float(cur["w_win"]), step=0.05)
+                        w_place = c2.slider("入圍Top4% 比重", min_value=0.0, max_value=1.0, value=float(cur["w_place"]), step=0.05)
+                        prior = c3.number_input("保守化 prior_races（0=關閉）", min_value=0.0, max_value=200.0, value=float(cur["prior_races"]), step=1.0)
+
+                        tw = max(1e-9, abs(w_win) + abs(w_place))
+                        w_win_n = abs(w_win) / tw
+                        w_place_n = abs(w_place) / tw
+                        st.caption(f"實際使用比重：勝出 {round(w_win_n,2)} ／ 入圍 {round(w_place_n,2)}（自動歸一化）")
+
+                        if st.button("💾 儲存並重算本場", key=f"save_style_edge_cfg_{selected_race_id}"):
+                            payload = {"w_win": float(w_win_n), "w_place": float(w_place_n), "prior_races": float(prior)}
+                            if not cfg:
+                                cfg = SystemConfig(key="style_trkprof_edge_config", value=payload, description="跑法適配分參數")
+                                session.add(cfg)
+                            else:
+                                cfg.value = payload
+                            session.commit()
+                            from scoring_engine.core import ScoringEngine
+                            ScoringEngine(session).score_race(selected_race_id)
+                            st.rerun()
                 
                 # 針對特定因子顯示詳細說明與參數調整
                 if selected_factor == "近期狀態 (Last 6 Runs)":
