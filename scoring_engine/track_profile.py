@@ -444,6 +444,13 @@ def compute_track_profiles(
 
     index = []
     for key, st in agg.items():
+        w_early_samples = int(sum(int(st["winner_early"].get(k) or 0) for k in ["front", "mid", "back"]) or 0)
+        w_mid_samples = int(sum(int(st["winner_mid"].get(k) or 0) for k in ["front", "mid", "back"]) or 0)
+        w_late_samples = int(sum(int(st["winner_late"].get(k) or 0) for k in ["front", "mid", "back"]) or 0)
+        t_early_samples = int(sum(int(st["top4_early"].get(k) or 0) for k in ["front", "mid", "back"]) or 0)
+        t_mid_samples = int(sum(int(st["top4_mid"].get(k) or 0) for k in ["front", "mid", "back"]) or 0)
+        t_late_samples = int(sum(int(st["top4_late"].get(k) or 0) for k in ["front", "mid", "back"]) or 0)
+
         w_early = _pct(st["winner_early"], ["front", "mid", "back"])
         w_mid = _pct(st["winner_mid"], ["front", "mid", "back"])
         w_late = _pct(st["winner_late"], ["front", "mid", "back"])
@@ -467,11 +474,17 @@ def compute_track_profiles(
             "winner_style_pct": {STYLE_LABELS[k]: v for k, v in w_early.items()},
             "top4_style_pct": {STYLE_LABELS[k]: v for k, v in t_early.items()},
             "winner_style_early_pct": {STYLE_LABELS[k]: v for k, v in w_early.items()},
+            "winner_style_early_samples": w_early_samples,
             "winner_style_mid_pct": {STYLE_LABELS[k]: v for k, v in w_mid.items()},
+            "winner_style_mid_samples": w_mid_samples,
             "winner_style_late_pct": {STYLE_LABELS[k]: v for k, v in w_late.items()},
+            "winner_style_late_samples": w_late_samples,
             "top4_style_early_pct": {STYLE_LABELS[k]: v for k, v in t_early.items()},
+            "top4_style_early_samples": t_early_samples,
             "top4_style_mid_pct": {STYLE_LABELS[k]: v for k, v in t_mid.items()},
+            "top4_style_mid_samples": t_mid_samples,
             "top4_style_late_pct": {STYLE_LABELS[k]: v for k, v in t_late.items()},
+            "top4_style_late_samples": t_late_samples,
             "winner_style_composite_pct": {COMPOSITE_LABELS[k]: v for k, v in w_comp.items()},
             "top4_style_composite_pct": {COMPOSITE_LABELS[k]: v for k, v in t_comp.items()},
             "pace_races": int(st.get("pace_races") or 0),

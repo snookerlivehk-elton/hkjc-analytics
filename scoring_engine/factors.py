@@ -511,6 +511,21 @@ class FactorCalculator:
         n_races = int(prof.get("n_races") or 0) if isinstance(prof, dict) else 0
         winner_pct = (prof.get("winner_style_early_pct") if isinstance(prof, dict) else None) or {}
         top4_pct = (prof.get("top4_style_early_pct") if isinstance(prof, dict) else None) or {}
+        winner_samples = int(prof.get("winner_style_early_samples") or 0) if isinstance(prof, dict) else 0
+        top4_samples = int(prof.get("top4_style_early_samples") or 0) if isinstance(prof, dict) else 0
+
+        if (not winner_samples) and isinstance(winner_pct, dict) and winner_pct:
+            try:
+                if float(sum(float(x or 0.0) for x in winner_pct.values())) <= 0.0:
+                    winner_pct = {}
+            except Exception:
+                pass
+        if (not top4_samples) and isinstance(top4_pct, dict) and top4_pct:
+            try:
+                if float(sum(float(x or 0.0) for x in top4_pct.values())) <= 0.0:
+                    top4_pct = {}
+            except Exception:
+                pass
 
         baseline = 1.0 / 3.0
 
@@ -607,7 +622,7 @@ class FactorCalculator:
             sc = _to_edge_score(p_place, p_win)
             pw = _shrink(p_win)
             pp = _shrink(p_place)
-            disp = f"{label_guess}｜勝出{round((pw or baseline)*100,1)}%｜入圍Top4{round((pp or baseline)*100,1)}%｜樣本{n_races}｜score{round(sc,3)}"
+            disp = f"{label_guess}｜勝出{round((pw or baseline)*100,1)}%｜入圍Top4{round((pp or baseline)*100,1)}%｜樣本{n_races}｜跑法樣本(勝/入){winner_samples}/{top4_samples}｜score{round(sc,3)}"
             scores.append(sc)
             displays.append(disp)
 
