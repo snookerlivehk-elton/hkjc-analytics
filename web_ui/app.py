@@ -937,7 +937,8 @@ def main():
 
         main_key = f"ai_race_report:{date_key}:{rn}"
         main_cfg = session.query(SystemConfig).filter_by(key=main_key).first()
-        main_val = main_cfg.value if (main_cfg and isinstance(main_cfg.value, dict)) else {}
+        main_payload, _ = unwrap_value(main_cfg.value) if main_cfg else (None, {})
+        main_val = main_payload if isinstance(main_payload, dict) else {}
         main_report = str(main_val.get("report") or "").strip()
 
         if main_report:
@@ -963,7 +964,8 @@ def main():
             for c in scenario_cfgs:
                 k = str(getattr(c, "key", "") or "")
                 tag = k.split(scenario_prefix, 1)[1] if scenario_prefix in k else k
-                v = c.value if isinstance(c.value, dict) else {}
+                payload, _ = unwrap_value(c.value)
+                v = payload if isinstance(payload, dict) else {}
                 rpt = str(v.get("report") or "").strip()
                 if not rpt:
                     continue
@@ -1067,6 +1069,31 @@ def main():
         st.info("⚠️ 獨立條件分析頁同理，計分完成後即可正常顯示。")
         
     if not df.empty:
+        try:
+            from scoring_engine.constants import factor_algo_version
+            run_cfg = session.query(SystemConfig).filter_by(key=f"race_score_run:{int(selected_race_id)}").first()
+            run_payload, _ = unwrap_value(run_cfg.value) if run_cfg else (None, {})
+            run_payload = run_payload if isinstance(run_payload, dict) else {}
+            used = run_payload.get("factor_algo_versions") if isinstance(run_payload.get("factor_algo_versions"), dict) else {}
+            mism = []
+            for fn in ["draw_stats", "style_trkprof_edge"]:
+                cur = factor_algo_version(fn)
+                used_v = str((used or {}).get(fn) or "").strip()
+                if used_v and used_v != cur:
+                    mism.append(f"{fn}: {used_v}→{cur}")
+            if mism:
+                st.warning("偵測到本場計分口徑已更新，現有分數可能未重算生效：" + "；".join(mism))
+                if st.session_state.get("is_superadmin", False):
+                    c1, c2 = st.columns([2, 3])
+                    token = c1.text_input("輸入 RUN 以重算本場", value="", key=f"rescore_run_{selected_race_id}")
+                    ok = str(token or "").strip().upper() == "RUN"
+                    if c2.button("🔄 立即重算本場", use_container_width=True, disabled=not ok, key=f"rescore_btn_{selected_race_id}"):
+                        ScoringEngine(session).score_race(int(selected_race_id))
+                        st.rerun()
+                else:
+                    st.info("如需立即生效，請到「數據管理」或「獨立條件分析」按重算。")
+        except Exception:
+            pass
         member_email = st.session_state.get("member_email")
         if member_email:
             presets = _get_member_presets(session, member_email)
@@ -2296,40 +2323,32 @@ def main():
                     st.info("本場尚未有派彩資料。")
 
                 with st.expander("📝 沿途走勢評述（賽後）", expanded=False):
-                    date_slash = ""
-                    try:
-                        date_slash = selected_date_input.strftime("%Y/%m/%d")
-                    except Exception:
-                        date_slash = ""
-                    try:
-                        rn = int(st.session_state.get("selected_race_no") or 0)
-                    except Exception:
-                        rn = 0
+                    from database.models import RaceCoRunning
 
-                    cfg_key = f"race_corunning:{date_slash}:{rn}" if date_slash and rn else ""
-                    cfg = session.query(SystemConfig).filter_by(key=cfg_key).first() if cfg_key else None
-                    payload, meta = unwrap_value(cfg.value) if cfg else (None, {})
-                    items = payload.get("items") if isinstance(payload, dict) else None
+                    row = session.query(RaceCoRunning).filter_by(race_id=int(selected_race_id)).first()
+                    items = row.items if (row and isinstance(row.items, dict)) else None
                     if not isinstance(items, dict) or not items:
-                        st.info("未找到走勢評述快照。請先在後台執行「抓取賽果與派彩」（並確保該日已出賽後報告）。")
+                        st.info("未找到走勢評述資料。請先在後台執行「抓取賽果與派彩」（賽後）。")
                     else:
                         try:
                             n_items = len(items)
                         except Exception:
                             n_items = 0
-                        saved_at = str((meta or {}).get("saved_at") or "").strip()
-                        source = str((meta or {}).get("source") or "").strip()
-                        fetched_at = str((meta or {}).get("fetched_at") or "").strip()
-                        schema = str((meta or {}).get("schema") or "").strip()
-                        cap = f"key={cfg_key}｜筆數={n_items}"
+                        meta = row.meta if isinstance(row.meta, dict) else {}
+                        source = str(getattr(row, "source", "") or "").strip()
+                        fetched_at = ""
+                        try:
+                            fetched_at = row.fetched_at.isoformat() if getattr(row, "fetched_at", None) else ""
+                        except Exception:
+                            fetched_at = ""
+                        schema = str(meta.get("schema") or "").strip()
+                        cap = f"race_id={int(selected_race_id)}｜筆數={n_items}"
                         if source:
                             cap += f"｜source={source}"
                         if schema:
                             cap += f"｜schema={schema}"
                         if fetched_at:
                             cap += f"｜fetched_at={fetched_at}"
-                        elif saved_at:
-                            cap += f"｜saved_at={saved_at}"
                         st.caption(cap)
 
                         rows = []
@@ -2343,8 +2362,8 @@ def main():
                             rows.append(
                                 {
                                     "馬號": horse_no,
-                                    "馬名": str(v.get("horse_name") or "").strip(),
-                                    "走勢評述": str(v.get("commentary") or "").strip(),
+                                    "馬名": str(v.get("horse_name") or v.get("name") or "").strip(),
+                                    "走勢評述": str(v.get("commentary") or v.get("comment") or "").strip(),
                                 }
                             )
                         rows.sort(key=lambda x: int(x.get("馬號") or 0))

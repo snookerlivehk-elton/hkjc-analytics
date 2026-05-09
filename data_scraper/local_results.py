@@ -3,6 +3,8 @@ import requests
 from bs4 import BeautifulSoup
 from typing import Any, Dict, List, Optional
 
+from scoring_engine.normalization import normalize_course_type, surface_code, venue_code
+
 
 class LocalResultsScraper:
     def __init__(self):
@@ -44,10 +46,7 @@ class LocalResultsScraper:
             going = m.group(1).strip()
 
         venue = ""
-        if ("跑馬地" in text) or ("Happy Valley" in text):
-            venue = "HV"
-        elif ("沙田" in text) or ("Sha Tin" in text):
-            venue = "ST"
+        venue = venue_code("HV" if (("跑馬地" in text) or ("Happy Valley" in text)) else ("ST" if (("沙田" in text) or ("Sha Tin" in text)) else ""))
 
         distance = 0
         m = re.search(r"(\d{3,4})\s*米", text)
@@ -79,6 +78,9 @@ class LocalResultsScraper:
                 track_type = f"{venue_txt}草地\"{course_txt}\""
             else:
                 track_type = ""
+
+        sc = surface_code(surface, track_type, course_type)
+        course_type = normalize_course_type(course_type, surface_code_=sc)
 
         times = re.findall(r"\(\s*(\d+:\d{2}\.\d{2}|\d+\.\d{2})\s*\)", text)
         race_time = ""

@@ -160,6 +160,18 @@ class RaceDividend(Base):
     meta = Column(JSON)
     scraped_at = Column(DateTime, default=datetime.now)
 
+class RaceCoRunning(Base):
+    __tablename__ = "race_corunning"
+    id = Column(Integer, primary_key=True)
+    race_id = Column(Integer, ForeignKey("races.id"), unique=True, index=True, nullable=False)
+    race_date = Column(DateTime, index=True, nullable=False)
+    race_no = Column(Integer, index=True, nullable=False)
+    source = Column(String(50), default="HKJC")
+    items = Column(JSON, nullable=False)  # {horse_no: {horse_name, commentary}}
+    meta = Column(JSON)
+    fetched_at = Column(DateTime, default=datetime.now, index=True)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
 class ScoringWeight(Base):
     """計分權重配置"""
     __tablename__ = 'scoring_weights'

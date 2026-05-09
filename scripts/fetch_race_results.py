@@ -9,13 +9,14 @@ if root_path not in sys.path:
     sys.path.insert(0, root_path)
 
 from database.connection import init_db, get_session
-from database.models import Race, RaceEntry, RaceResult, RaceDividend, RaceTrackCondition, SystemConfig
+from database.models import Race, RaceEntry, RaceResult, RaceDividend, RaceTrackCondition, SystemConfig, RaceCoRunning
 from data_scraper.local_results import LocalResultsScraper
 from data_scraper.corunning import CoRunningScraper
 from scoring_engine.member_stats import update_all_members_preset_stats_for_race_date
 from scoring_engine.prediction_snapshots import finalize_prediction_top5_hits_for_race_date
 from scoring_engine.track_conditions import normalize_going
 from scoring_engine.config_value import build_meta, unwrap_value, wrap_value
+from scoring_engine.normalization import venue_code
 
 
 def parse_finish_time_to_seconds(s: str):
@@ -51,10 +52,7 @@ def parse_finish_time_to_seconds(s: str):
 
 
 def venue_to_racecourse(venue: str) -> str:
-    v = str(venue or "")
-    if "跑馬地" in v or "HV" in v:
-        return "HV"
-    return "ST"
+    return venue_code(venue)
 
 
 def main():
@@ -152,33 +150,31 @@ def main():
 
         try:
             date_yyyymmdd = race_date_dt.strftime("%Y%m%d")
-            key2 = f"race_corunning:{target_date}:{int(race.race_no)}"
-            cfg2 = session.query(SystemConfig).filter_by(key=key2).first()
-            val2, _ = unwrap_value(cfg2.value) if cfg2 else (None, {})
-            has_items = bool(cfg2 and isinstance(val2, dict) and isinstance(val2.get("items"), dict) and val2.get("items"))
             force = str(os.environ.get("FORCE_CORUNNING") or "").strip().lower() in ("1", "true", "yes")
+            row2 = session.query(RaceCoRunning).filter_by(race_id=int(race.id)).first()
+            has_items = bool(row2 and isinstance(row2.items, dict) and row2.items)
             if (not has_items) or force:
                 res2 = corunning.scrape_single_race(date_yyyymmdd=date_yyyymmdd, race_no=int(race.race_no))
                 items = res2.get("items") if isinstance(res2, dict) else None
                 if isinstance(items, list) and items:
                     by_no = {str(int(x.get("horse_no"))): x for x in items if int(x.get("horse_no") or 0) > 0}
-                    if not cfg2:
-                        cfg2 = SystemConfig(key=key2, description="賽後沿途走勢評述（corunning）快照")
-                        session.add(cfg2)
-                    payload_cor = {
-                        "race_id": int(race.id),
-                        "race_date": target_date,
-                        "race_no": int(race.race_no),
-                        "date_yyyymmdd": date_yyyymmdd,
-                        "items": by_no,
+                    if not row2:
+                        row2 = RaceCoRunning(
+                            race_id=int(race.id),
+                            race_date=race.race_date,
+                            race_no=int(race.race_no or 0),
+                            source="HKJC",
+                            items={},
+                        )
+                        session.add(row2)
+                    row2.items = by_no
+                    row2.meta = {
+                        "schema": "race_corunning:v1",
+                        "date_yyyymmdd": str(date_yyyymmdd),
+                        "url": f"https://racing.hkjc.com/zh-hk/local/information/corunning?date={date_yyyymmdd}&raceno={int(race.race_no)}",
+                        "fetched_at": datetime.utcnow().isoformat(),
                     }
-                    m2 = build_meta(
-                        source="HKJC_CORUNNING",
-                        fetched_at=datetime.utcnow().isoformat(),
-                        url=f"https://racing.hkjc.com/zh-hk/local/information/corunning?date={date_yyyymmdd}&raceno={int(race.race_no)}",
-                        schema="race_corunning:v1",
-                    )
-                    cfg2.value = wrap_value(payload_cor, m2)
+                    row2.fetched_at = datetime.utcnow()
         except Exception as e:
             print(f"[警告] 走勢評述抓取失敗：R{int(race.race_no)} {e}")
 

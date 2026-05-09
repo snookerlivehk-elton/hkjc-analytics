@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from typing import Dict, Any, List, Optional, Tuple
 
-from database.models import Race, RaceEntry, SystemConfig
+from database.models import Race, RaceEntry, SystemConfig, RaceCoRunning
 from scoring_engine.ai_advisor import load_ai_settings, load_ai_api_key, call_chat_completions
 from scoring_engine.config_value import build_meta, unwrap_value, wrap_value
 
@@ -113,15 +113,31 @@ def _build_corunning_excerpt(
     max_items: int = 12,
     max_comment_len: int = 180,
 ) -> str:
-    cfg = session.query(SystemConfig).filter_by(key=_corunning_key(date_str, int(race_no))).first()
-    if not cfg:
-        return ""
-    payload, _ = unwrap_value(cfg.value)
-    if not isinstance(payload, dict):
-        return ""
-    items = payload.get("items")
+    items = None
+    try:
+        d0 = datetime.strptime(str(date_str), "%Y/%m/%d")
+        d1 = d0 + timedelta(days=1)
+        row = (
+            session.query(RaceCoRunning)
+            .filter(RaceCoRunning.race_date >= d0, RaceCoRunning.race_date < d1)
+            .filter(RaceCoRunning.race_no == int(race_no))
+            .first()
+        )
+        if row and isinstance(row.items, dict) and row.items:
+            items = row.items
+    except Exception:
+        items = None
+
     if not isinstance(items, dict) or not items:
-        return ""
+        cfg = session.query(SystemConfig).filter_by(key=_corunning_key(date_str, int(race_no))).first()
+        if not cfg:
+            return ""
+        payload, _ = unwrap_value(cfg.value)
+        if not isinstance(payload, dict):
+            return ""
+        items = payload.get("items")
+        if not isinstance(items, dict) or not items:
+            return ""
 
     picked: List[Tuple[int, Dict[str, Any]]] = []
     if isinstance(focus_horse_nos, list) and focus_horse_nos:

@@ -493,10 +493,10 @@ def run_ai_race_summary(
         if going_code:
             if str(going_code_override or "").strip():
                 input_lines.insert(1, f"### 假設場地狀態（going_code）：{going_code}\n")
-            from scoring_engine.track_profile import _surface_code, load_track_profile
-            course_type = str(getattr(race, "course_type", "") or "").strip()
-            if not course_type and _surface_code(race) == "AW":
-                course_type = "AWT"
+            from scoring_engine.track_profile import load_track_profile
+            from scoring_engine.normalization import normalize_course_type, surface_code
+            sc = surface_code(getattr(race, "surface", None), track_type=getattr(race, "track_type", None), course_type=getattr(race, "course_type", None))
+            course_type = normalize_course_type(getattr(race, "course_type", None), surface_code_=sc)
             prof = load_track_profile(
                 session,
                 venue=str(getattr(race, "venue", "") or ""),

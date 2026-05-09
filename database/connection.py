@@ -67,6 +67,7 @@ def init_db():
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_prediction_top5_type_key_date ON prediction_top5 (predictor_type, predictor_key, race_date)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_prediction_top5_type_email_date ON prediction_top5 (predictor_type, member_email, race_date)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_system_configs_updated_at ON system_configs (updated_at)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_race_corunning_race_date_no ON race_corunning (race_date, race_no)"))
     except Exception:
         pass
 

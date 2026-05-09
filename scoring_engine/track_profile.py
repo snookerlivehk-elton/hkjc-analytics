@@ -11,29 +11,20 @@ from sqlalchemy.orm import Session
 from database.models import Race, RaceEntry, RaceResult, RaceTrackCondition, SystemConfig, RaceDividend
 from scoring_engine.track_conditions import normalize_going
 from scoring_engine.config_value import build_meta, unwrap_value, wrap_value
+from scoring_engine.normalization import dist_bucket as _norm_dist_bucket
+from scoring_engine.normalization import surface_code as _norm_surface_code
+from scoring_engine.normalization import normalize_course_type as _norm_course_type
+from scoring_engine.normalization import venue_code as _norm_venue_code
 
 COURSE_TIME_CFG_KEY = "course_time_reference:v1"
 
 
 def _venue_code(venue: str) -> str:
-    v = str(venue or "")
-    if "跑馬地" in v or "HV" in v:
-        return "HV"
-    return "ST"
+    return _norm_venue_code(venue)
 
 
 def _dist_bucket(distance: Optional[int]) -> str:
-    try:
-        d = int(distance or 0)
-    except Exception:
-        d = 0
-    if d <= 0:
-        return "U"
-    if d <= 1200:
-        return "S"
-    if d <= 1600:
-        return "M"
-    return "L"
+    return _norm_dist_bucket(distance)
 
 
 def _parse_positions(runpos: str) -> List[int]:
@@ -135,18 +126,7 @@ def _pacebase_key(venue: str, surface: str, dist_bucket: str) -> str:
     return f"pacebase:{venue}:{surface}:{dist_bucket}"
 
 def _surface_code(race: Race) -> str:
-    s = str(getattr(race, "surface", "") or "").strip()
-    if s:
-        if "泥" in s or "全天候" in s:
-            return "AW"
-        if "草" in s:
-            return "TURF"
-    t = str(getattr(race, "track_type", "") or "").upper()
-    if any(x in t for x in ["ALL WEATHER", "A/W", "AW"]):
-        return "AW"
-    if "TURF" in t:
-        return "TURF"
-    return "U"
+    return _norm_surface_code(getattr(race, "surface", None), track_type=getattr(race, "track_type", None), course_type=getattr(race, "course_type", None))
 
 def _classify_pace(first_split: Optional[float], baseline: Optional[Dict[str, Any]]) -> Optional[str]:
     if first_split is None or not baseline:
@@ -293,8 +273,7 @@ def compute_track_profiles(
         seen_races += 1
         venue = _venue_code(race.venue)
         surface = _surface_code(race)
-        raw_course = str(race.course_type or "").strip()
-        course = raw_course or ("AWT" if surface == "AW" else "U")
+        course = _norm_course_type(getattr(race, "course_type", None), surface_code_=surface)
         dist_b = _dist_bucket(race.distance)
 
         tc = session.query(RaceTrackCondition).filter_by(race_id=race.id).first()

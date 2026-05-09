@@ -291,6 +291,30 @@ else:
 
     selected_race_id = st.session_state.factor_selected_race_id
 
+    try:
+        from database.models import SystemConfig
+        from scoring_engine.config_value import unwrap_value
+        from scoring_engine.constants import factor_algo_version
+        from scoring_engine.core import ScoringEngine
+
+        run_cfg = session.query(SystemConfig).filter_by(key=f"race_score_run:{int(selected_race_id)}").first()
+        run_payload, _ = unwrap_value(run_cfg.value) if run_cfg else (None, {})
+        run_payload = run_payload if isinstance(run_payload, dict) else {}
+        used = run_payload.get("factor_algo_versions") if isinstance(run_payload.get("factor_algo_versions"), dict) else {}
+        mism = []
+        for fn in ["draw_stats", "style_trkprof_edge"]:
+            cur = factor_algo_version(fn)
+            used_v = str((used or {}).get(fn) or "").strip()
+            if used_v and used_v != cur:
+                mism.append(f"{fn}: {used_v}→{cur}")
+        if mism:
+            st.warning("偵測到本場計分口徑已更新，現有分數可能未重算生效：" + "；".join(mism))
+            if st.button("🔄 立即重算本場", type="primary", key=f"force_rescore_{int(selected_race_id)}"):
+                ScoringEngine(session).score_race(int(selected_race_id))
+                st.rerun()
+    except Exception:
+        pass
+
     result = load_factor_data(session, selected_race_id)
     
     if not result or result[0].empty:

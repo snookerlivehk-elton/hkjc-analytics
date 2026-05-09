@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 from typing import List, Dict, Any
+from datetime import datetime
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 import sys
@@ -15,7 +16,8 @@ from database.models import RaceEntry, ScoringFactor, ScoringWeight, SystemConfi
 from utils.logger import logger
 
 from scoring_engine.utils import calculate_relative_percentile, estimate_win_probability
-from scoring_engine.constants import DISABLED_FACTORS
+from scoring_engine.constants import DISABLED_FACTORS, SCORING_ENGINE_VERSION, factor_algo_version
+from scoring_engine.config_value import build_meta, wrap_value
 
 ABSOLUTE_SCORE_FACTORS = {"style_trkprof_edge", "draw_stats"}
 
@@ -357,6 +359,18 @@ class ScoringEngine:
                 key=f"factor_quality:{int(race_id)}",
                 value={"race_id": int(race_id), "field_size": n_field, "factors": factor_quality, "meta": factor_quality_meta},
                 description="因子資料完整度（按場次）",
+            )
+            versions = {fn: factor_algo_version(fn) for fn in list(self.weights.keys())}
+            payload_run = {
+                "race_id": int(race_id),
+                "scored_at": datetime.utcnow().isoformat(),
+                "scoring_engine_version": str(SCORING_ENGINE_VERSION),
+                "factor_algo_versions": versions,
+            }
+            self._upsert_system_config(
+                key=f"race_score_run:{int(race_id)}",
+                value=wrap_value(payload_run, build_meta(source="SCORING_ENGINE", schema="race_score_run:v1", extra={"race_id": int(race_id)})),
+                description="計分版本快照（按場次）",
             )
             self.session.commit()
         except Exception as e:

@@ -8,7 +8,7 @@ from sqlalchemy import func
 
 from database.models import Race, RaceEntry, SystemConfig, RaceTrackCondition, ScoringFactor
 from scoring_engine.track_conditions import normalize_going
-from scoring_engine.track_profile import _surface_code as _surface_code_for_course
+from scoring_engine.normalization import bucket_parts as _bucket_parts_norm
 
 
 DEFAULT_RERANK_CONFIG = {
@@ -25,45 +25,13 @@ DEFAULT_BUCKET_TUNE = {
 }
 
 
-def _dist_bucket(distance: Any) -> str:
-    try:
-        d = int(distance or 0)
-    except Exception:
-        d = 0
-    if d <= 0:
-        return "U"
-    if d <= 1200:
-        return "S"
-    if d <= 1600:
-        return "M"
-    return "L"
-
-
-def _venue_code(venue: Any) -> str:
-    v = str(venue or "").strip().upper()
-    if v == "HV" or "跑馬地" in v:
-        return "HV"
-    return "ST"
-
-
 def _get_going_code(session: Session, race: Race) -> str:
-    tc = session.query(RaceTrackCondition).filter_by(race_id=int(race.id)).first()
-    code = str(getattr(tc, "going_code", "") or "").strip()
-    if code:
-        return code
-    _, code2 = normalize_going(str(getattr(race, "going", "") or ""))
-    return str(code2 or "").strip()
+    parts = _bucket_parts_norm(session, race, going_override=None)
+    return str(parts[1] if parts else "").strip()
 
 
 def _bucket_parts(session: Session, race: Race, going_code_override: Optional[str] = None) -> Optional[Tuple[str, str, str, str]]:
-    venue = _venue_code(getattr(race, "venue", ""))
-    going_code = str(going_code_override or "").strip() or _get_going_code(session, race)
-    surface = _surface_code_for_course(race)
-    course = str(getattr(race, "course_type", "") or "").strip() or ("AWT" if surface == "AW" else "U")
-    dist_b = _dist_bucket(getattr(race, "distance", None))
-    if not going_code:
-        return None
-    return venue, going_code, course, dist_b
+    return _bucket_parts_norm(session, race, going_override=going_code_override)
 
 
 def _bucket_key(parts: Tuple[str, str, str, str]) -> str:

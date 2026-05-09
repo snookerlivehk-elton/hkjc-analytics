@@ -460,8 +460,12 @@ class FactorCalculator:
     def _calculate_style_trkprof_edge(self):
         from database.models import Race, RaceTrackCondition, SystemConfig
         from scoring_engine.track_conditions import normalize_going
-        from scoring_engine.track_profile import load_track_profile, _venue_code
+        from scoring_engine.track_profile import load_track_profile
         from scoring_engine.config_value import unwrap_value
+        from scoring_engine.normalization import dist_bucket as _dist_bucket
+        from scoring_engine.normalization import normalize_course_type as _norm_course_type
+        from scoring_engine.normalization import surface_code as _surface_code
+        from scoring_engine.normalization import venue_code as _venue_code
 
         cfg_default = {"prior_races": 12.0, "w_place": 0.6, "w_win": 0.4}
         try:
@@ -510,28 +514,11 @@ class FactorCalculator:
             _, gc = normalize_going(str(getattr(race, "going", "") or ""))
             going_code = str(gc or "").strip()
 
-        course_type = str(getattr(race, "course_type", "") or "").strip()
-        s0 = (str(getattr(race, "surface", "") or "") + " " + str(getattr(race, "track_type", "") or "") + " " + str(getattr(race, "course_type", "") or "")).upper()
-        is_awt = ("A/W" in s0) or ("ALL WEATHER" in s0) or ("AWT" in s0) or ("AW" in s0) or ("全天候" in s0) or ("泥" in s0)
-        if not course_type:
-            if is_awt:
-                course_type = "AWT"
+        sc = _surface_code(getattr(race, "surface", None), track_type=getattr(race, "track_type", None), course_type=getattr(race, "course_type", None))
+        course_type = _norm_course_type(getattr(race, "course_type", None), surface_code_=sc)
         venue = str(getattr(race, "venue", "") or "").strip()
-        venue_key = _venue_code(venue)
+        venue_key = _venue_code(venue, track_type=getattr(race, "track_type", None))
         distance = getattr(race, "distance", None)
-
-        def _dist_bucket(d: Any) -> str:
-            try:
-                di = int(d or 0)
-            except Exception:
-                di = 0
-            if di <= 0:
-                return "U"
-            if di <= 1200:
-                return "S"
-            if di <= 1600:
-                return "M"
-            return "L"
 
         def _aggregate_profiles_like(like_pat: str, key_pred: Optional[Callable[[str], bool]] = None) -> Optional[Dict[str, Any]]:
             rows = (
