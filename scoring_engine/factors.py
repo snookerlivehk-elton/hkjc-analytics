@@ -505,9 +505,10 @@ class FactorCalculator:
             going_code = str(gc or "").strip()
 
         course_type = str(getattr(race, "course_type", "") or "").strip()
+        s0 = (str(getattr(race, "surface", "") or "") + " " + str(getattr(race, "track_type", "") or "") + " " + str(getattr(race, "course_type", "") or "")).upper()
+        is_awt = ("A/W" in s0) or ("ALL WEATHER" in s0) or ("AWT" in s0) or ("AW" in s0) or ("全天候" in s0) or ("泥" in s0)
         if not course_type:
-            s0 = (str(getattr(race, "surface", "") or "") + " " + str(getattr(race, "track_type", "") or "")).upper()
-            if ("A/W" in s0) or ("ALL WEATHER" in s0) or ("AW" in s0) or ("全天候" in s0) or ("泥" in s0):
+            if is_awt:
                 course_type = "AWT"
         venue = str(getattr(race, "venue", "") or "").strip()
         distance = getattr(race, "distance", None)
@@ -525,7 +526,7 @@ class FactorCalculator:
                 return "M"
             return "L"
 
-        def _aggregate_profiles_like(like_pat: str) -> Optional[Dict[str, Any]]:
+        def _aggregate_profiles_like(like_pat: str, key_pred: Optional[Callable[[str], bool]] = None) -> Optional[Dict[str, Any]]:
             rows = (
                 self.session.query(SystemConfig.key, SystemConfig.value)
                 .filter(SystemConfig.key.like(like_pat))
@@ -541,7 +542,9 @@ class FactorCalculator:
             t_samples_total = 0.0
             n_races_total = 0
 
-            for _, v in rows:
+            for k, v in rows:
+                if key_pred and (not key_pred(str(k or ""))):
+                    continue
                 if not isinstance(v, dict):
                     continue
                 nr = 0
@@ -601,6 +604,18 @@ class FactorCalculator:
                 "agg_like": str(like_pat),
             }
 
+        def _course_from_key(k: str) -> str:
+            parts = str(k or "").split(":")
+            if len(parts) >= 5:
+                return str(parts[3] or "")
+            return ""
+
+        def _match_surface_key(k: str) -> bool:
+            c = _course_from_key(k).strip().upper()
+            if is_awt:
+                return c == "AWT"
+            return c != "AWT"
+
         prof = None
         src_tag = ""
         if going_code and venue:
@@ -612,14 +627,14 @@ class FactorCalculator:
 
         dist_b = _dist_bucket(distance)
         if (not isinstance(prof, dict)) or (int(prof.get("winner_style_early_samples") or 0) <= 0 and int(prof.get("top4_style_early_samples") or 0) <= 0):
-            if venue and course_type and dist_b:
-                p2 = _aggregate_profiles_like(f"trkprof:{venue}:%:{course_type}:{dist_b}")
+            if venue and going_code and dist_b:
+                p2 = _aggregate_profiles_like(f"trkprof:{venue}:{going_code}:%:{dist_b}", key_pred=_match_surface_key)
                 if isinstance(p2, dict):
                     prof = p2
                     src_tag = "B"
         if (not isinstance(prof, dict)) or (int(prof.get("winner_style_early_samples") or 0) <= 0 and int(prof.get("top4_style_early_samples") or 0) <= 0):
             if venue and dist_b:
-                p3 = _aggregate_profiles_like(f"trkprof:{venue}:%:%:{dist_b}")
+                p3 = _aggregate_profiles_like(f"trkprof:{venue}:%:%:{dist_b}", key_pred=_match_surface_key)
                 if isinstance(p3, dict):
                     prof = p3
                     src_tag = "C"
