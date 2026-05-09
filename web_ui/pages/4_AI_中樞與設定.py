@@ -703,6 +703,61 @@ try:
                     st.success(f"✅ 完成批次反思：成功 {ok_n}/{len(results or [])} 場。")
                     st.rerun()
 
+        st.markdown("---")
+        st.markdown("### 📄 反思報告（文字檢視）")
+        from database.models import SystemConfig
+
+        ref_rows = (
+            session.query(SystemConfig)
+            .filter(SystemConfig.key.like("ai_race_reflection:%"))
+            .order_by(SystemConfig.updated_at.desc())
+            .limit(400)
+            .all()
+        )
+
+        ref_opts = {}
+        for cfg in ref_rows:
+            k = str(getattr(cfg, "key", "") or "").strip()
+            parts = k.split(":")
+            if len(parts) >= 3:
+                ds = parts[1]
+                rn = parts[2]
+                ref_opts[k] = f"{ds} 第 {rn} 場"
+
+        if not ref_opts:
+            st.info("目前尚未有任何反思報告（ai_race_reflection:*）。")
+        else:
+            sel_key = st.selectbox("選擇反思報告", options=list(ref_opts.keys()), format_func=lambda x: ref_opts[x], key="reflection_view_key")
+            cfg = session.query(SystemConfig).filter_by(key=str(sel_key)).first()
+            val = cfg.value if (cfg and isinstance(cfg.value, dict)) else {}
+            created_at = str(val.get("created_at") or "").strip()
+            st.caption(f"key={sel_key}" + (f"｜created_at={created_at}" if created_at else ""))
+            actual = str(val.get("actual_results") or "").strip()
+            reflection = str(val.get("reflection") or "").strip()
+            rules = val.get("learned_rules") if isinstance(val.get("learned_rules"), list) else []
+            used = bool(val.get("corunning_used"))
+            excerpt = str(val.get("corunning_excerpt") or "").strip()
+
+            if actual:
+                st.markdown("#### 實際賽果 Top4")
+                st.write(actual)
+            if reflection:
+                st.markdown("#### 檢討內容")
+                st.write(reflection)
+            else:
+                st.info("此反思報告沒有檢討文字內容。")
+
+            if rules:
+                st.markdown("#### 提煉法則")
+                for r in rules:
+                    rr = str(r or "").strip()
+                    if rr:
+                        st.info(rr)
+
+            if used and excerpt:
+                with st.expander("📝 沿途走勢評述摘要（賽後）", expanded=False):
+                    st.text(excerpt)
+
         st.markdown("### 🔄 執行賽後反思")
         st.write("請選擇已經有賽果（且已有賽前 AI 報告）的賽事，讓 AI 對比預測與實際結果，提煉新法則（字數已控制在 200-400 字）。")
         
