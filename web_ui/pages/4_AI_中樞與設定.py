@@ -200,10 +200,41 @@ try:
                     report_key = f"ai_race_report:{target_date_str}:{int(rr.race_no)}"
                     has_report = bool(session.query(SystemConfig.id).filter_by(key=report_key).first())
                     fg_key = f"speedpro_formguide:{target_date_str}:{int(rr.race_no)}"
-                    has_fg = bool(session.query(SystemConfig.id).filter_by(key=fg_key).first())
+                    fg_cfg = session.query(SystemConfig).filter_by(key=fg_key).first()
+                    has_fg = bool(fg_cfg and isinstance(fg_cfg.value, dict) and fg_cfg.value)
+                    fg_has_comments = False
+                    if has_fg and isinstance(fg_cfg.value, dict):
+                        for _, vv in fg_cfg.value.items():
+                            if isinstance(vv, dict) and (("intro_comment" in vv) or ("trial_comment" in vv)):
+                                fg_has_comments = True
+                                break
                     st.markdown(f"- 場次：**{target_date_str} 第 {int(rr.race_no)} 場**")
                     st.markdown(f"- FormGuide：**{'有' if has_fg else '沒有'}**（無資料會無法生成）")
+                    if has_fg:
+                        st.markdown(f"- FormGuide 評述/試閘欄位：**{'有' if fg_has_comments else '沒有/舊格式'}**")
                     st.markdown(f"- AI 報告：**{'已有' if has_report else '未有'}**（可用此功能補回）")
+
+                    c_confirm, c_btn = st.columns([2, 3])
+                    okfg = _confirm_run(c_confirm, "single_fg", label="輸入 RUN 以重新抓取 FormGuide")
+                    if c_btn.button(
+                        "🔄 重新抓取 SpeedPRO FormGuide（賽績指引）",
+                        use_container_width=True,
+                        disabled=not okfg,
+                        key=f"single_fg_btn_{target_date_str}_{int(rr.race_no)}",
+                    ):
+                        from data_scraper.speedpro_formguide import SpeedProFormGuideScraper
+                        with st.spinner("正在重新抓取 FormGuide..."):
+                            fg = SpeedProFormGuideScraper().scrape(int(rr.race_no or 0))
+                            if isinstance(fg, dict) and fg:
+                                if not fg_cfg:
+                                    fg_cfg = SystemConfig(key=fg_key, description=f"SpeedPRO 賽績指引（racedate={target_date_str} R{int(rr.race_no)}）")
+                                    session.add(fg_cfg)
+                                fg_cfg.value = {str(int(k)): v for k, v in fg.items()}
+                                session.commit()
+                                st.success("✅ 已重新抓取並更新 FormGuide。")
+                                st.rerun()
+                            else:
+                                st.error("❌ FormGuide 抓取失敗或暫無數據（可能未公佈）。")
 
                     c_confirm, c_btn = st.columns([2, 3])
                     ok1 = _confirm_run(c_confirm, "single_ai", label="輸入 RUN 以生成/更新本場報告")

@@ -244,7 +244,14 @@ def main():
                     
             if energy_ok:
                 fg_cfg = _get_cfg(session, fg_snap_key)
-                if not fg_cfg or not isinstance(fg_cfg.value, dict) or not fg_cfg.value:
+                force_fg = str(os.environ.get("FORCE_FORMGUIDE") or "").strip().lower() in ("1", "true", "yes")
+                needs_fg = (not fg_cfg) or (not isinstance(fg_cfg.value, dict)) or (not fg_cfg.value)
+                if (not needs_fg) and isinstance(fg_cfg.value, dict):
+                    for _, v in fg_cfg.value.items():
+                        if isinstance(v, dict) and (("intro_comment" not in v) and ("trial_comment" not in v)):
+                            needs_fg = True
+                            break
+                if force_fg or needs_fg:
                     try:
                         fg_data = fg_scraper.scrape(int(rn))
                         if fg_data:
