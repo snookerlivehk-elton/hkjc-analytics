@@ -1,7 +1,6 @@
 import json
-from datetime import datetime
+from datetime import datetime, time as dtime, timedelta
 from sqlalchemy.orm import Session
-from sqlalchemy import func
 from typing import Dict, Any, List
 
 from database.models import SystemConfig, Race, RaceEntry, RaceResult
@@ -76,7 +75,15 @@ def calculate_ai_hit_stats(session: Session) -> Dict[str, Any]:
         date_obj = _try_parse_date(date_str)
         if not date_obj:
             continue
-        race = session.query(Race).filter(func.date(Race.race_date) == date_obj, Race.race_no == int(race_no)).first()
+        start = datetime.combine(date_obj, dtime.min)
+        end = start + timedelta(days=1)
+        race = (
+            session.query(Race)
+            .filter(Race.race_date >= start)
+            .filter(Race.race_date < end)
+            .filter(Race.race_no == int(race_no))
+            .first()
+        )
         if not race:
             continue
             

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, time as dtime, timedelta
 from typing import Dict, List, Tuple
 
 from sqlalchemy.orm import Session
@@ -14,9 +14,12 @@ def _race_ids_for_date(session: Session, target_date_str: str) -> List[int]:
     except Exception:
         return []
 
+    start = datetime.combine(d, dtime.min)
+    end = start + timedelta(days=1)
     races = (
         session.query(Race.id)
-        .filter(func.date(Race.race_date) == d.isoformat())
+        .filter(Race.race_date >= start)
+        .filter(Race.race_date < end)
         .order_by(Race.race_no.asc(), Race.id.asc())
         .all()
     )

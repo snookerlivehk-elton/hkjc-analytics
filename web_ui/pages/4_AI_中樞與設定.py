@@ -188,8 +188,17 @@ try:
             st.caption("用途：針對個別場次（例如第 1 場）獨立生成或補回 AI 報告。")
 
             from scoring_engine.ai_advisor import run_ai_race_summary
+            from datetime import datetime, time as dtime, timedelta
             target_date_str = selected_date.strftime("%Y/%m/%d")
-            races1 = session.query(Race).filter(func.date(Race.race_date) == selected_date).order_by(Race.race_no.asc()).all()
+            start = datetime.combine(selected_date, dtime.min)
+            end = start + timedelta(days=1)
+            races1 = (
+                session.query(Race)
+                .filter(Race.race_date >= start)
+                .filter(Race.race_date < end)
+                .order_by(Race.race_no.asc())
+                .all()
+            )
             if not races1:
                 st.info("該日沒有賽事資料。")
             else:
@@ -501,11 +510,14 @@ try:
                             report_text = str(val.get("report") or "")
                             if not report_text.lstrip().startswith("# J18.HK AI 賽事前瞻分析"):
                                 try:
-                                    from sqlalchemy import func
+                                    from datetime import time as dtime, timedelta
                                     d0 = datetime.strptime(str(row["Date"]), "%Y/%m/%d").date()
+                                    start = datetime.combine(d0, dtime.min)
+                                    end = start + timedelta(days=1)
                                     rr = (
                                         session.query(Race)
-                                        .filter(func.date(Race.race_date) == d0)
+                                        .filter(Race.race_date >= start)
+                                        .filter(Race.race_date < end)
                                         .filter(Race.race_no == int(row["RaceNo"]))
                                         .first()
                                     )
@@ -568,7 +580,6 @@ try:
                                 disabled=not ok,
                                 key=f"regen_ai_report_btn_{row['Date']}_{int(row['RaceNo'])}",
                             ):
-                                from sqlalchemy import func
                                 from scoring_engine.ai_advisor import run_ai_race_summary
 
                                 try:
@@ -578,9 +589,13 @@ try:
                                 if not d0:
                                     st.error("❌ 日期格式無法解析。")
                                 else:
+                                    from datetime import time as dtime, timedelta
+                                    start = datetime.combine(d0, dtime.min)
+                                    end = start + timedelta(days=1)
                                     rr = (
                                         session.query(Race)
-                                        .filter(func.date(Race.race_date) == d0)
+                                        .filter(Race.race_date >= start)
+                                        .filter(Race.race_date < end)
                                         .filter(Race.race_no == int(row["RaceNo"]))
                                         .first()
                                     )

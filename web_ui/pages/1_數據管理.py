@@ -605,10 +605,13 @@ with tab_ops:
                         save_winprob_temperature(session_cal, res)
                         st.success(f"✅ 已保存 temperature={float(res.get('temperature') or 1.0):.3f}（races={int(res.get('races') or 0)} nll={float(res.get('nll') or 0.0):.4f}）")
                         if do_rescore:
+                            from datetime import datetime, time as dtime, timedelta
+                            start = datetime.combine(d1, dtime.min)
+                            end = datetime.combine(d2, dtime.min) + timedelta(days=1)
                             races2 = (
                                 session_cal.query(Race)
-                                .filter(func.date(Race.race_date) >= d1.isoformat())
-                                .filter(func.date(Race.race_date) <= d2.isoformat())
+                                .filter(Race.race_date >= start)
+                                .filter(Race.race_date < end)
                                 .order_by(Race.race_date.asc(), Race.race_no.asc(), Race.id.asc())
                                 .all()
                             )
@@ -646,9 +649,13 @@ with tab_ops:
                     try:
                         from database.models import Race
                         from sqlalchemy import func
+                        from datetime import time as dtime, timedelta
+                        start = datetime.combine(selected_date, dtime.min)
+                        end = start + timedelta(days=1)
                         races_to_score = (
                             session_rescore.query(Race)
-                            .filter(func.date(Race.race_date) == selected_date)
+                            .filter(Race.race_date >= start)
+                            .filter(Race.race_date < end)
                             .order_by(Race.race_no.asc(), Race.id.asc())
                             .all()
                         )
@@ -724,14 +731,17 @@ with tab_ops:
             target_date_str = selected_date.strftime("%Y/%m/%d")
             session_bf = get_session()
             try:
-                from datetime import datetime
+                from datetime import datetime, time as dtime, timedelta
                 from database.models import Race, RaceDividend, RaceTrackCondition
                 from scoring_engine.track_conditions import normalize_going
-                from sqlalchemy import func
 
+                d0 = datetime.strptime(target_date_str, "%Y/%m/%d").date()
+                start = datetime.combine(d0, dtime.min)
+                end = start + timedelta(days=1)
                 races = (
                     session_bf.query(Race.id)
-                    .filter(func.date(Race.race_date) == datetime.strptime(target_date_str, "%Y/%m/%d").date().isoformat())
+                    .filter(Race.race_date >= start)
+                    .filter(Race.race_date < end)
                     .all()
                 )
                 race_ids = [int(r[0]) for r in races if r and int(r[0] or 0) > 0]
@@ -839,14 +849,17 @@ with tab_ops:
             session = get_session()
             try:
                 from database.models import Race
-                from sqlalchemy import func
+                from datetime import datetime, time as dtime, timedelta
 
                 sd = st.session_state.get("admin_selected_date")
                 races_to_score = []
                 if sd:
+                    start = datetime.combine(sd, dtime.min)
+                    end = start + timedelta(days=1)
                     races_to_score = (
                         session.query(Race)
-                        .filter(func.date(Race.race_date) == sd)
+                        .filter(Race.race_date >= start)
+                        .filter(Race.race_date < end)
                         .order_by(Race.race_no.asc(), Race.id.asc())
                         .all()
                     )
@@ -1130,6 +1143,9 @@ with tab_hits:
                     st.caption("用途：檢查各因子在所選範圍內「無數據/空白」比例，幫你判斷要補數據、降低權重或暫時忽略。")
                     from database.models import Race, ScoringFactor
                     from sqlalchemy import case
+                    from datetime import datetime, time as dtime, timedelta
+                    start = datetime.combine(d1, dtime.min)
+                    end = datetime.combine(d2, dtime.min) + timedelta(days=1)
 
                     with st.container():
 
@@ -1153,8 +1169,8 @@ with tab_hits:
                             .join(RaceEntry, RaceEntry.id == ScoringFactor.entry_id)
                             .join(Race, Race.id == RaceEntry.race_id)
                             .filter(ScoringFactor.factor_name.in_(factor_names))
-                            .filter(func.date(Race.race_date) >= d1.isoformat())
-                            .filter(func.date(Race.race_date) <= d2.isoformat())
+                            .filter(Race.race_date >= start)
+                            .filter(Race.race_date < end)
                             .group_by(ScoringFactor.factor_name)
                             .all()
                         )
@@ -1201,8 +1217,8 @@ with tab_hits:
                                     int(r[0])
                                     for r in (
                                         session_hit.query(Race.id)
-                                        .filter(func.date(Race.race_date) >= d1.isoformat())
-                                        .filter(func.date(Race.race_date) <= d2.isoformat())
+                                        .filter(Race.race_date >= start)
+                                        .filter(Race.race_date < end)
                                         .all()
                                     )
                                     if r and r[0]

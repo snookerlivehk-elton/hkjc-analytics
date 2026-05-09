@@ -1,6 +1,6 @@
 import math
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, time as dtime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -34,13 +34,15 @@ def _softmax(z: np.ndarray, temperature: float) -> np.ndarray:
 
 
 def _nll_for_races(session: Session, d1: date, d2: date, temperature: float) -> Tuple[Optional[float], int]:
+    start = datetime.combine(d1, dtime.min)
+    end = datetime.combine(d2, dtime.min) + timedelta(days=1)
     races = (
         session.query(Race.id)
         .join(RaceEntry, RaceEntry.race_id == Race.id)
         .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
         .filter(RaceResult.rank != None)
-        .filter(func.date(Race.race_date) >= d1.isoformat())
-        .filter(func.date(Race.race_date) <= d2.isoformat())
+        .filter(Race.race_date >= start)
+        .filter(Race.race_date < end)
         .distinct()
         .all()
     )
@@ -142,4 +144,3 @@ def load_winprob_temperature(session: Session) -> Optional[float]:
     if t <= 0.0:
         return None
     return float(t)
-

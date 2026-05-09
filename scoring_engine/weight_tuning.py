@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 from typing import Dict, Any, List, Optional, Tuple
-from datetime import date
+from datetime import date, datetime, time as dtime, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from sklearn.linear_model import LogisticRegression
@@ -26,6 +26,8 @@ def build_entry_factor_frame(
     if not isinstance(d1, date) or not isinstance(d2, date) or d1 > d2:
         return pd.DataFrame()
 
+    start = datetime.combine(d1, dtime.min)
+    end = datetime.combine(d2, dtime.min) + timedelta(days=1)
     rows = (
         session.query(
             RaceEntry.id.label("entry_id"),
@@ -41,8 +43,8 @@ def build_entry_factor_frame(
         .join(ScoringFactor, ScoringFactor.entry_id == RaceEntry.id)
         .filter(RaceResult.rank != None)
         .filter(ScoringFactor.factor_name.in_(list(factor_names)))
-        .filter(func.date(Race.race_date) >= d1.isoformat())
-        .filter(func.date(Race.race_date) <= d2.isoformat())
+        .filter(Race.race_date >= start)
+        .filter(Race.race_date < end)
         .all()
     )
     if not rows:
@@ -270,6 +272,8 @@ def build_topk_training_frame(
     if int(top_k or 0) <= 0:
         return pd.DataFrame()
 
+    start = datetime.combine(d1, dtime.min)
+    end = datetime.combine(d2, dtime.min) + timedelta(days=1)
     rows = (
         session.query(
             RaceEntry.id.label("entry_id"),
@@ -284,8 +288,8 @@ def build_topk_training_frame(
         .join(ScoringFactor, ScoringFactor.entry_id == RaceEntry.id)
         .filter(RaceResult.rank != None)
         .filter(ScoringFactor.factor_name.in_(list(factor_names)))
-        .filter(func.date(Race.race_date) >= d1.isoformat())
-        .filter(func.date(Race.race_date) <= d2.isoformat())
+        .filter(Race.race_date >= start)
+        .filter(Race.race_date < end)
         .all()
     )
     if not rows:

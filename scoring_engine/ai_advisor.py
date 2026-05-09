@@ -1,7 +1,7 @@
 import json
 import os
 import re
-from datetime import date, datetime
+from datetime import date, datetime, time as dtime, timedelta
 from hashlib import sha256
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -200,13 +200,15 @@ def build_factor_snapshot(
     tune = tune_weights_topk(session, d1=d1, d2=d2, top_k=int(top_k), factor_names=factor_names, max_suggest_weight=float(max_suggest_weight))
     train = build_topk_training_frame(session, d1=d1, d2=d2, top_k=int(top_k), factor_names=factor_names)
 
+    start = datetime.combine(d1, dtime.min)
+    end = datetime.combine(d2, dtime.min) + timedelta(days=1)
     miss_rows2 = (
         session.query(ScoringFactor.factor_name, ScoringFactor.raw_data_display)
         .join(RaceEntry, RaceEntry.id == ScoringFactor.entry_id)
         .join(Race, Race.id == RaceEntry.race_id)
         .filter(ScoringFactor.factor_name.in_(factor_names))
-        .filter(func.date(Race.race_date) >= d1.isoformat())
-        .filter(func.date(Race.race_date) <= d2.isoformat())
+        .filter(Race.race_date >= start)
+        .filter(Race.race_date < end)
         .all()
     )
     miss_cnt = {}
@@ -274,8 +276,8 @@ def build_factor_snapshot(
         .join(RaceEntry, RaceEntry.race_id == Race.id)
         .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
         .filter(RaceResult.rank != None)
-        .filter(func.date(Race.race_date) >= d1.isoformat())
-        .filter(func.date(Race.race_date) <= d2.isoformat())
+        .filter(Race.race_date >= start)
+        .filter(Race.race_date < end)
         .distinct()
         .order_by(Race.id.asc())
         .all()

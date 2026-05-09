@@ -56,6 +56,19 @@ def init_db():
     Base.metadata.create_all(engine)
 
     try:
+        with engine.begin() as conn:
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_race_entries_race_id ON race_entries (race_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_race_entries_race_id_horse_no ON race_entries (race_id, horse_no)"))
+            conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_race_results_entry_id ON race_results (entry_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_scoring_factors_entry_id ON scoring_factors (entry_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_scoring_factors_entry_factor ON scoring_factors (entry_id, factor_name)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_odds_history_entry_id ON odds_history (entry_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_prediction_top5_race_date_no ON prediction_top5 (race_date, race_no)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_system_configs_updated_at ON system_configs (updated_at)"))
+    except Exception:
+        pass
+
+    try:
         inspector = inspect(engine)
         try:
             if "postgresql" in DATABASE_URL:

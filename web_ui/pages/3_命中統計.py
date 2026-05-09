@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import sys
 from pathlib import Path
-from datetime import date, timedelta
+from datetime import date, datetime, time as dtime, timedelta
 from sqlalchemy import func, case
 
 root_path = str(Path(__file__).resolve().parent.parent.parent)
@@ -369,7 +369,15 @@ with tab_factor:
                             continue
                     except Exception:
                         continue
-                    rr = session.query(Race).filter(func.date(Race.race_date) == d0, Race.race_no == rno).first()
+                    start = datetime.combine(d0, dtime.min)
+                    end = start + timedelta(days=1)
+                    rr = (
+                        session.query(Race)
+                        .filter(Race.race_date >= start)
+                        .filter(Race.race_date < end)
+                        .filter(Race.race_no == rno)
+                        .first()
+                    )
                     if not rr:
                         continue
                     parsable_race += 1
@@ -631,11 +639,13 @@ with tab_preset:
                     from database.models import RaceTrackCondition
                     from scoring_engine.track_conditions import going_code_label
 
+                    start_dt = datetime.combine(d1, dtime.min)
+                    end_dt = datetime.combine(d2, dtime.min) + timedelta(days=1)
                     going_rows = (
                         session.query(RaceTrackCondition.going_code)
                         .join(Race, Race.id == RaceTrackCondition.race_id)
-                        .filter(func.date(Race.race_date) >= d1.isoformat())
-                        .filter(func.date(Race.race_date) <= d2.isoformat())
+                        .filter(Race.race_date >= start_dt)
+                        .filter(Race.race_date < end_dt)
                         .distinct()
                         .order_by(RaceTrackCondition.going_code.asc())
                         .all()
@@ -668,8 +678,8 @@ with tab_preset:
                         .join(RaceEntry, RaceEntry.race_id == Race.id)
                         .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
                         .filter(RaceResult.rank != None)
-                        .filter(func.date(Race.race_date) >= d1.isoformat())
-                        .filter(func.date(Race.race_date) <= d2.isoformat())
+                        .filter(Race.race_date >= start_dt)
+                        .filter(Race.race_date < end_dt)
                         .distinct()
                     )
                     if going_sel != "全部":
@@ -930,8 +940,8 @@ with tab_range:
                 .join(RaceEntry, RaceEntry.race_id == Race.id)
                 .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
                 .filter(RaceResult.rank != None)
-                .filter(func.date(Race.race_date) >= d1.isoformat())
-                .filter(func.date(Race.race_date) <= d2.isoformat())
+                .filter(Race.race_date >= datetime.combine(d1, dtime.min))
+                .filter(Race.race_date < (datetime.combine(d2, dtime.min) + timedelta(days=1)))
                 .distinct()
                 .order_by(Race.race_date.asc(), Race.race_no.asc(), Race.id.asc())
                 .all()

@@ -1,9 +1,7 @@
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, time as dtime, timedelta
 from pathlib import Path
-
-from sqlalchemy import func
 
 root_path = str(Path(__file__).resolve().parent.parent)
 if root_path not in sys.path:
@@ -23,10 +21,13 @@ def main():
             print("TARGET_DATE is required (YYYY/MM/DD)")
             return
         d = datetime.strptime(target_date_str, "%Y/%m/%d").date()
+        start = datetime.combine(d, dtime.min)
+        end = start + timedelta(days=1)
 
         races = (
             session.query(Race)
-            .filter(func.date(Race.race_date) == d)
+            .filter(Race.race_date >= start)
+            .filter(Race.race_date < end)
             .order_by(Race.race_no.asc(), Race.id.asc())
             .all()
         )

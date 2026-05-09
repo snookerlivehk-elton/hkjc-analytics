@@ -3,6 +3,8 @@ import pandas as pd
 import sys
 from pathlib import Path
 from sqlalchemy.orm import Session
+from datetime import datetime, time as dtime, timedelta
+from sqlalchemy import func
 
 # 加入專案路徑
 root_path = str(Path(__file__).resolve().parent.parent.parent)
@@ -47,49 +49,192 @@ render_admin_nav()
 def load_races(session: Session):
     return session.query(Race).order_by(Race.race_date.desc(), Race.race_no.asc()).all()
 
-def load_factor_data(session: Session, race_id: int):
-    entries = session.query(RaceEntry).filter_by(race_id=race_id).all()
-    if not entries:
-        return None
-        
-    weights = (
-        session.query(ScoringWeight)
-        .filter(ScoringWeight.is_active == True)
-        .filter(~ScoringWeight.factor_name.in_(DISABLED_FACTORS))
-        .all()
-    )
-    factor_desc_map = {w.factor_name: w.description for w in weights}
-    factor_weight_map = {w.factor_name: float(w.weight) if w.weight is not None else 0.0 for w in weights}
-    
-    data = []
-    for entry in entries:
-        total_calc = 0.0
-        row = {
-            "馬號": entry.horse_no,
-            "馬名": entry.horse.name_ch if entry.horse else "未知",
-            "檔位": entry.draw,
-            "負磅": entry.actual_weight,
-            "評分": entry.rating,
-            "總分(落庫)": round(float(entry.total_score), 2) if entry.total_score is not None else None,
-        }
-        
-        factors = (
-            session.query(ScoringFactor)
-            .filter_by(entry_id=entry.id)
-            .filter(ScoringFactor.factor_name.in_(list(factor_desc_map.keys())))
+@st.cache_data(ttl=60)
+def _cached_race_dates(limit_days: int = 365):
+    s = get_session()
+    try:
+        rows = (
+            s.query(func.date(Race.race_date))
+            .distinct()
+            .order_by(func.date(Race.race_date).desc())
+            .limit(int(limit_days or 365))
             .all()
         )
-        for f in factors:
-            # 儲存分數，使用中文描述作為欄位名
-            desc = factor_desc_map.get(f.factor_name, f.factor_name)
-            row[desc] = round(f.score, 2)
-            row[f"{desc}_raw"] = f.raw_data_display if f.raw_data_display else "無數據"
-            total_calc += float(f.score or 0.0) * float(factor_weight_map.get(f.factor_name, 0.0))
-            
+        out = []
+        for r in rows:
+            if not r or not r[0]:
+                continue
+            out.append(r[0])
+        return out
+    finally:
+        s.close()
+
+
+@st.cache_data(ttl=60)
+def _cached_races_on_date(date_iso: str):
+    s = get_session()
+    try:
+        d0 = datetime.strptime(str(date_iso), "%Y-%m-%d").date()
+        start = datetime.combine(d0, dtime.min)
+        end = start + timedelta(days=1)
+        rows = (
+            s.query(Race.id, Race.race_no)
+            .filter(Race.race_date >= start)
+            .filter(Race.race_date < end)
+            .order_by(Race.race_no.asc(), Race.id.asc())
+            .all()
+        )
+        out = []
+        for rid, rno in rows:
+            try:
+                out.append({"id": int(rid), "race_no": int(rno)})
+            except Exception:
+                continue
+        return out
+    finally:
+        s.close()
+
+
+@st.cache_data(ttl=60)
+def _cached_active_factors():
+    s = get_session()
+    try:
+        rows = (
+            s.query(ScoringWeight.factor_name, ScoringWeight.description, ScoringWeight.weight)
+            .filter(ScoringWeight.is_active == True)
+            .filter(~ScoringWeight.factor_name.in_(DISABLED_FACTORS))
+            .order_by(ScoringWeight.factor_name.asc())
+            .all()
+        )
+        desc_map = {}
+        weight_map = {}
+        for fn, desc, w in rows:
+            k = str(fn or "").strip()
+            if not k:
+                continue
+            desc_map[k] = str(desc or k)
+            try:
+                weight_map[k] = float(w or 0.0)
+            except Exception:
+                weight_map[k] = 0.0
+        factor_names = sorted(list(desc_map.keys()))
+        factor_labels = [desc_map[k] for k in factor_names]
+        return {"factor_names": factor_names, "factor_labels": factor_labels, "desc_map": desc_map, "weight_map": weight_map}
+    finally:
+        s.close()
+
+
+@st.cache_data(ttl=120)
+def _cached_factor_table_for_race(race_id: int, factor_names: tuple):
+    from sqlalchemy.orm import selectinload
+
+    s = get_session()
+    try:
+        entries = (
+            s.query(RaceEntry)
+            .options(selectinload(RaceEntry.horse))
+            .filter(RaceEntry.race_id == int(race_id))
+            .order_by(RaceEntry.horse_no.asc(), RaceEntry.id.asc())
+            .all()
+        )
+        if not entries:
+            return {"entries": [], "factors": []}
+
+        entry_ids = [int(e.id) for e in entries if getattr(e, "id", None) is not None]
+        fnames = [str(x) for x in list(factor_names or []) if str(x).strip()]
+        rows = []
+        if entry_ids and fnames:
+            rows = (
+                s.query(ScoringFactor.entry_id, ScoringFactor.factor_name, ScoringFactor.score, ScoringFactor.raw_data_display)
+                .filter(ScoringFactor.entry_id.in_(entry_ids))
+                .filter(ScoringFactor.factor_name.in_(fnames))
+                .all()
+            )
+
+        out_entries = []
+        for e in entries:
+            out_entries.append(
+                {
+                    "entry_id": int(e.id),
+                    "horse_no": int(e.horse_no or 0),
+                    "horse_name": str(getattr(getattr(e, "horse", None), "name_ch", "") or "").strip() or "未知",
+                    "draw": int(getattr(e, "draw", 0) or 0),
+                    "actual_weight": int(getattr(e, "actual_weight", 0) or 0),
+                    "rating": int(getattr(e, "rating", 0) or 0),
+                    "total_score": (float(e.total_score) if e.total_score is not None else None),
+                }
+            )
+
+        out_factors = []
+        for entry_id, factor_name, score, raw_disp in rows:
+            try:
+                out_factors.append(
+                    {
+                        "entry_id": int(entry_id),
+                        "factor_name": str(factor_name or "").strip(),
+                        "score": (float(score) if score is not None else 0.0),
+                        "raw": (str(raw_disp) if raw_disp is not None else ""),
+                    }
+                )
+            except Exception:
+                continue
+
+        return {"entries": out_entries, "factors": out_factors}
+    finally:
+        s.close()
+
+
+def load_factor_data(session: Session, race_id: int):
+    meta = _cached_active_factors()
+    factor_names = [str(x) for x in (meta.get("factor_names") or []) if str(x).strip()]
+    desc_map = meta.get("desc_map") if isinstance(meta.get("desc_map"), dict) else {}
+    weight_map = meta.get("weight_map") if isinstance(meta.get("weight_map"), dict) else {}
+    tbl = _cached_factor_table_for_race(int(race_id), tuple(factor_names))
+    entries = tbl.get("entries") if isinstance(tbl.get("entries"), list) else []
+    factors = tbl.get("factors") if isinstance(tbl.get("factors"), list) else []
+    if not entries:
+        return None
+
+    by_entry = {}
+    for f in factors:
+        if not isinstance(f, dict):
+            continue
+        eid = int(f.get("entry_id") or 0)
+        fn = str(f.get("factor_name") or "").strip()
+        if eid <= 0 or not fn:
+            continue
+        m = by_entry.get(eid)
+        if m is None:
+            m = {}
+            by_entry[eid] = m
+        m[fn] = {"score": float(f.get("score") or 0.0), "raw": str(f.get("raw") or "")}
+
+    data = []
+    for e in entries:
+        eid = int(e.get("entry_id") or 0)
+        total_calc = 0.0
+        row = {
+            "馬號": int(e.get("horse_no") or 0),
+            "馬名": str(e.get("horse_name") or "未知"),
+            "檔位": int(e.get("draw") or 0),
+            "負磅": int(e.get("actual_weight") or 0),
+            "評分": int(e.get("rating") or 0),
+            "總分(落庫)": (round(float(e.get("total_score")), 2) if e.get("total_score") is not None else None),
+        }
+
+        em = by_entry.get(eid) or {}
+        for fn in factor_names:
+            item = em.get(fn) if isinstance(em.get(fn), dict) else {}
+            desc = str(desc_map.get(fn) or fn)
+            sc = float(item.get("score") or 0.0)
+            row[desc] = round(sc, 2)
+            row[f"{desc}_raw"] = str(item.get("raw") or "").strip() or "無數據"
+            total_calc += sc * float(weight_map.get(fn) or 0.0)
+
         row["總分(全局權重)"] = round(float(total_calc), 2)
         data.append(row)
-        
-    return pd.DataFrame(data), list(factor_desc_map.values())
+
+    return pd.DataFrame(data), list(meta.get("factor_labels") or [])
 
 st.title("📊 獨立條件分析")
 st.markdown("在此頁面檢視每場賽事各計分條件的獨立運算結果與排名。")
@@ -98,42 +243,33 @@ session = get_session()
 
 # Sidebar: 賽事選擇
 st.sidebar.header("🔍 賽事選擇")
-races = load_races(session)
+available_dates = _cached_race_dates()
+available_dates = [d for d in (available_dates or []) if d]
 
-if not races:
+if not available_dates:
     st.warning("資料庫中尚無賽事數據，請先執行抓取。")
 else:
-    # 提取所有可用的日期 (去重複並降序排列)
-    # 將 datetime object 轉換為 date 來進行去重，避免因為時間部分不同而導致重複日期
-    available_dates = sorted(list(set(r.race_date.date() if hasattr(r.race_date, 'date') else r.race_date for r in races)), reverse=True)
-    
-    from datetime import datetime
-    
-    # 1. 選擇日期 (日曆選擇器 Date Input)
     st.sidebar.markdown("📅 **選擇賽事日期**")
     selected_date_input = st.sidebar.date_input(
         "請選擇日期",
-        value=available_dates[0] if available_dates else None,
-        min_value=available_dates[-1] if available_dates else None,
-        max_value=available_dates[0] if available_dates else None
+        value=available_dates[0],
+        min_value=available_dates[-1],
+        max_value=available_dates[0],
     )
-    
-    # 檢查選擇的日期是否有賽事資料
+
     if selected_date_input not in available_dates:
         st.sidebar.error("❌ 該日期沒有賽事資料，請選擇日曆上有顏色的日期。")
         selected_date_input = available_dates[0]
-        
-    selected_date_str = selected_date_input.strftime('%Y-%m-%d')
-    
-    # 過濾出該日期的所有場次
-    races_on_date = [r for r in races if (r.race_date.date() if hasattr(r.race_date, 'date') else r.race_date) == selected_date_input]
+
+    selected_date_str = selected_date_input.strftime("%Y-%m-%d")
+    races_on_date = _cached_races_on_date(selected_date_str)
     
     # 2. 選擇場次 (按鈕陣列)
     st.sidebar.markdown("🏁 **選擇場次**")
     
     # 初始化 session_state 以記憶當前選中的場次 ID
-    if 'factor_selected_race_id' not in st.session_state or st.session_state.factor_selected_race_id not in [r.id for r in races_on_date]:
-        st.session_state.factor_selected_race_id = races_on_date[0].id
+    if "factor_selected_race_id" not in st.session_state or st.session_state.factor_selected_race_id not in [int(r.get("id") or 0) for r in (races_on_date or [])]:
+        st.session_state.factor_selected_race_id = int((races_on_date or [])[0].get("id") or 0)
         
     # 使用 columns 建立場次按鈕網格 (每行 5 個按鈕)
     cols_per_row = 5
@@ -142,12 +278,12 @@ else:
         for j in range(cols_per_row):
             if i + j < len(races_on_date):
                 r = races_on_date[i + j]
-                btn_label = str(r.race_no)
+                btn_label = str(int(r.get("race_no") or 0))
                 # 當前選中的場次使用 primary 顏色
-                btn_type = "primary" if st.session_state.factor_selected_race_id == r.id else "secondary"
+                btn_type = "primary" if int(st.session_state.factor_selected_race_id) == int(r.get("id") or 0) else "secondary"
                 
-                if cols[j].button(btn_label, key=f"factor_race_btn_{r.id}", type=btn_type, use_container_width=True):
-                    st.session_state.factor_selected_race_id = r.id
+                if cols[j].button(btn_label, key=f"factor_race_btn_{int(r.get('id') or 0)}", type=btn_type, use_container_width=True):
+                    st.session_state.factor_selected_race_id = int(r.get("id") or 0)
                     st.rerun()
 
     selected_race_id = st.session_state.factor_selected_race_id

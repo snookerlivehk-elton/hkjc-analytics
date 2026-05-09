@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time as dtime
 from math import ceil
 from typing import Any, Dict, List, Optional
 
@@ -147,16 +147,18 @@ def rebuild_member_preset_stats(
         return {}
     now = datetime.now().isoformat()
 
+    start = datetime.combine(d1.date(), dtime.min)
+    end = datetime.combine(d2.date(), dtime.min) + timedelta(days=1)
     races = (
         session.query(Race)
         .join(RaceEntry, RaceEntry.race_id == Race.id)
         .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
         .filter(RaceResult.rank != None)
-        .filter(func.date(Race.race_date) >= d1.date().isoformat())
-        .filter(func.date(Race.race_date) <= d2.date().isoformat())
+        .filter(Race.race_date >= start)
+        .filter(Race.race_date < end)
         .group_by(Race.id)
         .having(func.count(RaceResult.id) >= 5)
-        .order_by(func.date(Race.race_date).asc(), Race.race_no.asc(), Race.id.asc())
+        .order_by(Race.race_date.asc(), Race.race_no.asc(), Race.id.asc())
         .all()
     )
 
@@ -411,16 +413,18 @@ def rebuild_member_preset_elim_stats(
     now = datetime.now().isoformat()
 
     out: Dict[str, Any] = {}
+    start = datetime.combine(d1.date(), dtime.min)
+    end = datetime.combine(d2.date(), dtime.min) + timedelta(days=1)
     q = (
         session.query(Race)
         .join(RaceEntry, RaceEntry.race_id == Race.id)
         .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
         .filter(RaceResult.rank != None)
-        .filter(func.date(Race.race_date) >= d1.date().isoformat())
-        .filter(func.date(Race.race_date) <= d2.date().isoformat())
+        .filter(Race.race_date >= start)
+        .filter(Race.race_date < end)
         .group_by(Race.id)
         .having(func.count(RaceResult.id) >= top_k)
-        .order_by(func.date(Race.race_date).asc(), Race.race_no.asc(), Race.id.asc())
+        .order_by(Race.race_date.asc(), Race.race_no.asc(), Race.id.asc())
     )
     races = q.all()
 
@@ -500,25 +504,34 @@ def _list_completed_races(
     limit: int,
     min_finishers: int = 5,
 ) -> List[Race]:
-    cutoff_s = cutoff.date().isoformat()
+    cutoff_start = datetime.combine(cutoff.date(), dtime.min)
     q = (
         session.query(Race)
         .join(RaceEntry, RaceEntry.race_id == Race.id)
         .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
         .filter(RaceResult.rank != None)
-        .filter(func.date(Race.race_date) >= cutoff_s)
+        .filter(Race.race_date >= cutoff_start)
         .group_by(Race.id)
         .having(func.count(RaceResult.id) >= int(min_finishers or 0))
-        .order_by(func.date(Race.race_date).asc(), Race.race_no.asc(), Race.id.asc())
+        .order_by(Race.race_date.asc(), Race.race_no.asc(), Race.id.asc())
     )
 
     if last_date is not None and last_race_no is not None and last_race_id is not None:
-        last_date_s = last_date.date().isoformat() if hasattr(last_date, "date") else str(last_date)
+        last_d0 = last_date.date() if hasattr(last_date, "date") else None
+        if last_d0 is None:
+            return q.limit(limit).all()
+        last_start = datetime.combine(last_d0, dtime.min)
+        last_end = last_start + timedelta(days=1)
         q = q.filter(
             or_(
-                func.date(Race.race_date) > last_date_s,
-                and_(func.date(Race.race_date) == last_date_s, Race.race_no > last_race_no),
-                and_(func.date(Race.race_date) == last_date_s, Race.race_no == last_race_no, Race.id > last_race_id),
+                Race.race_date >= last_end,
+                and_(Race.race_date >= last_start, Race.race_date < last_end, Race.race_no > last_race_no),
+                and_(
+                    Race.race_date >= last_start,
+                    Race.race_date < last_end,
+                    Race.race_no == last_race_no,
+                    Race.id > last_race_id,
+                ),
             )
         )
 
@@ -742,11 +755,14 @@ def update_all_members_preset_stats_for_race_date(session: Session, race_date_st
     if target_date < cutoff:
         return {"ok": True, "skipped": True, "reason": "date_before_cutoff"}
 
+    start = datetime.combine(target_date, dtime.min)
+    end = start + timedelta(days=1)
     races = (
         session.query(Race)
         .join(RaceEntry, RaceEntry.race_id == Race.id)
         .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
-        .filter(func.date(Race.race_date) == target_date.isoformat())
+        .filter(Race.race_date >= start)
+        .filter(Race.race_date < end)
         .filter(RaceResult.rank != None)
         .group_by(Race.id)
         .having(func.count(RaceResult.id) >= 5)

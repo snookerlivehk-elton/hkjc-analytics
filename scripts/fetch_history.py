@@ -2,7 +2,7 @@ import asyncio
 import sys
 import os
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, time as dtime, timedelta
 
 # 將專案根目錄加入路徑
 root_path = str(Path(__file__).resolve().parent.parent)
@@ -45,8 +45,6 @@ def parse_target_date(date_str: str):
     return None
 
 def get_target_horses(session, mode: str, target_date_str: str):
-    from sqlalchemy import func
-
     mode = (mode or "all").strip().lower()
     target_date = parse_target_date(target_date_str)
 
@@ -57,11 +55,14 @@ def get_target_horses(session, mode: str, target_date_str: str):
                 target_date = latest_race_dt[0].date() if hasattr(latest_race_dt[0], "date") else latest_race_dt[0]
 
         if target_date:
+            start = datetime.combine(target_date, dtime.min)
+            end = start + timedelta(days=1)
             q = (
                 session.query(Horse)
                 .join(RaceEntry, RaceEntry.horse_id == Horse.id)
                 .join(Race, Race.id == RaceEntry.race_id)
-                .filter(func.date(Race.race_date) == target_date)
+                .filter(Race.race_date >= start)
+                .filter(Race.race_date < end)
                 .distinct()
                 .order_by(Horse.id.asc())
             )

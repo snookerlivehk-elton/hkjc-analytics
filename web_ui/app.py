@@ -1236,18 +1236,20 @@ def main():
 
                     with st.expander("🎯 會員組合命中率（可篩選）", expanded=False):
                         from sqlalchemy import func
-                        from datetime import date, timedelta
+                        from datetime import date, datetime, time, timedelta
                         from scoring_engine.member_stats import _calc_hits
                         from scoring_engine.track_conditions import going_code_label
 
                         def _filtered_race_rows(d1: date, d2: date, venue_sel: str, surface_sel: str, course_sel: str, going_sel: str, min_results: int):
+                            start = datetime.combine(d1, time.min)
+                            end = datetime.combine(d2, time.min) + timedelta(days=1)
                             q_races = (
                                 session.query(Race.id, Race.race_date, Race.race_no)
                                 .join(RaceEntry, RaceEntry.race_id == Race.id)
                                 .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
                                 .filter(RaceResult.rank != None)
-                                .filter(func.date(Race.race_date) >= d1.isoformat())
-                                .filter(func.date(Race.race_date) <= d2.isoformat())
+                                .filter(Race.race_date >= start)
+                                .filter(Race.race_date < end)
                             )
                             if venue_sel != "全部":
                                 q_races = q_races.filter(Race.venue == ("HV" if venue_sel == "跑馬地" else "ST"))
@@ -1260,7 +1262,7 @@ def main():
                             q_races = (
                                 q_races.group_by(Race.id, Race.race_date, Race.race_no)
                                 .having(func.count(RaceResult.id) >= int(min_results or 0))
-                                .order_by(func.date(Race.race_date).asc(), Race.race_no.asc(), Race.id.asc())
+                                .order_by(Race.race_date.asc(), Race.race_no.asc(), Race.id.asc())
                             )
                             rows = q_races.all()
                             race_ids = [int(r[0]) for r in (rows or []) if r and int(r[0] or 0) > 0]
@@ -1586,6 +1588,8 @@ def main():
                                 st.session_state["member_elim_verify_res"] = None
 
                             if st.session_state.get("member_elim_verify_sig") == sig and st.session_state.get("member_elim_verify_res") is None and run_verify:
+                                start = datetime.combine(d1, time.min)
+                                end = datetime.combine(d2, time.min) + timedelta(days=1)
                                 used_factors = [str(k) for k, v in weight_map.items() if abs(float(v or 0.0)) > 1e-12]
                                 if not used_factors:
                                     st.session_state["member_elim_verify_res"] = {"rows": [], "totals": {"pred": 0, "tn": 0, "fp": 0, "races": 0}}
@@ -1595,8 +1599,8 @@ def main():
                                         .join(RaceEntry, RaceEntry.race_id == Race.id)
                                         .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
                                         .filter(RaceResult.rank != None)
-                                        .filter(func.date(Race.race_date) >= d1.isoformat())
-                                        .filter(func.date(Race.race_date) <= d2.isoformat())
+                                        .filter(Race.race_date >= start)
+                                        .filter(Race.race_date < end)
                                     )
                                     if venue_sel != "全部":
                                         race_rows = race_rows.filter(Race.venue == ("HV" if venue_sel == "跑馬地" else "ST"))
@@ -1609,7 +1613,7 @@ def main():
                                     race_rows = (
                                         race_rows.group_by(Race.id, Race.race_date, Race.race_no)
                                         .having(func.count(RaceResult.id) >= int(top_k or 0))
-                                        .order_by(func.date(Race.race_date).asc(), Race.race_no.asc(), Race.id.asc())
+                                        .order_by(Race.race_date.asc(), Race.race_no.asc(), Race.id.asc())
                                         .all()
                                     )
                                     race_ids = [int(r[0]) for r in (race_rows or []) if r and int(r[0] or 0) > 0]

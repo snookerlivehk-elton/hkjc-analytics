@@ -85,10 +85,10 @@ class RaceEntry(Base):
     """馬匹出賽排位資料"""
     __tablename__ = 'race_entries'
     id = Column(Integer, primary_key=True)
-    race_id = Column(Integer, ForeignKey('races.id'), nullable=False)
-    horse_id = Column(Integer, ForeignKey('horses.id'), nullable=False)
-    jockey_id = Column(Integer, ForeignKey('jockeys.id'))
-    trainer_id = Column(Integer, ForeignKey('trainers.id'))
+    race_id = Column(Integer, ForeignKey('races.id'), nullable=False, index=True)
+    horse_id = Column(Integer, ForeignKey('horses.id'), nullable=False, index=True)
+    jockey_id = Column(Integer, ForeignKey('jockeys.id'), index=True)
+    trainer_id = Column(Integer, ForeignKey('trainers.id'), index=True)
     
     horse_no = Column(Integer)
     draw = Column(Integer)
@@ -115,7 +115,7 @@ class RaceResult(Base):
     """賽事結果"""
     __tablename__ = 'race_results'
     id = Column(Integer, primary_key=True)
-    entry_id = Column(Integer, ForeignKey('race_entries.id'), unique=True)
+    entry_id = Column(Integer, ForeignKey('race_entries.id'), unique=True, index=True)
     
     rank = Column(Integer)
     finish_time = Column(String(20))
@@ -131,9 +131,9 @@ class ScoringFactor(Base):
     """獨立計分條件得分"""
     __tablename__ = 'scoring_factors'
     id = Column(Integer, primary_key=True)
-    entry_id = Column(Integer, ForeignKey('race_entries.id'))
+    entry_id = Column(Integer, ForeignKey('race_entries.id'), index=True)
     
-    factor_name = Column(String(50), nullable=False)  # 條件名稱 (e.g. jockey_trainer_bond)
+    factor_name = Column(String(50), nullable=False, index=True)  # 條件名稱 (e.g. jockey_trainer_bond)
     raw_value = Column(Float)  # 原始數據值
     raw_data_display = Column(String(255), nullable=True) # 透明化原始數據文字 (e.g., "同程勝率 45%")
     score = Column(Float)      # 0-10 分 (相對排名得分)
@@ -145,7 +145,7 @@ class OddsHistory(Base):
     """賠率變化歷史"""
     __tablename__ = 'odds_history'
     id = Column(Integer, primary_key=True)
-    entry_id = Column(Integer, ForeignKey('race_entries.id'))
+    entry_id = Column(Integer, ForeignKey('race_entries.id'), index=True)
     odds_type = Column(String(20)) # Early, Live
     win_odds = Column(Float)
     place_odds = Column(Float)
@@ -154,7 +154,7 @@ class OddsHistory(Base):
 class RaceDividend(Base):
     __tablename__ = 'race_dividends'
     id = Column(Integer, primary_key=True)
-    race_id = Column(Integer, ForeignKey('races.id'), unique=True, nullable=False)
+    race_id = Column(Integer, ForeignKey('races.id'), unique=True, index=True, nullable=False)
     source = Column(String(50), default="HKJC")
     dividends = Column(JSON)
     meta = Column(JSON)
@@ -196,7 +196,7 @@ class SystemConfig(Base):
     key = Column(String(50), unique=True, nullable=False, index=True)
     value = Column(JSON, nullable=False)
     description = Column(String(200))
-    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, index=True)
 
 
 class PredictionTop5(Base):
@@ -229,7 +229,7 @@ class HorseHistory(Base):
     """馬匹歷史往績 (簡化版，用於快速計分)"""
     __tablename__ = 'horse_histories'
     id = Column(Integer, primary_key=True)
-    horse_id = Column(Integer, ForeignKey('horses.id'))
+    horse_id = Column(Integer, ForeignKey('horses.id'), index=True)
     race_date = Column(DateTime, index=True)
     venue = Column(String(20))
     surface = Column(String(20), index=True)  # 草地 / 泥地(全天候)
