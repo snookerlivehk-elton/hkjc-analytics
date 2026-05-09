@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 from sqlalchemy.orm import Session
 from database.models import RaceResult, RaceEntry, OddsHistory, Workout, VetReport
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Callable
 
 class FactorCalculator:
     """獨立計分條件的具體計算邏輯"""
