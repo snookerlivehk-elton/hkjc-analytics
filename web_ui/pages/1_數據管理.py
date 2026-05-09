@@ -542,158 +542,10 @@ with tab_monitor:
         session_m.close()
 
 with tab_ops:
-    st.info("已新增「📡 監察面板」集中日常更新操作；本分頁會逐步收合為進階/維護工具。")
-    st.subheader("👥 會員白名單")
-    session_cfg = get_session()
-    try:
-        from database.models import SystemConfig
+    st.subheader("🛠️ 系統操作（精簡）")
+    st.caption("日常更新/重算已集中到「📡 監察面板」。本分頁只保留口徑/權重/校準與維護工具。")
 
-        cfg = session_cfg.query(SystemConfig).filter_by(key="member_whitelist_emails").first()
-        emails = []
-        if cfg and isinstance(cfg.value, list):
-            emails = [str(x).strip().lower() for x in cfg.value if str(x).strip()]
-        emails = list(dict.fromkeys(emails))
-        default_text = "\n".join(emails)
-
-        with st.form("member_whitelist_form"):
-            text = st.text_area("允許登入的 Email（每行一個）", value=default_text, height=160, placeholder="name@example.com")
-            submitted = st.form_submit_button("💾 儲存白名單", type="primary")
-            if submitted:
-                new_list = []
-                for line in str(text or "").splitlines():
-                    e = line.strip().lower()
-                    if e:
-                        new_list.append(e)
-                new_list = list(dict.fromkeys(new_list))
-                if not cfg:
-                    cfg = SystemConfig(key="member_whitelist_emails", description="會員登入白名單 (email)")
-                    session_cfg.add(cfg)
-                cfg.value = new_list
-                session_cfg.commit()
-                st.success(f"已儲存 {len(new_list)} 個 Email。")
-                st.rerun()
-    except Exception as e:
-        session_cfg.rollback()
-        st.error(f"❌ 白名單讀寫失敗: {e}")
-    finally:
-        session_cfg.close()
-
-    st.subheader("📉 會員反向統計總表（回填/重建）")
-    st.caption("用途：補回歷史淘汰準確率/錯殺率統計，並覆寫保存到 SystemConfig（member_weight_preset_elim_stats:<email>）。")
-    session_elim = get_session()
-    try:
-        from database.models import SystemConfig
-        from scoring_engine.member_stats import rebuild_member_preset_elim_stats
-        from datetime import datetime, date, timedelta
-
-        cfg = session_elim.query(SystemConfig).filter_by(key="member_whitelist_emails").first()
-        emails = []
-        if cfg and isinstance(cfg.value, list):
-            emails = [str(x).strip().lower() for x in cfg.value if str(x).strip()]
-        emails = list(dict.fromkeys(emails))
-        if not emails:
-            st.info("未設定會員白名單，無法回填。")
-        else:
-            end_default = date.today()
-            start_default = end_default - timedelta(days=30)
-            d1, d2 = st.date_input("回填日期範圍", value=(start_default, end_default), key="admin_elim_rebuild_range")
-            if isinstance(d1, date) and isinstance(d2, date) and d1 > d2:
-                d1, d2 = d2, d1
-
-            cols = st.columns([2, 3])
-            ok = _confirm_run(cols[0], "admin_elim_rebuild", label="輸入 RUN 以回填/重建")
-            if cols[1].button("📉 回填會員反向統計（覆寫）", use_container_width=True, disabled=not ok):
-                progress = st.progress(0)
-                done = 0
-                for i, em in enumerate(emails):
-                    cfg2 = session_elim.query(SystemConfig).filter_by(key=f"member_weight_presets:{str(em)}").first()
-                    presets = cfg2.value if cfg2 and isinstance(cfg2.value, list) else []
-                    rebuild_member_preset_elim_stats(
-                        session=session_elim,
-                        email=str(em),
-                        presets=presets,
-                        d1=datetime.combine(d1, datetime.min.time()),
-                        d2=datetime.combine(d2, datetime.min.time()),
-                    )
-                    done += 1
-                    progress.progress((i + 1) / len(emails))
-                st.success(f"✅ 已回填 {done} 位會員。")
-                st.rerun()
-    finally:
-        session_elim.close()
-
-    st.subheader("📊 數據取得狀態")
-    session_status = get_session()
-    try:
-        from database.models import Race, Horse, Jockey, Trainer, RaceEntry, HorseHistory, ScoringFactor, RaceResult, RaceDividend, OddsHistory, ScoringWeight, SystemConfig, PredictionTop5
-
-        status = {
-            "賽事": session_status.query(Race).count(),
-            "排位": session_status.query(RaceEntry).count(),
-            "賽果": session_status.query(RaceResult).count(),
-            "派彩": session_status.query(RaceDividend).count(),
-            "計分": session_status.query(ScoringFactor).count(),
-            "Top5快照": session_status.query(PredictionTop5).count(),
-            "馬匹": session_status.query(Horse).count(),
-            "往績": session_status.query(HorseHistory).count(),
-            "騎師": session_status.query(Jockey).count(),
-            "練馬師": session_status.query(Trainer).count(),
-            "賠率": session_status.query(OddsHistory).count(),
-            "權重": session_status.query(ScoringWeight).count(),
-            "系統設定": session_status.query(SystemConfig).count(),
-        }
-
-        c1, c2, c3, c4, c5, c6 = st.columns(6)
-        items = list(status.items())
-        cols = [c1, c2, c3, c4, c5, c6]
-        for i, (k, v) in enumerate(items):
-            cols[i % 6].metric(k, v)
-    except Exception as e:
-        st.error(f"❌ 讀取資料庫狀態失敗: {e}")
-    finally:
-        session_status.close()
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.subheader("📅 賽期表")
-        st.caption("用途：更新「本月＋下月」有賽事的日期清單，供系統決定下一賽日與排程目標。若已設定 fixture cron（每日 HK 06:00），通常不需手動按。")
-        c_confirm, c_btn = st.columns([2, 3])
-        ok = _confirm_run(c_confirm, "fixture", label="輸入 RUN 以更新賽期表")
-        if c_btn.button("📅 更新賽期表 (本月+下月)", use_container_width=True, disabled=not ok):
-            if trigger_fixture_fetch():
-                st.success("✅ 賽期表已更新！")
-
-        st.subheader("📡 抓取排位表與即時數據")
-        
-        from datetime import datetime, timedelta
-        default_date = datetime.now()
-        selected_date = st.date_input("選擇要抓取的賽事日期", value=default_date)
-        st.session_state["admin_selected_date"] = selected_date
-
-        session_meta = get_session()
-        try:
-            from database.models import SystemConfig
-
-            fx_updated = session_meta.query(SystemConfig).filter_by(key="fixture_dates_updated_at").first()
-            fx_next = session_meta.query(SystemConfig).filter_by(key="fixture_next_raceday").first()
-            rr_last = session_meta.query(SystemConfig).filter(SystemConfig.key.like("auto_results_fetched:%")).order_by(SystemConfig.key.desc()).first()
-            fx_updated_s = str(fx_updated.value) if fx_updated else ""
-            fx_next_s = str(fx_next.value) if fx_next else ""
-            rr_last_s = rr_last.key.split(":", 1)[1] if rr_last and ":" in rr_last.key else ""
-            meta_lines = []
-            if fx_next_s:
-                meta_lines.append(f"下一賽日：{fx_next_s}")
-            if fx_updated_s:
-                meta_lines.append(f"賽期表最後更新：{fx_updated_s}")
-            if rr_last_s:
-                meta_lines.append(f"賽果 cron 最後自動抓取：{rr_last_s}")
-            if meta_lines:
-                st.caption("｜".join(meta_lines))
-        finally:
-            session_meta.close()
-
-        st.subheader("🧩 因子資料不足策略")
+    with st.expander("🧩 因子資料不足策略", expanded=True):
         st.caption("用於識別因子資料是否齊全：可只提示，或在資料覆蓋不足時自動忽略該因子（本場有效權重設為 0）。")
         session_q = get_session()
         try:
@@ -809,7 +661,7 @@ with tab_ops:
         finally:
             session_q.close()
 
-        st.subheader("⚖️ 全局權重設定（ScoringWeight）")
+    with st.expander("⚖️ 全局權重設定（ScoringWeight）", expanded=False):
         st.caption("此處係「全局」權重（會影響後台按總分排序、以及以全局權重生成的 Top5/淘汰診斷）。用戶端會員組合係另一套 preset 權重。")
         session_w = get_session()
         try:
@@ -877,7 +729,7 @@ with tab_ops:
         finally:
             session_w.close()
 
-        st.subheader("🎯 勝率校準（Temperature）")
+    with st.expander("🎯 勝率校準（Temperature）", expanded=False):
         st.caption("用途：把「總分→預估勝率」的 softmax 溫度做校準，讓勝率分佈更貼近歷史賽果（只影響顯示/勝率欄位，不改排名）。")
         session_cal = get_session()
         try:
@@ -954,277 +806,10 @@ with tab_ops:
                         st.error("❌ 訓練失敗：所選範圍內沒有足夠的已結算賽果/計分資料。")
         finally:
             session_cal.close()
-        
-        st.subheader("⚡ 一鍵完整更新（建議）")
-        st.caption("會依序完成：抓排位 → 回填該日涉及馬匹往績 → 重算該日所有場次 → 生成 Top5 快照（factor + preset）。每一步會等待上一個完成。")
-        c_confirm, c_btn = st.columns([2, 3])
-        ok = _confirm_run(c_confirm, "oneclick_update", label="輸入 RUN 以執行一鍵完整更新")
-        if c_btn.button("⚡ 一鍵：抓排位 → 回填馬匹往績 → 重算當日 → 生成Top5快照", use_container_width=True, disabled=not ok):
-            target_date_str = selected_date.strftime("%Y/%m/%d")
-            ok1 = trigger_scraper(target_date=target_date_str)
-            if not ok1:
-                st.error("❌ 抓取排位/即時數據失敗，已中止後續流程。")
-            else:
-                st.success(f"✅ {target_date_str} 排位/即時數據更新完成。")
 
-                ok2 = trigger_history_backfill(target_date=target_date_str, mode="date")
-                if not ok2:
-                    st.error("❌ 回填馬匹往績失敗，已中止後續流程。")
-                else:
-                    st.success(f"✅ {target_date_str} 馬匹往績回填完成。")
-
-                    session_rescore = get_session()
-                    try:
-                        from database.models import Race
-                        from sqlalchemy import func
-                        from datetime import time as dtime, timedelta
-                        start = datetime.combine(selected_date, dtime.min)
-                        end = start + timedelta(days=1)
-                        races_to_score = (
-                            session_rescore.query(Race)
-                            .filter(Race.race_date >= start)
-                            .filter(Race.race_date < end)
-                            .order_by(Race.race_no.asc(), Race.id.asc())
-                            .all()
-                        )
-                        if not races_to_score:
-                            st.warning("⚠️ 找不到該日賽事資料（請先確認排位已成功入庫）。")
-                        else:
-                            engine = ScoringEngine(session_rescore)
-                            progress_bar = st.progress(0)
-                            status_text = st.empty()
-                            for i, race in enumerate(races_to_score):
-                                status_text.text(f"正在重算：第 {race.race_no} 場...")
-                                engine.score_race(race.id)
-                                progress_bar.progress((i + 1) / len(races_to_score))
-                            st.success(f"✅ 已完成 {target_date_str} {len(races_to_score)} 場賽事重新計分。")
-                    except Exception as e:
-                        st.error(f"❌ 重算當日賽事失敗: {e}")
-                    finally:
-                        session_rescore.close()
-
-                    ok4 = trigger_predictions_snapshot(target_date_str)
-                    if ok4:
-                        st.success(f"✅ 已生成 {target_date_str} Top5 預測快照（包含 factor + preset）。")
-                    else:
-                        st.error("❌ 生成 Top5 預測快照失敗。")
-
-        st.caption("只做「抓排位/即時數據 + 計分（不包含回填往績/重算）」；如要產生更完整的條件結果與 Top5 快照，建議使用上方「一鍵完整更新」。")
-        c_confirm, c_btn = st.columns([2, 3])
-        ok = _confirm_run(c_confirm, "scrape_day", label="輸入 RUN 以開始抓取")
-        if c_btn.button("🔄 開始抓取該日賽事", use_container_width=True, disabled=not ok):
-            target_date_str = selected_date.strftime("%Y/%m/%d")
-            if trigger_scraper(target_date=target_date_str):
-                st.success(f"✅ {target_date_str} 數據更新成功！")
-
-        st.subheader("🧾 預測快照 (Top5)")
-        st.caption("只生成 Top5 快照（落庫 PredictionTop5）。需要先完成該日計分/重算，否則快照會反映不完整數據。")
-        c_confirm, c_btn = st.columns([2, 3])
-        ok = _confirm_run(c_confirm, "snapshot_day", label="輸入 RUN 以生成快照")
-        if c_btn.button("🧾 生成當日 Top5 預測快照", use_container_width=True, disabled=not ok):
-            target_date_str = selected_date.strftime("%Y/%m/%d")
-            if trigger_predictions_snapshot(target_date_str):
-                st.success(f"✅ 已生成 {target_date_str} Top5 預測快照！")
-
-        st.subheader("🏁 抓取賽果與派彩")
-        st.caption("抓取賽果/派彩入庫後，會自動結算：會員組合命中率 + Top5 快照命中（回寫 hits/actual_top5）。若已設定賽果 cron（每日 HK 23:55）通常不需手動按。")
-        c_confirm, c_btn = st.columns([2, 3])
-        ok = _confirm_run(c_confirm, "fetch_results", label="輸入 RUN 以抓取賽果")
-        if c_btn.button("🏁 抓取該日賽果與派彩", use_container_width=True, disabled=not ok):
-            target_date_str = selected_date.strftime("%Y/%m/%d")
-            if trigger_race_results_fetch(target_date=target_date_str):
-                st.success(f"✅ 已完成 {target_date_str} 賽果與派彩同步！")
-                session_upd = get_session()
-                try:
-                    from database.models import SystemConfig
-                    from scoring_engine.member_stats import update_member_preset_elim_stats_incremental
-
-                    cfg = session_upd.query(SystemConfig).filter_by(key="member_whitelist_emails").first()
-                    emails = []
-                    if cfg and isinstance(cfg.value, list):
-                        emails = [str(x).strip().lower() for x in cfg.value if str(x).strip()]
-                    emails = list(dict.fromkeys(emails))
-                    for em in emails:
-                        cfg2 = session_upd.query(SystemConfig).filter_by(key=f"member_weight_presets:{str(em)}").first()
-                        presets = cfg2.value if cfg2 and isinstance(cfg2.value, list) else []
-                        update_member_preset_elim_stats_incremental(session_upd, str(em), presets, per_preset_max_new_races=200)
-                finally:
-                    session_upd.close()
-
-        st.subheader("🌦️ 回填場地狀況（賽後）")
-        st.caption("用途：把已入庫的「賽果與派彩」中 meta.going/meta.track 回填到 RaceTrackCondition（可作篩選條件），不需重新爬網。")
-        c_confirm, c_btn = st.columns([2, 3])
-        ok = _confirm_run(c_confirm, "backfill_going", label="輸入 RUN 以回填")
-        if c_btn.button("🌦️ 回填該日場地狀況", use_container_width=True, disabled=not ok):
-            target_date_str = selected_date.strftime("%Y/%m/%d")
-            session_bf = get_session()
-            try:
-                from datetime import datetime, time as dtime, timedelta
-                from database.models import Race, RaceDividend, RaceTrackCondition
-                from scoring_engine.track_conditions import normalize_going
-
-                d0 = datetime.strptime(target_date_str, "%Y/%m/%d").date()
-                start = datetime.combine(d0, dtime.min)
-                end = start + timedelta(days=1)
-                races = (
-                    session_bf.query(Race.id)
-                    .filter(Race.race_date >= start)
-                    .filter(Race.race_date < end)
-                    .all()
-                )
-                race_ids = [int(r[0]) for r in races if r and int(r[0] or 0) > 0]
-                if not race_ids:
-                    st.info("該日沒有任何賽事資料。")
-                else:
-                    divs = session_bf.query(RaceDividend.race_id, RaceDividend.meta).filter(RaceDividend.race_id.in_(race_ids)).all()
-                    updated = 0
-                    for rid, meta in divs:
-                        if not isinstance(meta, dict):
-                            continue
-                        going_raw, going_code = normalize_going(str(meta.get("going") or ""))
-                        track_raw = str(meta.get("track") or "").strip()
-                        if not (going_raw or track_raw):
-                            continue
-                        tc = session_bf.query(RaceTrackCondition).filter_by(race_id=int(rid)).first()
-                        if not tc:
-                            tc = RaceTrackCondition(race_id=int(rid), source="HKJC_LOCALRESULTS")
-                            session_bf.add(tc)
-                        tc.going_raw = going_raw or tc.going_raw
-                        tc.going_code = (going_code or going_raw) or tc.going_code
-                        tc.track_raw = track_raw or tc.track_raw
-                        tc.updated_at = datetime.now()
-                        updated += 1
-                    session_bf.commit()
-                    st.success(f"✅ 已回填 {updated} 場（{target_date_str}）")
-            except Exception as e:
-                st.error(f"❌ 回填失敗：{e}")
-            finally:
-                session_bf.close()
-
-        st.subheader("⚡ SpeedPRO 能量分（手動備用）")
-        st.caption("用途：當 cron 未成功抓到 SpeedPRO（速勢能量評估/狀態評級）時可手動觸發一次。建議先選日期，再選場次。")
-        target_date_str = selected_date.strftime("%Y/%m/%d")
-        sp_cols = st.columns(2)
-        with sp_cols[0]:
-            race_opts = [str(i) for i in range(1, 10)]
-            selected_races = st.multiselect("選擇場次（留空＝全部）", options=race_opts, default=[])
-        with sp_cols[1]:
-            retry_minutes = st.selectbox("失敗後重試間距（分鐘）", options=[30, 60, 120], index=2)
-
-        session_sp = get_session()
-        try:
-            from database.models import SystemConfig
-
-            rows = []
-            for rn in range(1, 10):
-                retry_key = f"speedpro_retry:{target_date_str}:{rn}"
-                info_key = f"speedpro_energy_info:{target_date_str}:{rn}"
-                r_cfg = session_sp.query(SystemConfig).filter_by(key=retry_key).first()
-                i_cfg = session_sp.query(SystemConfig).filter_by(key=info_key).first()
-                r_val = r_cfg.value if r_cfg and isinstance(r_cfg.value, dict) else {}
-                i_val = i_cfg.value if i_cfg and isinstance(i_cfg.value, dict) else {}
-                if not r_val and not i_val:
-                    continue
-                rows.append(
-                    {
-                        "race_no": rn,
-                        "done": bool(r_val.get("done") is True),
-                        "attempts": int(r_val.get("attempt_count") or 0),
-                        "last_attempt_at": r_val.get("last_attempt_at"),
-                        "next_retry_at": r_val.get("next_retry_at"),
-                        "last_error": r_val.get("last_error"),
-                        "rows": i_val.get("rows"),
-                        "captured_at": i_val.get("captured_at"),
-                    }
-                )
-            if rows:
-                st.dataframe(pd.DataFrame(rows).sort_values(["race_no"]), use_container_width=True, hide_index=True)
-        finally:
-            session_sp.close()
-
-        race_nos_str = ",".join([str(int(x)) for x in selected_races if str(x).isdigit()])
-        c_confirm, c_btn = st.columns([2, 3])
-        ok = _confirm_run(c_confirm, "speedpro_fetch", label="輸入 RUN 以抓取 SpeedPRO")
-        if c_btn.button("⚡ 立即抓取 SpeedPRO", use_container_width=True, disabled=not ok):
-            ok = trigger_speedpro_fetch(target_date=target_date_str, race_nos=race_nos_str, retry_minutes=int(retry_minutes), force=True)
-            if ok:
-                st.success("✅ 已觸發 SpeedPRO 抓取（詳情見上方日誌/狀態表）。")
-            else:
-                st.error("❌ SpeedPRO 抓取失敗，請查看日誌。")
-
-        st.subheader("📚 歷史回填")
-        st.caption("回填馬匹往績（HorseHistory），供部分條件計分使用。更新排位後、重算前先回填，結果較完整。")
-        col_h1, col_h2 = st.columns(2)
-        with col_h1:
-            ok = _confirm_run(col_h1, "backfill_date", label="輸入 RUN 以回填（所選日期）")
-            if st.button("📚 回填所選日期馬匹往績", use_container_width=True, disabled=not ok):
-                target_date_str = selected_date.strftime("%Y/%m/%d")
-                if trigger_history_backfill(target_date=target_date_str, mode="date"):
-                    st.success(f"✅ 已完成 {target_date_str} 所需馬匹之歷史往績回填！")
-        with col_h2:
-            with st.expander("完整回填 (較慢)"):
-                ok = _confirm_run(st, "backfill_all", label="輸入 RUN 以回填（全部）")
-                if st.button("📚 回填所有馬匹往績", use_container_width=True, disabled=not ok):
-                    if trigger_history_backfill(mode="all"):
-                        st.success("✅ 已完成所有馬匹之歷史往績回填！")
-
-    with col2:
-        st.subheader("🚀 批量計分操作")
-        st.caption("只做「重算所選日期」所有場次（不包含回填/快照）。適合你已完成回填但想再重算一次。")
-        c_confirm, c_btn = st.columns([2, 3])
-        ok = _confirm_run(c_confirm, "rescore_date", label="輸入 RUN 以重算所選日期")
-        if c_btn.button("🚀 重算所選日期所有賽事", use_container_width=True, disabled=not ok):
-            session = get_session()
-            try:
-                from database.models import Race
-                from datetime import datetime, time as dtime, timedelta
-
-                sd = st.session_state.get("admin_selected_date")
-                races_to_score = []
-                if sd:
-                    start = datetime.combine(sd, dtime.min)
-                    end = start + timedelta(days=1)
-                    races_to_score = (
-                        session.query(Race)
-                        .filter(Race.race_date >= start)
-                        .filter(Race.race_date < end)
-                        .order_by(Race.race_no.asc(), Race.id.asc())
-                        .all()
-                    )
-
-                if races_to_score:
-                    engine = ScoringEngine(session)
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
-
-                    for i, race in enumerate(races_to_score):
-                        status_text.text(f"正在計算第 {race.race_no} 場賽事分數...")
-                        engine.score_race(race.id)
-                        progress_bar.progress((i + 1) / len(races_to_score))
-
-                    sd_str = sd.strftime("%Y/%m/%d") if hasattr(sd, "strftime") else str(sd)
-                    st.success(f"✅ 已成功為 {sd_str} 的 {len(races_to_score)} 場賽事完成重新計分！")
-                else:
-                    st.warning("⚠️ 找不到所選日期的賽事資料。")
-            except Exception as e:
-                st.error(f"❌ 批量計分失敗: {e}")
-            finally:
-                session.close()
-
-        st.subheader("🧹 系統清理")
-        st.caption("僅清理已移除因子的舊資料（不影響賽事/馬匹/往績）。一般情況毋須操作。")
-        with st.expander("清理已移除因子舊記錄", expanded=False):
-            st.markdown("此操作只會刪除已移除因子在資料庫中的舊計分結果與設定，不會影響賽事、馬匹、往績等核心數據。")
-            confirm = st.checkbox("我明白此操作會刪除舊因子資料", value=False)
-            if st.button("🧹 清理 trainer_horse_bond 舊記錄", use_container_width=True, disabled=not confirm):
-                session = get_session()
-                deleted_sf, deleted_sw, deleted_cfg = cleanup_removed_factor_data(session)
-                session.close()
-                st.success(f"✅ 已刪除舊記錄：ScoringFactor {deleted_sf} 筆、ScoringWeight {deleted_sw} 筆、SystemConfig {deleted_cfg} 筆")
-
-        st.subheader("🔌 系統測試與升級")
+    with st.expander("🔌 系統測試與升級", expanded=False):
         st.caption("用於排查連線/結構問題。一般日常不用操作。")
-        if st.button("🔌 測試資料庫連線", use_container_width=True):
+        if st.button("🔌 測試資料庫連線", use_container_width=True, key="db_conn_test_btn"):
             session = get_session()
             try:
                 from database.models import ScoringWeight
@@ -1233,10 +818,10 @@ with tab_ops:
             except Exception as e:
                 st.error(f"❌ 連線失敗: {e}")
             session.close()
-            
+
         c_confirm, c_btn = st.columns([2, 3])
         ok = _confirm_run(c_confirm, "db_upgrade", label="輸入 RUN 以執行升級")
-        if c_btn.button("🆙 執行資料庫欄位升級 (新增原始數據欄位)", use_container_width=True, disabled=not ok):
+        if c_btn.button("🆙 執行資料庫欄位升級 (新增原始數據欄位)", use_container_width=True, disabled=not ok, key="db_upgrade_btn"):
             try:
                 env = os.environ.copy()
                 process = subprocess.Popen(
@@ -1253,6 +838,85 @@ with tab_ops:
                 st.error(f"❌ 系統錯誤: {e}")
 
 with tab_members:
+    st.subheader("👥 會員白名單")
+    session_cfg = get_session()
+    try:
+        from database.models import SystemConfig
+
+        cfg = session_cfg.query(SystemConfig).filter_by(key="member_whitelist_emails").first()
+        emails = []
+        if cfg and isinstance(cfg.value, list):
+            emails = [str(x).strip().lower() for x in cfg.value if str(x).strip()]
+        emails = list(dict.fromkeys(emails))
+        default_text = "\n".join(emails)
+
+        with st.form("member_whitelist_form"):
+            text = st.text_area("允許登入的 Email（每行一個）", value=default_text, height=140, placeholder="name@example.com")
+            submitted = st.form_submit_button("💾 儲存白名單", type="primary")
+            if submitted:
+                new_list = []
+                for line in str(text or "").splitlines():
+                    e = line.strip().lower()
+                    if e:
+                        new_list.append(e)
+                new_list = list(dict.fromkeys(new_list))
+                if not cfg:
+                    cfg = SystemConfig(key="member_whitelist_emails", description="會員登入白名單 (email)")
+                    session_cfg.add(cfg)
+                cfg.value = new_list
+                session_cfg.commit()
+                st.success(f"已儲存 {len(new_list)} 個 Email。")
+                st.rerun()
+    except Exception as e:
+        session_cfg.rollback()
+        st.error(f"❌ 白名單讀寫失敗: {e}")
+    finally:
+        session_cfg.close()
+
+    with st.expander("📉 會員反向統計總表（回填/重建）", expanded=False):
+        st.caption("用途：補回歷史淘汰準確率/錯殺率統計，並覆寫保存到 SystemConfig（member_weight_preset_elim_stats:<email>）。")
+        session_elim = get_session()
+        try:
+            from database.models import SystemConfig
+            from scoring_engine.member_stats import rebuild_member_preset_elim_stats
+            from datetime import datetime, date, timedelta
+
+            cfg = session_elim.query(SystemConfig).filter_by(key="member_whitelist_emails").first()
+            emails = []
+            if cfg and isinstance(cfg.value, list):
+                emails = [str(x).strip().lower() for x in cfg.value if str(x).strip()]
+            emails = list(dict.fromkeys(emails))
+            if not emails:
+                st.info("未設定會員白名單，無法回填。")
+            else:
+                end_default = date.today()
+                start_default = end_default - timedelta(days=30)
+                d1, d2 = st.date_input("回填日期範圍", value=(start_default, end_default), key="admin_elim_rebuild_range")
+                if isinstance(d1, date) and isinstance(d2, date) and d1 > d2:
+                    d1, d2 = d2, d1
+
+                cols = st.columns([2, 3])
+                ok = _confirm_run(cols[0], "admin_elim_rebuild", label="輸入 RUN 以回填/重建")
+                if cols[1].button("📉 回填會員反向統計（覆寫）", use_container_width=True, disabled=not ok, key="admin_elim_rebuild_btn"):
+                    progress = st.progress(0)
+                    done = 0
+                    for i, em in enumerate(emails):
+                        cfg2 = session_elim.query(SystemConfig).filter_by(key=f"member_weight_presets:{str(em)}").first()
+                        presets = cfg2.value if cfg2 and isinstance(cfg2.value, list) else []
+                        rebuild_member_preset_elim_stats(
+                            session=session_elim,
+                            email=str(em),
+                            presets=presets,
+                            d1=datetime.combine(d1, datetime.min.time()),
+                            d2=datetime.combine(d2, datetime.min.time()),
+                        )
+                        done += 1
+                        progress.progress((i + 1) / len(emails))
+                    st.success(f"✅ 已回填 {done} 位會員。")
+                    st.rerun()
+        finally:
+            session_elim.close()
+
     st.subheader("👥 全部會員「儲存組合」列表")
     from database.models import SystemConfig, ScoringWeight
     from scoring_engine.constants import DISABLED_FACTORS
