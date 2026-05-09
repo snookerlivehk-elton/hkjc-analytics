@@ -163,7 +163,7 @@ def init_db():
             from scripts.init_db import populate_default_weights
             populate_default_weights()
         else:
-            disabled = ("gear_change", "going_specialty", "morning_trial_perf", "odds_movement", "pace_analysis", "vet_rest_days")
+            disabled = ("gear_change", "going_specialty", "morning_trial_perf", "odds_movement", "pace_analysis", "recent_running_style", "vet_rest_days")
             session.query(ScoringWeight).filter(ScoringWeight.factor_name.in_(disabled)).update(
                 {ScoringWeight.is_active: False, ScoringWeight.weight: 0.0},
                 synchronize_session=False,
@@ -174,7 +174,7 @@ def init_db():
                 sp.weight = 1.2
 
             upserts = [
-                ("recent_running_style", "近期跑法（近6仗沿途走位）", 0.0, True),
+                ("recent_running_style", "近期跑法（近6仗沿途走位）", 0.0, False),
                 ("style_trkprof_edge", "跑法適配分（跑道×場地狀態｜勝出/入圍）", 0.0, True),
             ]
             for fn, desc, w0, active0 in upserts:
@@ -190,8 +190,8 @@ def init_db():
                 else:
                     if str(desc or "").strip() and (str(row.description or "").strip() != str(desc or "").strip()):
                         row.description = str(desc)
-                    if active0 and (row.is_active is False):
-                        row.is_active = True
+                    if row.is_active != bool(active0):
+                        row.is_active = bool(active0)
             session.commit()
     except Exception as e:
         print(f"預填權重失敗: {e}")

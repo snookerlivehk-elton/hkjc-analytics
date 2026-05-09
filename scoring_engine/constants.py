@@ -4,5 +4,6 @@ DISABLED_FACTORS = {
     "morning_trial_perf",
     "odds_movement",
     "pace_analysis",
+    "recent_running_style",
     "vet_rest_days",
 }
