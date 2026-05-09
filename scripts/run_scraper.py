@@ -38,6 +38,20 @@ async def run_daily_scraper():
     scraper = RaceCardScraper()
     
     try:
+        try:
+            from data_scraper.course_time import CourseTimeScraper
+
+            print(">>> 正在同步跑道標準時間/參考分段時間...")
+            ct = CourseTimeScraper()
+            res_ct = ct.update_system_config(session)
+            if isinstance(res_ct, dict) and res_ct.get("ok") is True:
+                print(f">>> 已更新跑道標準時間快照：{res_ct.get('key')}")
+            else:
+                print(">>> [警告] 跑道標準時間同步失敗（將沿用既有資料）")
+        except Exception as e:
+            print(f">>> [警告] 跑道標準時間同步失敗（將沿用既有資料）: {e}")
+            session.rollback()
+
         # 從環境變數獲取目標日期 (Y/m/d)，如果沒有則預設為當天
         target_date_str = os.getenv("TARGET_DATE", "")
         if target_date_str:

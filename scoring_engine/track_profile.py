@@ -11,6 +11,8 @@ from sqlalchemy.orm import Session
 from database.models import Race, RaceEntry, RaceResult, RaceTrackCondition, SystemConfig, RaceDividend
 from scoring_engine.track_conditions import normalize_going
 
+COURSE_TIME_CFG_KEY = "course_time_reference:v1"
+
 
 def _venue_code(venue: str) -> str:
     v = str(venue or "")
@@ -160,6 +162,77 @@ def _classify_pace(first_split: Optional[float], baseline: Optional[Dict[str, An
         return "slow"
     return "normal"
 
+
+def _race_class_label_for_course_time(race_class: str) -> Optional[str]:
+    rc = str(race_class or "").strip()
+    if not rc:
+        return None
+    if "新馬" in rc:
+        return "新馬賽"
+    if "級賽" in rc or "分級" in rc or "GROUP" in rc.upper():
+        return "分級賽"
+    m = re.search(r"第\s*([1-5])\s*班", rc)
+    if m:
+        n = int(m.group(1))
+        zh = {1: "一", 2: "二", 3: "三", 4: "四", 5: "五"}.get(n)
+        return f"第{zh}班" if zh else None
+    m2 = re.search(r"第\s*([一二三四五])\s*班", rc)
+    if m2:
+        return f"第{m2.group(1)}班"
+    return None
+
+
+def _load_course_time_ref(session: Session) -> Optional[Dict[str, Any]]:
+    cfg = session.query(SystemConfig).filter_by(key=COURSE_TIME_CFG_KEY).first()
+    if not cfg or not isinstance(cfg.value, dict):
+        return None
+    return cfg.value
+
+
+def _lookup_ref_first_split(course_time_ref: Optional[Dict[str, Any]], venue: str, surface: str, distance: Optional[int], race_class: str) -> Optional[float]:
+    if not course_time_ref or not isinstance(course_time_ref, dict):
+        return None
+    try:
+        d = int(distance or 0)
+    except Exception:
+        d = 0
+    if d <= 0:
+        return None
+    cls = _race_class_label_for_course_time(race_class)
+    if not cls:
+        return None
+    tkey = f"{venue}:{surface}"
+    ref = course_time_ref.get("reference_sectionals") if isinstance(course_time_ref.get("reference_sectionals"), dict) else {}
+    node = (((ref.get(tkey) or {}).get(str(d)) or {}).get(cls) if isinstance(ref, dict) else None)
+    if not isinstance(node, dict):
+        return None
+    segs = node.get("segment_times_sec")
+    if isinstance(segs, list) and segs:
+        try:
+            v = float(segs[0])
+        except Exception:
+            return None
+        return v if v > 0 else None
+    return None
+
+
+def _classify_pace_by_ref(first_split: Optional[float], ref_first: Optional[float]) -> Optional[str]:
+    if first_split is None or ref_first is None:
+        return None
+    try:
+        v = float(first_split)
+        ref = float(ref_first)
+    except Exception:
+        return None
+    if v <= 0 or ref <= 0:
+        return None
+    thr = max(0.3, ref * 0.015)
+    if v < (ref - thr):
+        return "fast"
+    if v > (ref + thr):
+        return "slow"
+    return "normal"
+
 def _composite_style(early: Optional[str], late: Optional[str]) -> Optional[str]:
     if not early or not late:
         return None
@@ -193,6 +266,7 @@ def compute_track_profiles(
     max_date: Optional[datetime] = None,
     limit_races: int = 5000,
 ) -> Dict[str, Any]:
+    course_time_ref = _load_course_time_ref(session)
     q = session.query(Race).order_by(Race.race_date.asc(), Race.race_no.asc())
     if min_date is not None:
         q = q.filter(Race.race_date >= min_date)
@@ -267,6 +341,8 @@ def compute_track_profiles(
                 "surface": surface,
                 "course": course,
                 "dist_b": dist_b,
+                "distance": int(race.distance or 0) if race.distance is not None else None,
+                "race_class": str(getattr(race, "race_class", "") or ""),
                 "going_code": going_code,
                 "date_str": date_str,
                 "runpos_map": runpos_map,
@@ -292,6 +368,8 @@ def compute_track_profiles(
         dist_b = row["dist_b"]
         going_code = row["going_code"]
         surface = row["surface"]
+        distance = row.get("distance")
+        race_class = row.get("race_class") or ""
         runpos_map = row["runpos_map"]
         field_size = int(row["field_size"] or 0)
         winner = row["winner"]
@@ -326,7 +404,8 @@ def compute_track_profiles(
         st["n_races"] = int(st.get("n_races") or 0) + 1
 
         pbk = _pacebase_key(venue, surface, dist_b)
-        pace_tag = _classify_pace(row.get("first_split"), pacebase.get(pbk))
+        ref_first = _lookup_ref_first_split(course_time_ref, venue=venue, surface=surface, distance=distance, race_class=race_class)
+        pace_tag = _classify_pace_by_ref(row.get("first_split"), ref_first) or _classify_pace(row.get("first_split"), pacebase.get(pbk))
         if pace_tag:
             st["pace_races"] = int(st.get("pace_races") or 0) + 1
             st["pace_winner"][pace_tag] = int(st["pace_winner"].get(pace_tag) or 0) + 1
