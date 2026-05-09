@@ -127,6 +127,38 @@ class FactorCalculator:
 
         return {"kind": "unknown", "level": None, "raw": raw}
 
+    def _parse_positions(self, runpos: str):
+        import re
+
+        s = str(runpos or "").strip()
+        if not s:
+            return []
+        out = []
+        for m in re.findall(r"\d{1,2}", s):
+            try:
+                v = int(m)
+            except Exception:
+                continue
+            if v > 0:
+                out.append(v)
+        return out
+
+    def _pos_to_band(self, pos: int, field_size: int):
+        try:
+            fs = int(field_size or 0)
+            p = int(pos or 0)
+        except Exception:
+            return None
+        if fs <= 0 or p <= 0:
+            return None
+        lead_th = max(1, int((fs * 0.25) + 0.9999))
+        mid_th = max(1, int((fs * 0.60) + 0.9999))
+        if p <= lead_th:
+            return "front"
+        if p <= mid_th:
+            return "mid"
+        return "back"
+
     # 1. 騎師＋練馬師合作 (J/T Bond)
     def _calculate_jockey_trainer_bond(self):
         from datetime import datetime
@@ -315,6 +347,110 @@ class FactorCalculator:
             scores.append(bond_score)
             displays.append(f"{str_global} | {str_horse} | 合併(g={gw_eff:.2f},h={hw_eff:.2f})")
             
+        return pd.Series(scores, index=self.df.index), pd.Series(displays, index=self.df.index)
+
+    def _calculate_recent_running_style(self):
+        from datetime import datetime
+        from sqlalchemy import func
+        from database.models import Race, RaceEntry, RaceResult, SystemConfig
+
+        cutoff_dt = self._race_cutoff_dt()
+
+        scores = []
+        displays = []
+
+        for _, row in self.df.iterrows():
+            horse_id = row.get("horse_id", None)
+            try:
+                horse_id = int(horse_id or 0)
+            except Exception:
+                horse_id = 0
+            if horse_id <= 0:
+                scores.append(0.0)
+                displays.append("無馬匹資料")
+                continue
+
+            hist = (
+                self.session.query(Race.id, Race.race_date, Race.race_no, RaceEntry.horse_no)
+                .join(RaceEntry, RaceEntry.race_id == Race.id)
+                .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
+                .filter(RaceEntry.horse_id == horse_id)
+                .filter(RaceResult.rank != None)
+                .filter(RaceResult.rank > 0)
+                .filter(Race.race_date < cutoff_dt)
+                .order_by(Race.race_date.desc(), Race.race_no.desc())
+                .limit(6)
+                .all()
+            )
+
+            if not hist:
+                scores.append(0.0)
+                displays.append("無近期賽果")
+                continue
+
+            race_ids = [int(x[0]) for x in hist if x and x[0] is not None]
+            fs_rows = (
+                self.session.query(RaceEntry.race_id, func.count(RaceResult.id))
+                .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
+                .filter(RaceEntry.race_id.in_(race_ids))
+                .filter(RaceResult.rank != None)
+                .filter(RaceResult.rank > 0)
+                .group_by(RaceEntry.race_id)
+                .all()
+            )
+            field_sizes = {int(rid): int(cnt or 0) for rid, cnt in fs_rows if rid is not None}
+
+            counts = {"front": 0, "mid": 0, "back": 0}
+            n_used = 0
+
+            for rid, rdt, rno, horse_no in hist:
+                if not isinstance(rdt, datetime) or not rno or not horse_no:
+                    continue
+                date_str = rdt.strftime("%Y/%m/%d")
+                key = f"race_runpos:{date_str}:{int(rno)}"
+                cfg = self.session.query(SystemConfig).filter_by(key=key).first()
+                if not cfg or not isinstance(cfg.value, dict):
+                    continue
+                runpos = None
+                if isinstance(cfg.value.get("runpos"), dict):
+                    runpos = (cfg.value.get("runpos") or {}).get(str(int(horse_no)))
+                else:
+                    runpos = cfg.value.get(str(int(horse_no)))
+                runpos = str(runpos or "").strip()
+                if not runpos:
+                    continue
+                pos = self._parse_positions(runpos)
+                if not pos:
+                    continue
+                fs = int(field_sizes.get(int(rid)) or 0)
+                band = self._pos_to_band(pos[0], fs)
+                if not band:
+                    continue
+                counts[band] = int(counts.get(band) or 0) + 1
+                n_used += 1
+
+            if n_used <= 0:
+                scores.append(0.0)
+                displays.append("無走位資料")
+                continue
+
+            front_pct = counts["front"] / n_used
+            back_pct = counts["back"] / n_used
+
+            if front_pct >= 0.5 and counts["front"] >= 2:
+                label = "前領"
+                sc = 1.0
+            elif back_pct >= 0.5 and counts["back"] >= 2:
+                label = "後上"
+                sc = 0.0
+            else:
+                label = "中置"
+                sc = 0.5
+
+            disp = f"{label}｜近{n_used}：前領{round(front_pct*100,1)}%/中置{round((counts['mid']/n_used)*100,1)}%/後上{round(back_pct*100,1)}%"
+            scores.append(float(sc))
+            displays.append(disp)
+
         return pd.Series(scores, index=self.df.index), pd.Series(displays, index=self.df.index)
     # 2. 馬匹分段時間＋完成時間 (Horse Time Perf)
     def _calculate_horse_time_perf(self):
