@@ -1163,7 +1163,7 @@ with tab_hits:
                 with st.expander("🧩 因子缺資料統計（所選日期範圍）", expanded=False):
                     st.caption("用途：檢查各因子在所選範圍內「無數據/空白」比例，幫你判斷要補數據、降低權重或暫時忽略。")
                     from database.models import Race, ScoringFactor
-                    from sqlalchemy import case
+                    from sqlalchemy import case, func
                     from datetime import datetime, time as dtime, timedelta
                     start = datetime.combine(d1, dtime.min)
                     end = datetime.combine(d2, dtime.min) + timedelta(days=1)
