@@ -60,12 +60,12 @@ class RaceCardScraper:
             full_text = soup.get_text(separator=' ', strip=True)
             race_text = full_text
             try:
-                m0 = re.search(rf"第\\s*{int(race_no)}\\s*場", full_text)
+                m0 = re.search(rf"第\s*{int(race_no)}\s*場", full_text)
                 if m0:
                     start_i = int(m0.start())
                     tail = full_text[start_i:]
                     cut_marks = []
-                    m_next = re.search(rf"第\\s*{int(race_no) + 1}\\s*場", tail)
+                    m_next = re.search(rf"第\s*{int(race_no) + 1}\s*場", tail)
                     if m_next:
                         cut_marks.append(start_i + int(m_next.start()))
                     for mark in ["設 定 我 的 排 位 表", "設定我的排位表", "我的排位表"]:
@@ -135,7 +135,7 @@ class RaceCardScraper:
                     
             # 嘗試擷取場地狀況 (通常在排位表階段不會有場地狀況，只會有草地/泥地)
             going_raw = ""
-            m_go = re.search(r"(?:場地狀況|場地狀態)\\s*[:：]?\\s*([\\u4e00-\\u9fff]{1,6})", race_text)
+            m_go = re.search("(?:場地狀況|場地狀態)\\s*[:：]?\\s*([\\u4e00-\\u9fff]{1,6})", race_text)
             if m_go:
                 going_raw = str(m_go.group(1) or "").strip()
             if not going_raw:
