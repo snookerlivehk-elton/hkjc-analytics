@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 import streamlit as st
-from sqlalchemy import and_
+from sqlalchemy import and_, func
 import sys
 from pathlib import Path
 
@@ -98,8 +98,19 @@ def main():
             default=[],
         )
 
+    show_stats = st.checkbox("顯示索引統計", value=False)
+
     session = get_session()
     try:
+        if show_stats:
+            rows2 = (
+                session.query(SearchDocument.doc_type, func.count(SearchDocument.id).label("n"))
+                .group_by(SearchDocument.doc_type)
+                .order_by(func.count(SearchDocument.id).desc())
+                .all()
+            )
+            st.write({str(dt or ""): int(n or 0) for dt, n in rows2})
+
         qq = session.query(SearchDocument)
         if doc_types:
             qq = qq.filter(SearchDocument.doc_type.in_([str(x) for x in doc_types]))
