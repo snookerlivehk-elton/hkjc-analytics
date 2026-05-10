@@ -6,6 +6,7 @@ from database.connection import init_db, get_session
 from database.models import Race, SystemConfig
 from scoring_engine.ai_advisor import run_ai_race_summary
 from scoring_engine.job_queue import append_job_log, claim_next_job, update_job
+from scoring_engine.search_index import index_system_config_doc
 
 
 def _day_range(date_str: str):
@@ -13,6 +14,79 @@ def _day_range(date_str: str):
     start = datetime.combine(d0, dtime.min)
     end = start + timedelta(days=1)
     return start, end
+
+
+def _parse_ymd(s: str):
+    try:
+        return datetime.strptime(str(s).strip(), "%Y/%m/%d").date()
+    except Exception:
+        try:
+            return datetime.strptime(str(s).strip(), "%Y-%m-%d").date()
+        except Exception:
+            return None
+
+
+def _handle_search_backfill(session, job):
+    payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
+    d1 = _parse_ymd(payload.get("from"))
+    d2 = _parse_ymd(payload.get("to"))
+    limit_races = int(payload.get("limit_races") or 200)
+    if not d1:
+        raise ValueError("missing from")
+    if not d2:
+        d2 = d1
+
+    start = datetime.combine(d1, dtime.min)
+    end = datetime.combine(d2, dtime.min) + timedelta(days=1)
+    races = (
+        session.query(Race)
+        .filter(Race.race_date >= start)
+        .filter(Race.race_date < end)
+        .order_by(Race.race_date.asc(), Race.race_no.asc())
+        .limit(limit_races)
+        .all()
+    )
+    total = len(races)
+    update_job(session, job["id"], {"progress": {"total": total, "done": 0, "current": ""}})
+    append_job_log(session, job["id"], f"search_backfill from={d1.strftime('%Y/%m/%d')} to={d2.strftime('%Y/%m/%d')} races={total}")
+
+    for i, r in enumerate(races, 1):
+        rn = int(getattr(r, "race_no", 0) or 0)
+        ds = ""
+        try:
+            ds = r.race_date.strftime("%Y/%m/%d")
+        except Exception:
+            ds = ""
+        update_job(session, job["id"], {"progress": {"total": total, "done": i - 1, "current": f"{ds} R{rn}"}})
+        if ds and rn:
+            index_system_config_doc(session, f"ai_race_report:{ds}:{rn}", doc_type="ai_report", title=f"{ds} R{rn} AI report")
+            index_system_config_doc(session, f"ai_race_reflection:{ds}:{rn}", doc_type="ai_reflection", title=f"{ds} R{rn} AI reflection")
+            scenario_keys = (
+                session.query(SystemConfig.key)
+                .filter(SystemConfig.key.like(f"ai_race_report_scenario:{ds}:{rn}:%"))
+                .order_by(SystemConfig.key.asc())
+                .all()
+            )
+            for (k,) in scenario_keys:
+                if not k:
+                    continue
+                index_system_config_doc(session, str(k), doc_type="ai_report", title=str(k))
+        if i % 50 == 0:
+            session.commit()
+            append_job_log(session, job["id"], f"progress races={i}")
+
+    index_system_config_doc(session, "ai_learned_rules", doc_type="ai_learned_rules", title="ai_learned_rules")
+    session.commit()
+    update_job(
+        session,
+        job["id"],
+        {
+            "status": "done",
+            "finished_at": datetime.utcnow().isoformat(),
+            "progress": {"total": total, "done": total, "current": ""},
+            "result": {"total_races": total},
+        },
+    )
 
 
 def _handle_ai_batch_generate(session, job):
@@ -67,6 +141,7 @@ def _handle_ai_batch_generate(session, job):
 
 JOB_HANDLERS = {
     "ai_batch_generate": _handle_ai_batch_generate,
+    "search_backfill": _handle_search_backfill,
 }
 
 
@@ -106,4 +181,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

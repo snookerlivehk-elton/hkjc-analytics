@@ -13,6 +13,7 @@ if root_path not in sys.path:
 
 from database.connection import get_session, init_db
 from database.models import SearchDocument
+from scoring_engine.job_queue import enqueue_job
 from scoring_engine.track_conditions import GOING_CODE_LABELS, normalize_going
 from web_ui.nav import render_admin_nav
 
@@ -99,6 +100,27 @@ def main():
         )
 
     show_stats = st.checkbox("顯示索引統計", value=False)
+    with st.expander("索引維護", expanded=False):
+        d_default = None
+        if date_str:
+            try:
+                d_default = datetime.strptime(date_str, "%Y/%m/%d").date()
+            except Exception:
+                d_default = None
+        if not d_default:
+            d_default = datetime.utcnow().date()
+        d_from = st.date_input("回填日期（from）", value=d_default, key="bf_from")
+        d_to = st.date_input("回填日期（to）", value=d_default, key="bf_to")
+        limit_races_bf = st.selectbox("回填最多 races", options=[50, 200, 1000, 5000], index=1, key="bf_limit")
+        if st.button("回填搜尋索引（需要 worker）", type="primary"):
+            ds1 = str(d_from.strftime("%Y/%m/%d"))
+            ds2 = str(d_to.strftime("%Y/%m/%d"))
+            s_job = get_session()
+            try:
+                job = enqueue_job(s_job, "search_backfill", {"from": ds1, "to": ds2, "limit_races": int(limit_races_bf or 200)})
+                st.success(f"已提交回填 job_id={str(job.get('id') or '')}")
+            finally:
+                s_job.close()
 
     session = get_session()
     try:
