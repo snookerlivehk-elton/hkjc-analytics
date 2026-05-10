@@ -2,8 +2,8 @@ import streamlit as st
 
 
 def render_admin_nav(show_logout: bool = True, active: str = ""):
-    cols = st.columns([1, 1, 1, 1, 1, 1, 1, 0.8] if show_logout else [1, 1, 1, 1, 1, 1, 1])
-    c1, c2, c3, c4, c5, c6, c7 = cols[0], cols[1], cols[2], cols[3], cols[4], cols[5], cols[6]
+    cols = st.columns([1, 1, 1, 1, 1, 1, 1, 1, 0.8] if show_logout else [1, 1, 1, 1, 1, 1, 1, 1])
+    c1, c2, c3, c4, c5, c6, c7, c8 = cols[0], cols[1], cols[2], cols[3], cols[4], cols[5], cols[6], cols[7]
 
     if c1.button("🛠️ 數據管理", use_container_width=True):
         try:
@@ -60,8 +60,8 @@ def render_admin_nav(show_logout: bool = True, active: str = ""):
                 st.markdown("[🔎 全站搜尋](/%E5%85%A8%E7%AB%99%E6%90%9C%E5%B0%8B)")
 
     if show_logout:
-        c8 = cols[7]
-        if c8.button("🚪 登出", use_container_width=True):
+        c9 = cols[8]
+        if c9.button("🚪 登出", use_container_width=True):
             st.session_state["is_superadmin"] = False
             st.rerun()
 
@@ -73,3 +73,12 @@ def render_admin_nav(show_logout: bool = True, active: str = ""):
                 st.page_link("pages/7_馬匹往績.py", label="🐴 馬匹往績")
             else:
                 st.markdown("[🐴 馬匹往績](/%E9%A6%AC%E5%8C%B9%E5%BE%80%E7%B8%BE)")
+
+    if c8.button("📌 Top5賠率統計", use_container_width=True):
+        try:
+            st.switch_page("pages/8_會員Top5賠率統計.py")
+        except Exception:
+            if hasattr(st, "page_link"):
+                st.page_link("pages/8_會員Top5賠率統計.py", label="📌 Top5賠率統計")
+            else:
+                st.markdown("[📌 Top5賠率統計](/%E6%9C%83%E5%93%A1Top5%E8%B3%A0%E7%8E%87%E7%B5%B1%E8%A8%88)")

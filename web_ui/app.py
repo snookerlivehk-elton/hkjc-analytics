@@ -1294,6 +1294,7 @@ def main():
                         from datetime import date, datetime, time, timedelta
                         from scoring_engine.member_stats import _calc_hits
                         from scoring_engine.track_conditions import going_code_label
+                        from scoring_engine.top5_odds_stats import ODDS_BUCKETS, compute_top5_odds_stats
 
                         def _filtered_race_rows(d1: date, d2: date, venue_sel: str, surface_sel: str, course_sel: str, going_sel: str, min_results: int):
                             start = datetime.combine(d1, time.min)
@@ -1508,6 +1509,63 @@ def main():
                                 for k in HIT_METRICS:
                                     row[f"{METRIC_LABELS.get(k, k)}%"] = round((int(hits.get(k) or 0) / n * 100.0), 1) if n else 0.0
                                 st.dataframe(pd.DataFrame([row]), use_container_width=True, hide_index=True)
+
+                    with st.expander("📊 Top5 賠率命中率（Top3 入圍）", expanded=False):
+                        from datetime import date as _date, timedelta as _timedelta
+
+                        me = str(member_email).strip().lower()
+                        preset_names = [str(p.get("name", "")).strip() for p in (presets or []) if str(p.get("name", "")).strip()]
+                        end_default = _date.today()
+                        start_default = end_default - _timedelta(days=90)
+                        d1o, d2o = st.date_input("統計日期範圍", value=(start_default, end_default), key="member_top5_odds_range")
+                        if isinstance(d1o, _date) and isinstance(d2o, _date) and d1o > d2o:
+                            d1o, d2o = d2o, d1o
+
+                        c_o1, c_o2, c_o3, c_o4 = st.columns([3, 1, 1, 1])
+                        preset_sel2 = c_o1.multiselect("只統計以下組合（留空=全部）", options=preset_names, default=[], key="member_top5_odds_presets")
+                        inc_factor2 = c_o2.checkbox("包含獨立條件", value=False, key="member_top5_odds_inc_factor")
+                        inc_ai2 = c_o3.checkbox("包含 AI", value=True, key="member_top5_odds_inc_ai")
+                        top1_only = c_o4.checkbox("只看 TOP1", value=False, key="member_top5_odds_top1")
+
+                        odds_source2 = st.selectbox("odds 來源", options=["result_win_odds", "latest_history"], index=0, key="member_top5_odds_source")
+
+                        @st.cache_data(ttl=120)
+                        def _cached_member_top5_odds(d1i: _date, d2i: _date, inc_preset_i: bool, inc_factor_i: bool, inc_ai_i: bool, odds_source_i: str, email_i: str):
+                            s2 = get_session()
+                            try:
+                                return compute_top5_odds_stats(
+                                    s2,
+                                    d1=d1i,
+                                    d2=d2i,
+                                    member_email=str(email_i).strip().lower(),
+                                    include_presets=bool(inc_preset_i),
+                                    include_factors=bool(inc_factor_i),
+                                    include_ai=bool(inc_ai_i),
+                                    place_k=3,
+                                    top_k=5,
+                                    odds_source=str(odds_source_i or "result_win_odds"),
+                                )
+                            finally:
+                                s2.close()
+
+                        df2 = _cached_member_top5_odds(d1o, d2o, True, inc_factor2, inc_ai2, odds_source2, me)
+                        if df2.empty:
+                            st.info("未有可統計資料（可能未生成 Top5 快照 / 未有賽果 / 或日期範圍內無資料）。")
+                        else:
+                            if preset_sel2:
+                                df_p = df2[(df2["predictor_type"] == "preset") & (df2["predictor_key"].isin(preset_sel2))]
+                                df_other = df2[df2["predictor_type"] != "preset"]
+                                df2 = pd.concat([df_p, df_other], ignore_index=True)
+                            if top1_only:
+                                df2 = df2[df2["position"] == 1]
+                            st.caption("odds buckets：" + " / ".join([b.label for b in ODDS_BUCKETS if b.key != "UNKNOWN"] + ["未知"]))
+                            st.dataframe(df2, use_container_width=True, hide_index=True)
+                            st.download_button(
+                                "下載 CSV",
+                                data=df2.to_csv(index=False).encode("utf-8"),
+                                file_name=f"top5_odds_{me}_{d1o.isoformat()}_{d2o.isoformat()}.csv",
+                                mime="text/csv",
+                            )
 
                     with st.expander("📉 會員組合反向表現（淘汰準確率）", expanded=False):
                         st.caption("以 Bottom35%（按每場參賽馬數計算 N）評估：你淘汰的馬匹是否真的不入 Top4。")
