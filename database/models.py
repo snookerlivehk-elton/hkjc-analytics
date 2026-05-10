@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Boolean, Text, JSON, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Float, Date, DateTime, ForeignKey, Boolean, Text, JSON, UniqueConstraint
 from sqlalchemy.orm import relationship, declarative_base
 from datetime import datetime
 
@@ -171,6 +171,46 @@ class RaceCoRunning(Base):
     meta = Column(JSON)
     fetched_at = Column(DateTime, default=datetime.now, index=True)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+class RawSnapshot(Base):
+    __tablename__ = "raw_snapshots"
+    id = Column(Integer, primary_key=True)
+    source = Column(String(50), nullable=False, index=True)
+    entity_type = Column(String(30), nullable=False, index=True)  # race | race_day | horse | venue_day ...
+    entity_key = Column(String(80), nullable=False, index=True)  # YYYY/MM/DD:ST:1 or YYYY/MM/DD:ST
+    race_id = Column(Integer, ForeignKey("races.id"), index=True, nullable=True)
+    payload = Column(JSON, nullable=False)
+    meta = Column(JSON)
+    fetched_at = Column(DateTime, default=datetime.now, index=True)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    __table_args__ = (UniqueConstraint("source", "entity_type", "entity_key", name="ux_raw_snapshots_source_entity"),)
+
+
+class SearchDocument(Base):
+    __tablename__ = "search_documents"
+    id = Column(Integer, primary_key=True)
+    doc_type = Column(String(30), nullable=False, index=True)  # race_entry | ai_report | corunning | runpos | ...
+    ref_key = Column(String(120), nullable=False, index=True)  # stable identifier (e.g. race_key:horse_no, SystemConfig.key)
+    entity_type = Column(String(30), nullable=False, index=True)
+    entity_key = Column(String(80), nullable=False, index=True)
+    race_id = Column(Integer, ForeignKey("races.id"), index=True, nullable=True)
+    race_date_day = Column(Date, index=True, nullable=True)
+    race_no = Column(Integer, index=True, nullable=True)
+    venue = Column(String(10), index=True)
+    surface_code = Column(String(10), index=True)  # AW | TURF | U
+    course_type = Column(String(10), index=True)
+    going_code = Column(String(20), index=True)
+    horse_name = Column(String(80), index=True)
+    jockey_name = Column(String(80), index=True)
+    trainer_name = Column(String(80), index=True)
+    title = Column(String(200))
+    search_text = Column(Text, nullable=False)
+    payload_excerpt = Column(JSON)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, index=True)
+
+    __table_args__ = (UniqueConstraint("doc_type", "ref_key", name="ux_search_documents_doc_ref"),)
 
 class ScoringWeight(Base):
     """計分權重配置"""

@@ -57,6 +57,8 @@ def init_db():
 
     try:
         with engine.begin() as conn:
+            if "postgresql" in DATABASE_URL:
+                conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_race_entries_race_id ON race_entries (race_id)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_race_entries_race_id_horse_no ON race_entries (race_id, horse_no)"))
             conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_race_results_entry_id ON race_results (entry_id)"))
@@ -68,6 +70,12 @@ def init_db():
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_prediction_top5_type_email_date ON prediction_top5 (predictor_type, member_email, race_date)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_system_configs_updated_at ON system_configs (updated_at)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_race_corunning_race_date_no ON race_corunning (race_date, race_no)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_raw_snapshots_entity ON raw_snapshots (entity_type, entity_key)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_search_documents_entity ON search_documents (entity_type, entity_key)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_search_documents_race_day ON search_documents (race_date_day, race_no)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_search_documents_doc_type ON search_documents (doc_type, updated_at)"))
+            if "postgresql" in DATABASE_URL:
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_search_documents_search_trgm ON search_documents USING GIN (search_text gin_trgm_ops)"))
     except Exception:
         pass
 

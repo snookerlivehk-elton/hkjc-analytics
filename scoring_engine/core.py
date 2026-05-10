@@ -372,6 +372,12 @@ class ScoringEngine:
                 value=wrap_value(payload_run, build_meta(source="SCORING_ENGINE", schema="race_score_run:v1", extra={"race_id": int(race_id)})),
                 description="計分版本快照（按場次）",
             )
+            try:
+                from scoring_engine.search_index import index_race_entry_bundle
+
+                index_race_entry_bundle(self.session, int(race_id))
+            except Exception:
+                pass
             self.session.commit()
         except Exception as e:
             self.session.rollback()

@@ -178,6 +178,15 @@ def main():
         except Exception as e:
             print(f"[警告] 走勢評述抓取失敗：R{int(race.race_no)} {e}")
 
+        try:
+            from scoring_engine.search_index import index_corunning, index_race_entry_bundle, index_system_config_doc
+
+            index_race_entry_bundle(session, int(race.id))
+            index_corunning(session, int(race.id))
+            index_system_config_doc(session, f"race_runpos:{target_date}:{int(race.race_no)}", doc_type="runpos", title=f"{target_date} R{int(race.race_no)} runpos")
+        except Exception:
+            pass
+
         session.commit()
         ok += 1
 

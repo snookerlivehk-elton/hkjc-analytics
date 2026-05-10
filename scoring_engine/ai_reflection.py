@@ -54,6 +54,12 @@ def save_learned_rule_items(session: Session, items: List[Dict[str, Any]]) -> No
         session.add(cfg)
     norm = _normalize_rule_items(items)
     cfg.value = wrap_value(norm[-30:], build_meta(source="AI_REFLECTION", fetched_at=datetime.utcnow().isoformat(), schema="ai_learned_rules:v1"))
+    try:
+        from scoring_engine.search_index import index_system_config_doc
+
+        index_system_config_doc(session, "ai_learned_rules", doc_type="ai_learned_rules", title="ai_learned_rules")
+    except Exception:
+        pass
     session.commit()
 
 
@@ -79,6 +85,12 @@ def save_learned_rules(session: Session, new_rules: List[str], source: Optional[
 
     merged = list(by_rule.values())
     cfg.value = wrap_value(merged[-30:], build_meta(source="AI_REFLECTION", fetched_at=datetime.utcnow().isoformat(), schema="ai_learned_rules:v1"))
+    try:
+        from scoring_engine.search_index import index_system_config_doc
+
+        index_system_config_doc(session, "ai_learned_rules", doc_type="ai_learned_rules", title="ai_learned_rules")
+    except Exception:
+        pass
     session.commit()
 
 
@@ -410,6 +422,12 @@ def generate_race_reflection(session: Session, race_id: int) -> Dict[str, Any]:
                 },
             )
             new_ref_cfg.value = wrap_value(payload_ref, meta)
+            try:
+                from scoring_engine.search_index import index_system_config_doc
+
+                index_system_config_doc(session, str(reflection_key), doc_type="ai_reflection", title=f"{date_str} R{race_no} AI reflection")
+            except Exception:
+                pass
             
             new_rules = parsed.get("learned_rules", [])
             if new_rules:

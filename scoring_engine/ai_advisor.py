@@ -742,6 +742,12 @@ def run_ai_race_summary(
                     },
                 ),
             )
+            try:
+                from scoring_engine.search_index import index_system_config_doc
+
+                index_system_config_doc(session, str(report_key), doc_type="ai_report", title=f"{date_str} R{race_no} AI report")
+            except Exception:
+                pass
 
             if not save_as_scenario:
                 # Update prediction snapshots so AI predictions appear in member stats and hit stats tables
@@ -794,6 +800,12 @@ def run_ai_race_summary(
                 extra={"race_id": int(race_id), "date": str(date_str), "race_no": int(race_no), "report_key": str(report_key)},
             ),
         )
+        try:
+            from scoring_engine.search_index import index_system_config_doc
+
+            index_system_config_doc(session, str(report_key), doc_type="ai_report", title=f"{date_str} R{race_no} AI report")
+        except Exception:
+            pass
         session.commit()
         return {"ok": True, "summary": report_text, "reason": "json_parse_failed"}
     else:
