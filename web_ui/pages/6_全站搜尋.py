@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 import streamlit as st
@@ -12,9 +12,10 @@ if root_path not in sys.path:
     sys.path.insert(0, root_path)
 
 from database.connection import get_session, init_db
-from database.models import SearchDocument
+from database.models import SearchDocument, Race, SystemConfig
 from scoring_engine.job_queue import enqueue_job
 from scoring_engine.track_conditions import GOING_CODE_LABELS, normalize_going
+from scoring_engine.search_index import index_system_config_doc
 from web_ui.nav import render_admin_nav
 
 
@@ -112,15 +113,65 @@ def main():
         d_from = st.date_input("回填日期（from）", value=d_default, key="bf_from")
         d_to = st.date_input("回填日期（to）", value=d_default, key="bf_to")
         limit_races_bf = st.selectbox("回填最多 races", options=[50, 200, 1000, 5000], index=1, key="bf_limit")
-        if st.button("回填搜尋索引（需要 worker）", type="primary"):
-            ds1 = str(d_from.strftime("%Y/%m/%d"))
-            ds2 = str(d_to.strftime("%Y/%m/%d"))
-            s_job = get_session()
-            try:
-                job = enqueue_job(s_job, "search_backfill", {"from": ds1, "to": ds2, "limit_races": int(limit_races_bf or 200)})
-                st.success(f"已提交回填 job_id={str(job.get('id') or '')}")
-            finally:
-                s_job.close()
+        c_bf1, c_bf2 = st.columns([1, 1])
+        with c_bf1:
+            if st.button("回填搜尋索引（需要 worker）", type="primary"):
+                ds1 = str(d_from.strftime("%Y/%m/%d"))
+                ds2 = str(d_to.strftime("%Y/%m/%d"))
+                s_job = get_session()
+                try:
+                    job = enqueue_job(s_job, "search_backfill", {"from": ds1, "to": ds2, "limit_races": int(limit_races_bf or 200)})
+                    st.success(f"已提交回填 job_id={str(job.get('id') or '')}")
+                finally:
+                    s_job.close()
+        with c_bf2:
+            if st.button("即時回填 AI 索引（唔需 worker）"):
+                ds1 = str(d_from.strftime("%Y/%m/%d"))
+                ds2 = str(d_to.strftime("%Y/%m/%d"))
+                s0 = get_session()
+                try:
+                    before = int(s0.query(func.count(SystemConfig.id)).filter(SystemConfig.key.like("ai_race_report:%")).scalar() or 0)
+                    before_idx = int(s0.query(func.count(SearchDocument.id)).filter(SearchDocument.doc_type == "ai_report").scalar() or 0)
+
+                    start = datetime.combine(d_from, datetime.min.time())
+                    end = datetime.combine(d_to, datetime.min.time())
+                    end = end.replace(hour=0, minute=0, second=0, microsecond=0)
+                    end = end + timedelta(days=1)
+                    races = (
+                        s0.query(Race)
+                        .filter(Race.race_date >= start)
+                        .filter(Race.race_date < end)
+                        .order_by(Race.race_date.asc(), Race.race_no.asc())
+                        .limit(int(limit_races_bf or 200))
+                        .all()
+                    )
+                    n_docs = 0
+                    for r in races:
+                        rn = int(getattr(r, "race_no", 0) or 0)
+                        try:
+                            ds = r.race_date.strftime("%Y/%m/%d")
+                        except Exception:
+                            ds = ""
+                        if not ds or not rn:
+                            continue
+                        index_system_config_doc(s0, f"ai_race_report:{ds}:{rn}", doc_type="ai_report", title=f"{ds} R{rn} AI report")
+                        index_system_config_doc(s0, f"ai_race_reflection:{ds}:{rn}", doc_type="ai_reflection", title=f"{ds} R{rn} AI reflection")
+                        scenario_keys = (
+                            s0.query(SystemConfig.key)
+                            .filter(SystemConfig.key.like(f"ai_race_report_scenario:{ds}:{rn}:%"))
+                            .order_by(SystemConfig.key.asc())
+                            .all()
+                        )
+                        for (k,) in scenario_keys:
+                            if not k:
+                                continue
+                            index_system_config_doc(s0, str(k), doc_type="ai_report", title=str(k))
+                        n_docs += 1
+                    s0.commit()
+                    after_idx = int(s0.query(func.count(SearchDocument.id)).filter(SearchDocument.doc_type == "ai_report").scalar() or 0)
+                    st.success(f"完成：races={len(races)}（處理={n_docs}） ai_report索引 {before_idx} → {after_idx}（SystemConfig ai_race_report總數={before}）")
+                finally:
+                    s0.close()
 
     session = get_session()
     try:

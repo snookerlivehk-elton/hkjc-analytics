@@ -314,6 +314,7 @@ def index_system_config_doc(session: Session, key: str, doc_type: str, title: st
             gc = _going_code_for_race(session, int(race.id), getattr(race, "going", None))
 
     txt = " ".join([str(key), str(title or ""), s, str(meta or "")])
+    excerpt = _clip_text(s, max_len=1200)
     upsert_search_document(
         session,
         doc_type=str(doc_type or "system_config"),
@@ -329,7 +330,7 @@ def index_system_config_doc(session: Session, key: str, doc_type: str, title: st
         going_code=gc,
         title=str(title or str(key)),
         search_text=txt,
-        payload_excerpt={"key": str(key), "payload": payload if isinstance(payload, (dict, list)) else str(payload or ""), "meta": meta},
+        payload_excerpt={"key": str(key), "excerpt": excerpt, "meta": meta, "race_id": race_id},
     )
 
 
