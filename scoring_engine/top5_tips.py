@@ -350,6 +350,7 @@ def generate_top5_tips_for_race(
                 "predictor_type_label": src_label,
                 "predictor_key": pkey,
                 "predictor_key_label": key_label,
+                "member_email": (mem if ptype == "preset" else None),
                 "appear": appear,
                 "win": int(st_row.get("win") or 0),
                 "place": int(st_row.get("place") or 0),

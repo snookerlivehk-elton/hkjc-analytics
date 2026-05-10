@@ -1106,27 +1106,31 @@ def main():
                 member_email_tip = st.session_state.get("member_email")
                 me_tip = str(member_email_tip).strip().lower() if member_email_tip else None
                 cfg_sig = json.dumps(cfg_tip, sort_keys=True, ensure_ascii=False)
+                preset_name = st.session_state.get("selected_preset_name")
+                preset_name = str(preset_name or "").strip()
+                if preset_name in {"", "（手動調整）"}:
+                    preset_name = ""
 
                 @st.cache_data(ttl=120)
-                def _cached_tips(race_id: int, me: str, cfg_json: str):
+                def _cached_tips(race_id: int, me: str, preset_name_in: str, cfg_json: str):
                     s3 = get_session()
                     try:
                         cfg0 = json.loads(cfg_json) if cfg_json else {}
-                        preset_name = st.session_state.get("selected_preset_name")
-                        preset_name = str(preset_name or "").strip()
-                        if preset_name in {"", "（手動調整）"}:
-                            preset_name = ""
                         return generate_top5_tips_for_race(
                             s3,
                             race_id=int(race_id),
                             member_email=(me or None),
-                            preset_name=(preset_name or None),
+                            preset_name=(str(preset_name_in or "").strip() or None),
                             override_config=cfg0,
                         )
                     finally:
                         s3.close()
 
-                tips = _cached_tips(int(selected_race_id), str(me_tip or ""), cfg_sig)
+                tips = _cached_tips(int(selected_race_id), str(me_tip or ""), str(preset_name or ""), cfg_sig)
+                if me_tip:
+                    tips = [t for t in (tips or []) if (str(t.get("predictor_type") or "") != "preset") or (str(t.get("member_email") or "").strip().lower() == str(me_tip))]
+                else:
+                    tips = [t for t in (tips or []) if str(t.get("predictor_type") or "") != "preset"]
                 if not tips:
                     st.caption("本場未有任何貼士達標（或缺少賠率資料）。")
                 else:
