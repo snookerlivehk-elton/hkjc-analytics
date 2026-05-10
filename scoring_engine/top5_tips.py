@@ -194,6 +194,7 @@ def generate_top5_tips_for_race(
     *,
     race_id: int,
     member_email: Optional[str] = None,
+    preset_name: Optional[str] = None,
     override_config: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     from database.models import PredictionTop5, Race
@@ -228,6 +229,7 @@ def generate_top5_tips_for_race(
         ptypes = ["preset", "factor", "ai"]
 
     me = str(member_email or "").strip().lower() or None
+    preset_name_s = str(preset_name or "").strip() or None
     df_stats = compute_top5_odds_stats(
         session,
         d1=d1,
@@ -261,10 +263,20 @@ def generate_top5_tips_for_race(
         q = session.query(PredictionTop5).filter_by(race_id=int(race_id), predictor_type="preset")
         if me:
             q = q.filter(PredictionTop5.member_email == me)
+        if preset_name_s:
+            q = q.filter(PredictionTop5.predictor_key == preset_name_s)
         for p in q.all():
             top5 = getattr(p, "top5", None)
             if isinstance(top5, list) and top5:
-                preds.append(("preset", str(getattr(p, "predictor_key", "") or ""), me or "", [int(x) for x in top5 if str(x).strip().isdigit()][:5]))
+                mem2 = me or str(getattr(p, "member_email", "") or "").strip().lower()
+                preds.append(
+                    (
+                        "preset",
+                        str(getattr(p, "predictor_key", "") or ""),
+                        mem2,
+                        [int(x) for x in top5 if str(x).strip().isdigit()][:5],
+                    )
+                )
     if "factor" in ptypes:
         q = session.query(PredictionTop5).filter_by(race_id=int(race_id), predictor_type="factor")
         for p in q.all():

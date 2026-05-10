@@ -1112,7 +1112,17 @@ def main():
                     s3 = get_session()
                     try:
                         cfg0 = json.loads(cfg_json) if cfg_json else {}
-                        return generate_top5_tips_for_race(s3, race_id=int(race_id), member_email=(me or None), override_config=cfg0)
+                        preset_name = st.session_state.get("selected_preset_name")
+                        preset_name = str(preset_name or "").strip()
+                        if preset_name in {"", "（手動調整）"}:
+                            preset_name = ""
+                        return generate_top5_tips_for_race(
+                            s3,
+                            race_id=int(race_id),
+                            member_email=(me or None),
+                            preset_name=(preset_name or None),
+                            override_config=cfg0,
+                        )
                     finally:
                         s3.close()
 
