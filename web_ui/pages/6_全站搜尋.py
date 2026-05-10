@@ -6,7 +6,7 @@ from sqlalchemy import and_
 
 from database.connection import get_session, init_db
 from database.models import SearchDocument
-from scoring_engine.track_conditions import normalize_going
+from scoring_engine.track_conditions import GOING_CODE_LABELS, normalize_going
 from web_ui.nav import render_admin_nav
 
 
@@ -43,8 +43,10 @@ def _parse_query(q: str) -> Tuple[Optional[str], Optional[str], Optional[str], L
             venue = "ST" if str(t).strip() == "沙田" else "HV"
             continue
         raw, gc = normalize_going(str(t))
-        if gc and not going_code:
-            going_code = str(gc).strip()
+        gc2 = str(gc or "").strip()
+        gc_norm = gc2.upper()
+        if (gc_norm in GOING_CODE_LABELS) and not going_code:
+            going_code = gc_norm
             continue
         keep.append(t)
     return date_str, going_code, venue, keep
@@ -164,4 +166,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
