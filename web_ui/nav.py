@@ -91,3 +91,13 @@ def render_admin_nav(show_logout: bool = True, active: str = ""):
                 st.page_link("pages/9_貼士設定.py", label="💡 貼士設定")
             else:
                 st.markdown("[💡 貼士設定](/%E8%B2%BC%E5%A3%AB%E8%A8%AD%E5%AE%9A)")
+
+    cols2 = st.columns([1, 1, 1, 1, 1])
+    if cols2[0].button("💡 貼士列表", use_container_width=True):
+        try:
+            st.switch_page("pages/10_貼士列表.py")
+        except Exception:
+            if hasattr(st, "page_link"):
+                st.page_link("pages/10_貼士列表.py", label="💡 貼士列表")
+            else:
+                st.markdown("[💡 貼士列表](/%E8%B2%BC%E5%A3%AB%E5%88%97%E8%A1%A8)")

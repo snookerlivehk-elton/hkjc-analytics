@@ -92,6 +92,7 @@ def compute_top5_odds_stats(
     odds_source: str = "result_win_odds",
 ) -> pd.DataFrame:
     from database.models import OddsHistory, PredictionTop5, Race, RaceEntry, RaceResult, ScoringWeight, SystemConfig
+    from sqlalchemy import func
 
     factor_labels: Dict[str, str] = {}
     try:
@@ -130,7 +131,7 @@ def compute_top5_odds_stats(
     if src in {"latest_history", "pre_race_latest"}:
         if src == "pre_race_latest":
             sub = (
-                session.query(OddsHistory.entry_id.label("eid"), OddsHistory.captured_at.label("cap"))
+                session.query(OddsHistory.entry_id.label("eid"), func.max(OddsHistory.captured_at).label("cap"))
                 .filter(OddsHistory.entry_id.isnot(None))
                 .filter(OddsHistory.odds_type == "PRE")
                 .group_by(OddsHistory.entry_id)
@@ -138,7 +139,7 @@ def compute_top5_odds_stats(
             )
         else:
             sub = (
-                session.query(OddsHistory.entry_id.label("eid"), OddsHistory.captured_at.label("cap"))
+                session.query(OddsHistory.entry_id.label("eid"), func.max(OddsHistory.captured_at).label("cap"))
                 .filter(OddsHistory.entry_id.isnot(None))
                 .group_by(OddsHistory.entry_id)
                 .subquery()
