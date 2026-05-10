@@ -15,6 +15,7 @@ from database.models import Race, RaceEntry, RaceResult, ScoringFactor, ScoringW
 from scoring_engine.constants import DISABLED_FACTORS
 from scoring_engine.config_value import build_meta, unwrap_value, wrap_value
 from scoring_engine.weight_tuning import build_topk_training_frame, tune_weights_topk
+from utils.logger import logger
 
 
 def default_ai_system_prompt() -> str:
@@ -747,7 +748,7 @@ def run_ai_race_summary(
 
                 index_system_config_doc(session, str(report_key), doc_type="ai_report", title=f"{date_str} R{race_no} AI report")
             except Exception:
-                pass
+                logger.exception(f"index ai_report failed key={str(report_key)}")
 
             if not save_as_scenario:
                 # Update prediction snapshots so AI predictions appear in member stats and hit stats tables
@@ -805,7 +806,7 @@ def run_ai_race_summary(
 
             index_system_config_doc(session, str(report_key), doc_type="ai_report", title=f"{date_str} R{race_no} AI report")
         except Exception:
-            pass
+            logger.exception(f"index ai_report failed key={str(report_key)}")
         session.commit()
         return {"ok": True, "summary": report_text, "reason": "json_parse_failed"}
     else:

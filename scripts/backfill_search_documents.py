@@ -8,7 +8,7 @@ if root_path not in sys.path:
     sys.path.insert(0, root_path)
 
 from database.connection import init_db, get_session
-from database.models import Race
+from database.models import Race, SystemConfig
 from scoring_engine.normalization import bucket_parts
 from scoring_engine.search_index import index_corunning, index_race_entry_bundle, index_system_config_doc
 
@@ -74,6 +74,16 @@ def main():
 
         index_system_config_doc(session, "trkprof_index", doc_type="trkprof_index", title="trkprof_index")
         index_system_config_doc(session, "ai_learned_rules", doc_type="ai_learned_rules", title="ai_learned_rules")
+        scenario_keys = (
+            session.query(SystemConfig.key)
+            .filter(SystemConfig.key.like("ai_race_report_scenario:%"))
+            .order_by(SystemConfig.key.asc())
+            .all()
+        )
+        for (k,) in scenario_keys:
+            if not k:
+                continue
+            index_system_config_doc(session, str(k), doc_type="ai_report", title=str(k))
         session.commit()
         print(f"done races={done}")
     finally:
@@ -82,4 +92,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
