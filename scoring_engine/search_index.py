@@ -36,8 +36,15 @@ def race_day_key(d: Any, venue: Any) -> str:
 
 def _clip_text(s: str, max_len: int = 5000) -> str:
     t = str(s or "")
-    if max_len and len(t) > int(max_len):
-        return t[: int(max_len)].rstrip() + "..."
+    ml = int(max_len or 0)
+    if ml > 0 and len(t) > ml:
+        tail_len = min(2000, ml // 2)
+        head_len = max(0, ml - tail_len)
+        head = t[:head_len].rstrip()
+        tail = t[-tail_len:].lstrip() if tail_len > 0 else ""
+        if tail:
+            return f"{head} ... {tail}"
+        return head + "..."
     return t
 
 
@@ -372,4 +379,3 @@ def index_corunning(session: Session, race_id: int) -> None:
         search_text=txt,
         payload_excerpt={"race_id": int(race.id), "items": row.items},
     )
-
