@@ -83,7 +83,27 @@ def compute_top5_odds_stats(
     top_k: int = 5,
     odds_source: str = "result_win_odds",
 ) -> pd.DataFrame:
-    from database.models import OddsHistory, PredictionTop5, Race, RaceEntry, RaceResult, SystemConfig
+    from database.models import OddsHistory, PredictionTop5, Race, RaceEntry, RaceResult, ScoringWeight, SystemConfig
+
+    factor_labels: Dict[str, str] = {}
+    try:
+        rows0 = session.query(ScoringWeight.factor_name, ScoringWeight.description).all()
+        for fn, desc in rows0:
+            k = str(fn or "").strip()
+            v = str(desc or "").strip()
+            if k and v:
+                factor_labels[k] = v
+    except Exception:
+        factor_labels = {}
+
+    type_labels = {"preset": "會員組合", "factor": "獨立條件", "ai": "AI"}
+
+    def _predictor_key_label(ptype: str, pkey: str) -> str:
+        if ptype == "factor":
+            return str(factor_labels.get(pkey) or pkey)
+        if ptype == "ai":
+            return "🤖 AI 推介"
+        return str(pkey)
 
     start, end = _date_range(d1, d2)
     race_rows = (
@@ -240,10 +260,14 @@ def compute_top5_odds_stats(
         appear = int(v.get("appear") or 0)
         win = int(v.get("win") or 0)
         place = int(v.get("place") or 0)
+        ptype_s = str(ptype)
+        pkey_s = str(pkey)
         rows_out.append(
             {
-                "predictor_type": ptype,
-                "predictor_key": pkey,
+                "predictor_type": ptype_s,
+                "predictor_type_label": str(type_labels.get(ptype_s) or ptype_s),
+                "predictor_key": pkey_s,
+                "predictor_key_label": _predictor_key_label(ptype_s, pkey_s),
                 "member_email": mem or None,
                 "position": int(pos),
                 "odds_bucket": bucket,
@@ -258,8 +282,7 @@ def compute_top5_odds_stats(
     df = pd.DataFrame(rows_out)
     if not df.empty:
         df = df.sort_values(
-            by=["predictor_type", "member_email", "predictor_key", "position", "odds_bucket"],
+            by=["predictor_type", "member_email", "predictor_key_label", "position", "odds_bucket"],
             ascending=[True, True, True, True, True],
         )
     return df
-

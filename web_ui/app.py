@@ -1558,11 +1558,41 @@ def main():
                                 df2 = pd.concat([df_p, df_other], ignore_index=True)
                             if top1_only:
                                 df2 = df2[df2["position"] == 1]
+                            pos_opts = [1, 2, 3, 4, 5]
+                            bucket_opts = [b.key for b in ODDS_BUCKETS]
+                            c_fa, c_fb = st.columns([2, 2])
+                            pos_sel = c_fa.multiselect("只顯示順序", options=pos_opts, default=(pos_opts if not top1_only else [1]), key="member_top5_odds_pos_sel")
+                            bucket_sel = c_fb.multiselect(
+                                "只顯示賠率區域",
+                                options=bucket_opts,
+                                default=bucket_opts,
+                                format_func=lambda x: next((b.label for b in ODDS_BUCKETS if b.key == x), str(x)),
+                                key="member_top5_odds_bucket_sel",
+                            )
+                            if pos_sel:
+                                df2 = df2[df2["position"].isin([int(x) for x in pos_sel])]
+                            if bucket_sel:
+                                df2 = df2[df2["odds_bucket"].isin([str(x) for x in bucket_sel])]
                             st.caption("odds buckets：" + " / ".join([b.label for b in ODDS_BUCKETS if b.key != "UNKNOWN"] + ["未知"]))
-                            st.dataframe(df2, use_container_width=True, hide_index=True)
+                            cols = [
+                                "predictor_type_label",
+                                "predictor_key_label",
+                                "position",
+                                "odds_bucket_label",
+                                "appear",
+                                "win",
+                                "place",
+                                "win_rate",
+                                "place_rate",
+                                "predictor_type",
+                                "predictor_key",
+                                "odds_bucket",
+                            ]
+                            cols2 = [c for c in cols if c in df2.columns]
+                            st.dataframe(df2[cols2], use_container_width=True, hide_index=True)
                             st.download_button(
                                 "下載 CSV",
-                                data=df2.to_csv(index=False).encode("utf-8"),
+                                data=df2[cols2].to_csv(index=False).encode("utf-8"),
                                 file_name=f"top5_odds_{me}_{d1o.isoformat()}_{d2o.isoformat()}.csv",
                                 mime="text/csv",
                             )

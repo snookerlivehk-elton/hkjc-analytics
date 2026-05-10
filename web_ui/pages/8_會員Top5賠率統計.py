@@ -91,16 +91,41 @@ def main():
         st.warning("未有可統計資料（可能未生成 Top5 快照 / 未有賽果 / 或日期範圍內無資料）。")
         return
 
-    if limit_hint:
-        df = df[df["position"] == 1]
+    pos_opts = [1, 2, 3, 4, 5]
+    bucket_opts = [b.key for b in ODDS_BUCKETS]
+    c9, c10 = st.columns([2, 2])
+    with c9:
+        pos_sel = st.multiselect("只顯示順序", options=pos_opts, default=([1] if limit_hint else pos_opts))
+    with c10:
+        bucket_sel = st.multiselect("只顯示賠率區域", options=bucket_opts, default=bucket_opts, format_func=lambda x: next((b.label for b in ODDS_BUCKETS if b.key == x), str(x)))
+
+    if pos_sel:
+        df = df[df["position"].isin([int(x) for x in pos_sel])]
+    if bucket_sel:
+        df = df[df["odds_bucket"].isin([str(x) for x in bucket_sel])]
 
     st.caption("odds buckets：" + " / ".join([b.label for b in ODDS_BUCKETS if b.key != "UNKNOWN"] + ["未知"]))
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    cols = [
+        "predictor_type_label",
+        "predictor_key_label",
+        "member_email",
+        "position",
+        "odds_bucket_label",
+        "appear",
+        "win",
+        "place",
+        "win_rate",
+        "place_rate",
+        "predictor_type",
+        "predictor_key",
+        "odds_bucket",
+    ]
+    cols2 = [c for c in cols if c in df.columns]
+    st.dataframe(df[cols2], use_container_width=True, hide_index=True)
 
-    csv = df.to_csv(index=False).encode("utf-8")
+    csv = df[cols2].to_csv(index=False).encode("utf-8")
     st.download_button("下載 CSV", data=csv, file_name=f"member_top5_odds_{d1.isoformat()}_{d2.isoformat()}.csv", mime="text/csv")
 
 
 if __name__ == "__main__":
     main()
-
