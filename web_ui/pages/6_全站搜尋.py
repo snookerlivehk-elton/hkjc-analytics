@@ -3,6 +3,13 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import streamlit as st
 from sqlalchemy import and_
+import sys
+from pathlib import Path
+
+# 加入專案路徑
+root_path = str(Path(__file__).resolve().parent.parent.parent)
+if root_path not in sys.path:
+    sys.path.insert(0, root_path)
 
 from database.connection import get_session, init_db
 from database.models import SearchDocument
