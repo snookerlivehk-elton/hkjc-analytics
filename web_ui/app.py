@@ -1094,6 +1094,55 @@ def main():
                     st.info("如需立即生效，請到「數據管理」或「獨立條件分析」按重算。")
         except Exception:
             pass
+        with st.expander("💡 貼士提示（按Top5×賠率區×順序統計）", expanded=False):
+            from scoring_engine.top5_tip_config import load_tip_config
+            from scoring_engine.top5_tips import generate_top5_tips_for_race
+            import json
+
+            cfg_tip = load_tip_config(session)
+            if not bool(cfg_tip.get("enabled")):
+                st.info("貼士未啟用（可到後台「貼士設定」開啟）。")
+            else:
+                member_email_tip = st.session_state.get("member_email")
+                me_tip = str(member_email_tip).strip().lower() if member_email_tip else None
+                cfg_sig = json.dumps(cfg_tip, sort_keys=True, ensure_ascii=False)
+
+                @st.cache_data(ttl=120)
+                def _cached_tips(race_id: int, me: str, cfg_json: str):
+                    s3 = get_session()
+                    try:
+                        cfg0 = json.loads(cfg_json) if cfg_json else {}
+                        return generate_top5_tips_for_race(s3, race_id=int(race_id), member_email=(me or None), override_config=cfg0)
+                    finally:
+                        s3.close()
+
+                tips = _cached_tips(int(selected_race_id), str(me_tip or ""), cfg_sig)
+                if not tips:
+                    st.caption("本場未有任何貼士達標（或缺少賠率資料）。")
+                else:
+                    st.caption(f"賠率來源：{str(tips[0].get('odds_source_label') or '')}")
+                    for t in tips:
+                        head = (
+                            f"{t.get('race_date')} {t.get('venue')} R{t.get('race_no')} | "
+                            f"TOP{t.get('position')} | {t.get('odds_bucket_label')} | "
+                            f"{t.get('predictor_type_label')}：{t.get('predictor_key_label')} | "
+                            f"{t.get('hit_label')}達標"
+                        )
+                        with st.container():
+                            st.markdown(f"**{head}**")
+                            st.write(
+                                {
+                                    "馬號": int(t.get("horse_no") or 0),
+                                    "馬名": str(t.get("horse_name") or ""),
+                                    "騎師": str(t.get("jockey") or ""),
+                                    "練馬師": str(t.get("trainer") or ""),
+                                    "賠率": t.get("win_odds"),
+                                    "樣本": int(t.get("appear") or 0),
+                                    "命中率": round(float(t.get("hit_rate") or 0.0) * 100.0, 1),
+                                    "門檻": round(float(t.get("hit_threshold") or 0.0) * 100.0, 1),
+                                    "推介來源": str(t.get("predictor_type") or ""),
+                                }
+                            )
         member_email = st.session_state.get("member_email")
         if member_email:
             presets = _get_member_presets(session, member_email)
