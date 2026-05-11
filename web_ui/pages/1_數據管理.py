@@ -554,12 +554,16 @@ with tab_monitor:
         c_confirm, c_btn = st.columns([2, 3])
         ok = _confirm_run(c_confirm, "oneclick_update_monitor", label="輸入 RUN 以執行一鍵完整更新")
         st.markdown("**一鍵完整更新：可選步驟**")
-        c_s1, c_s2, c_s3, c_s4, c_s5 = st.columns(5)
-        step_scrape = c_s1.checkbox("抓排位", value=True, key="oneclick_step_scrape")
-        step_history = c_s2.checkbox("回填往績", value=True, key="oneclick_step_history")
-        step_rescore = c_s3.checkbox("重算", value=True, key="oneclick_step_rescore")
-        step_snapshot = c_s4.checkbox("Top5快照", value=True, key="oneclick_step_snapshot")
-        step_results = c_s5.checkbox("賽果/派彩", value=False, key="oneclick_step_results")
+        r1c1, r1c2, r1c3, r1c4 = st.columns(4)
+        step_scrape = r1c1.checkbox("抓排位", value=True, key="oneclick_step_scrape")
+        step_racereportext = r1c2.checkbox("事件摘要", value=True, key="oneclick_step_racereportext")
+        step_windtracker = r1c3.checkbox("WindTracker", value=True, key="oneclick_step_windtracker")
+        step_racing_course = r1c4.checkbox("跑道資料", value=False, key="oneclick_step_racing_course")
+        r2c1, r2c2, r2c3, r2c4 = st.columns(4)
+        step_history = r2c1.checkbox("回填往績", value=True, key="oneclick_step_history")
+        step_rescore = r2c2.checkbox("重算", value=True, key="oneclick_step_rescore")
+        step_snapshot = r2c3.checkbox("Top5快照", value=True, key="oneclick_step_snapshot")
+        step_results = r2c4.checkbox("賽果/派彩", value=False, key="oneclick_step_results")
 
         if c_btn.button("⚡ 一鍵：抓排位 → 回填馬匹往績 → 重算當日 → 生成Top5快照", use_container_width=True, disabled=not ok, key="monitor_oneclick"):
             from scoring_engine.job_queue import enqueue_job
@@ -567,6 +571,12 @@ with tab_monitor:
             steps = []
             if step_scrape:
                 steps.append("scrape")
+            if step_racereportext:
+                steps.append("racereportext")
+            if step_windtracker:
+                steps.append("windtracker")
+            if step_racing_course:
+                steps.append("racing_course")
             if step_history:
                 steps.append("history")
             if step_rescore:
@@ -628,6 +638,23 @@ with tab_monitor:
 
                 job = enqueue_job(session_m, "daily_update_pipeline", {"date": str(date_str), "steps": ["history"]})
                 st.success(f"✅ 已排程回填往績（job_id={str(job.get('id') or '')}）。請到上方 Job 狀態查看進度。")
+                st.rerun()
+
+            c3, c4 = st.columns(2)
+            ok = _confirm_run(c3, "monitor_windtracker", label="輸入 RUN")
+            if c3.button("🌬️ 同步 WindTracker", use_container_width=True, disabled=not ok, key="monitor_windtracker_btn"):
+                from scoring_engine.job_queue import enqueue_job
+
+                job = enqueue_job(session_m, "daily_update_pipeline", {"date": str(date_str), "steps": ["windtracker"]})
+                st.success(f"✅ 已排程同步 WindTracker（job_id={str(job.get('id') or '')}）。請到上方 Job 狀態查看進度。")
+                st.rerun()
+
+            ok = _confirm_run(c4, "monitor_racing_course", label="輸入 RUN")
+            if c4.button("🛣️ 同步 跑道資料", use_container_width=True, disabled=not ok, key="monitor_racing_course_btn"):
+                from scoring_engine.job_queue import enqueue_job
+
+                job = enqueue_job(session_m, "daily_update_pipeline", {"date": str(date_str), "steps": ["racing_course"]})
+                st.success(f"✅ 已排程同步 跑道資料（job_id={str(job.get('id') or '')}）。請到上方 Job 狀態查看進度。")
                 st.rerun()
 
         with st.expander("🧨 維護工具（高風險）", expanded=False):

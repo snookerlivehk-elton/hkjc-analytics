@@ -265,7 +265,7 @@ def _handle_daily_update_pipeline(session, job):
     if not date_str:
         raise ValueError("missing date")
     if not isinstance(steps, list) or not steps:
-        steps = ["scrape", "history", "rescore", "snapshot"]
+        steps = ["scrape", "racereportext", "history", "rescore", "snapshot"]
 
     steps = [str(x).strip().lower() for x in steps if str(x).strip()]
     total = len(steps)
@@ -280,6 +280,12 @@ def _handle_daily_update_pipeline(session, job):
         append_job_log(session, job["id"], f"step_start {step}")
         if step == "scrape":
             _run_script_and_stream_log(session, job["id"], "scripts/run_scraper.py", env0)
+        elif step == "windtracker":
+            _run_script_and_stream_log(session, job["id"], "scripts/fetch_windtracker.py", env0)
+        elif step == "racing_course":
+            _run_script_and_stream_log(session, job["id"], "scripts/fetch_racing_course.py", env0)
+        elif step == "racereportext":
+            _run_script_and_stream_log(session, job["id"], "scripts/fetch_race_reportext.py", env0)
         elif step == "history":
             env = dict(env0)
             env["BACKFILL_MODE"] = "date"

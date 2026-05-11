@@ -89,6 +89,8 @@ def main():
             options=[
                 "race",
                 "race_entry",
+                "race_reportext",
+                "windtracker",
                 "runpos",
                 "corunning",
                 "ai_report",
