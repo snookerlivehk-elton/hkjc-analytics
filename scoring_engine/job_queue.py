@@ -106,31 +106,46 @@ def append_job_log(session: Session, job_id: str, line: str, max_lines: int = 20
 
 
 def claim_next_job(session: Session) -> Optional[Dict[str, Any]]:
+    cfg0 = session.query(SystemConfig).filter_by(key=QUEUE_KEY).first()
+    if not cfg0 or not isinstance(cfg0.value, dict):
+        _ensure_queue(session)
+
     cfg = session.query(SystemConfig).filter_by(key=QUEUE_KEY).with_for_update().first()
     if not cfg or not isinstance(cfg.value, dict):
-        _ensure_queue(session)
         return None
+
     q = cfg.value.get("queued")
-    if not isinstance(q, list) or not q:
+    if not isinstance(q, list):
+        q = []
+
+    if not q:
         rebuild_queue_from_recent_jobs(session, limit=200)
         cfg = session.query(SystemConfig).filter_by(key=QUEUE_KEY).with_for_update().first()
-        q = cfg.value.get("queued") if cfg and isinstance(cfg.value, dict) else None
-        if not isinstance(q, list) or not q:
-            return None
-    job_id = str(q.pop(0)).strip()
+        q = cfg.value.get("queued") if cfg and isinstance(cfg.value, dict) else []
+        if not isinstance(q, list):
+            q = []
+
+    while q:
+        job_id = str(q.pop(0)).strip()
+        if not job_id:
+            continue
+        job = get_job(session, job_id)
+        if not isinstance(job, dict):
+            continue
+        if str(job.get("status") or "") not in {"queued"}:
+            continue
+        cfg.value = {"queued": q[-200:]}
+        session.commit()
+        update_job(
+            session,
+            job_id,
+            {"status": "running", "started_at": _now(), "error": None, "result": None},
+        )
+        return get_job(session, job_id)
+
     cfg.value = {"queued": q[-200:]}
     session.commit()
-    job = get_job(session, job_id)
-    if not isinstance(job, dict):
-        return None
-    if str(job.get("status") or "") not in {"queued"}:
-        return None
-    update_job(
-        session,
-        job_id,
-        {"status": "running", "started_at": _now(), "error": None, "result": None},
-    )
-    return get_job(session, job_id)
+    return None
 
 
 def list_recent_jobs(session: Session, limit: int = 20) -> List[Dict[str, Any]]:
