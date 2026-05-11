@@ -96,7 +96,7 @@ def render_admin_nav(show_logout: bool = True, active: str = ""):
             else:
                 st.markdown("[💡 貼士設定](/%E8%B2%BC%E5%A3%AB%E8%A8%AD%E5%AE%9A)")
 
-    cols2 = st.columns([1, 1, 1, 1, 1, 1, 1, 1])
+    cols2 = st.columns([1, 1, 1, 1, 1, 1, 1, 1, 1, 1])
     if cols2[0].button("💡 貼士列表", use_container_width=True):
         try:
             st.switch_page("pages/10_貼士列表.py")
@@ -132,3 +132,21 @@ def render_admin_nav(show_logout: bool = True, active: str = ""):
                 st.page_link("pages/13_練馬師統計.py", label="🏇 練馬師統計")
             else:
                 st.markdown("[🏇 練馬師統計](/%E7%B7%B4%E9%A6%AC%E5%B8%AB%E7%B5%B1%E8%A8%88)")
+
+    if cols2[4].button("🛣️ 跑道統計", use_container_width=True):
+        try:
+            st.switch_page("pages/14_跑道統計.py")
+        except Exception:
+            if hasattr(st, "page_link"):
+                st.page_link("pages/14_跑道統計.py", label="🛣️ 跑道統計")
+            else:
+                st.markdown("[🛣️ 跑道統計](/%E8%B7%91%E9%81%93%E7%B5%B1%E8%A8%88)")
+
+    if cols2[5].button("👥 同場多出馬", use_container_width=True):
+        try:
+            st.switch_page("pages/15_同場練馬師多出馬.py")
+        except Exception:
+            if hasattr(st, "page_link"):
+                st.page_link("pages/15_同場練馬師多出馬.py", label="👥 同場多出馬")
+            else:
+                st.markdown("[👥 同場多出馬](/%E5%90%8C%E5%A0%B4%E7%B7%B4%E9%A6%AC%E5%B8%AB%E5%A4%9A%E5%87%BA%E9%A6%AC)")
