@@ -86,6 +86,20 @@ class RaceCardScraper:
             race_class = ""
             distance = 0
             going = "未知"
+            post_time_hk = ""
+
+            times = re.findall(r"\b(\d{1,2}:\d{2})\b", race_text)
+            if times:
+                for t0 in times:
+                    try:
+                        hh, mm = t0.split(":")
+                        hh_i = int(hh)
+                        mm_i = int(mm)
+                        if 0 <= hh_i <= 23 and 0 <= mm_i <= 59:
+                            post_time_hk = f"{hh_i:02d}:{mm_i:02d}"
+                            break
+                    except Exception:
+                        continue
             
             # 嘗試擷取距離 (例如 1000米)
             dist_match = re.search(r'(\d+)米', race_text)
@@ -136,6 +150,7 @@ class RaceCardScraper:
             race_data = {
                 "race_no": race_no, 
                 "venue": venue, 
+                "post_time_hk": post_time_hk,
                 "distance": distance,
                 "race_class": race_class,
                 "going": going,

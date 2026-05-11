@@ -179,6 +179,9 @@ def init_db():
                     conn.execute(text("CREATE INDEX IF NOT EXISTS ix_races_surface ON races (surface)"))
             except Exception:
                 pass
+        if "post_time_hk" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE races ADD COLUMN post_time_hk VARCHAR(5)"))
     except Exception:
         pass
 

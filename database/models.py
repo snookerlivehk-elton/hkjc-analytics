@@ -54,6 +54,7 @@ class Race(Base):
     venue = Column(String(10), nullable=False)  # ST, HV
     race_no = Column(Integer, nullable=False)
     race_id = Column(String(20), unique=True, index=True)  # 20240408-1 (日期+場次)
+    post_time_hk = Column(String(5))  # HH:MM（以香港時間表示）
     race_class = Column(String(20))
     distance = Column(Integer)
     track_type = Column(String(20))  # Turf, All Weather

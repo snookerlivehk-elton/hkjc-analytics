@@ -99,6 +99,7 @@ async def run_daily_scraper():
                 race_date, 
                 venue, 
                 race_info["race_no"],
+                post_time_hk=race_info.get("post_time_hk", ""),
                 race_class=race_info.get("race_class", ""),
                 distance=race_info.get("distance", 0),
                 going=race_info.get("going", ""),

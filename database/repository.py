@@ -44,6 +44,7 @@ class RacingRepository:
         race_date: datetime,
         venue: str,
         race_no: int,
+        post_time_hk: str = "",
         race_class: str = "",
         distance: int = 0,
         going: str = "",
@@ -59,6 +60,7 @@ class RacingRepository:
                 venue=venue, 
                 race_no=race_no, 
                 race_id=race_id,
+                post_time_hk=str(post_time_hk or "").strip() or None,
                 race_class=race_class,
                 distance=distance,
                 going=going,
@@ -70,6 +72,8 @@ class RacingRepository:
             self.session.flush()
         else:
             # 如果賽事已存在，更新細節
+            if str(post_time_hk or "").strip():
+                race.post_time_hk = str(post_time_hk).strip()
             race.race_class = race_class
             race.distance = distance
             if str(going or "").strip():

@@ -35,6 +35,26 @@ def _sha256_json(obj: Any) -> str:
 
 
 def get_race_day_anchor_dt(session: Session, date_str: str) -> datetime:
+    start, end = _day_range(date_str)
+    r1 = (
+        session.query(Race.post_time_hk)
+        .filter(and_(Race.race_date >= start, Race.race_date < end))
+        .filter(Race.race_no == 1)
+        .order_by(Race.id.desc())
+        .first()
+    )
+    if r1 and isinstance(r1[0], str) and r1[0].strip():
+        s = r1[0].strip()
+        try:
+            hh, mm = s.split(":")
+            hh_i = int(hh)
+            mm_i = int(mm)
+            if 0 <= hh_i <= 23 and 0 <= mm_i <= 59:
+                d0 = datetime.strptime(str(date_str), "%Y/%m/%d").date()
+                return datetime.combine(d0, dtime(hh_i, mm_i)).replace(tzinfo=HK_TZ)
+        except Exception:
+            pass
+
     v = _get_cfg_value(session, "race_day_anchor_time_hk")
     t = "12:00"
     if isinstance(v, str) and v.strip():
@@ -179,4 +199,3 @@ def compute_speedpro_day_hash(session: Session, *, date_str: str) -> str:
                 raw_hash = _sha256_json(snap)
         parts.append(f"{int(race_no)}:{raw_hash}")
     return _sha256_json(parts)
-
