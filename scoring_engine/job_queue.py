@@ -112,7 +112,11 @@ def claim_next_job(session: Session) -> Optional[Dict[str, Any]]:
         return None
     q = cfg.value.get("queued")
     if not isinstance(q, list) or not q:
-        return None
+        rebuild_queue_from_recent_jobs(session, limit=200)
+        cfg = session.query(SystemConfig).filter_by(key=QUEUE_KEY).with_for_update().first()
+        q = cfg.value.get("queued") if cfg and isinstance(cfg.value, dict) else None
+        if not isinstance(q, list) or not q:
+            return None
     job_id = str(q.pop(0)).strip()
     cfg.value = {"queued": q[-200:]}
     session.commit()
@@ -142,3 +146,45 @@ def list_recent_jobs(session: Session, limit: int = 20) -> List[Dict[str, Any]]:
         if isinstance(r.value, dict):
             out.append(dict(r.value))
     return out
+
+
+def peek_queue(session: Session) -> Dict[str, Any]:
+    qv = _ensure_queue(session)
+    q = qv.get("queued")
+    if not isinstance(q, list):
+        q = []
+    return {"queued": list(q), "len": len(q)}
+
+
+def rebuild_queue_from_recent_jobs(session: Session, limit: int = 200) -> Dict[str, Any]:
+    qv = _ensure_queue(session)
+    q = qv.get("queued")
+    if not isinstance(q, list):
+        q = []
+    seen = set(str(x).strip() for x in q if str(x).strip())
+
+    rows = (
+        session.query(SystemConfig)
+        .filter(SystemConfig.key.like("job:%"))
+        .order_by(SystemConfig.updated_at.desc())
+        .limit(int(limit or 200))
+        .all()
+    )
+    added = 0
+    for r in rows:
+        v = r.value if isinstance(r.value, dict) else None
+        if not isinstance(v, dict):
+            continue
+        if str(v.get("status") or "") != "queued":
+            continue
+        jid = str(v.get("id") or "").strip()
+        if not jid or jid in seen:
+            continue
+        q.append(jid)
+        seen.add(jid)
+        added += 1
+
+    qv["queued"] = q[-200:]
+    _upsert_cfg(session, QUEUE_KEY, qv, "Job queue")
+    session.commit()
+    return {"added": int(added), "len": len(qv["queued"])}

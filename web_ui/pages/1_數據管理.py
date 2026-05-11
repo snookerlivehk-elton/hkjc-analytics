@@ -14,7 +14,7 @@ if root_path not in sys.path:
 from database.connection import get_session, init_db
 from scoring_engine.core import ScoringEngine
 from scoring_engine.member_stats import HIT_METRICS, METRIC_LABELS
-from scoring_engine.job_queue import get_job, list_recent_jobs
+from scoring_engine.job_queue import get_job, list_recent_jobs, peek_queue, rebuild_queue_from_recent_jobs
 from web_ui.auth import require_superadmin
 from web_ui.nav import render_admin_nav
 from web_ui.utils import _confirm_run
@@ -278,6 +278,13 @@ with tab_monitor:
         st.markdown("#### 🧾 Job 狀態（worker 任務）")
         c_j1, c_j2 = st.columns([1, 3])
         if c_j1.button("刷新", use_container_width=True, key="monitor_jobs_refresh"):
+            st.rerun()
+        qinfo = peek_queue(session_m)
+        qlen = int(qinfo.get("len") or 0)
+        st.caption(f"queue_len={qlen}")
+        if c_j1.button("修復 queue", use_container_width=True, key="monitor_jobs_rebuild_queue"):
+            res = rebuild_queue_from_recent_jobs(session_m, limit=200)
+            st.success(f"已修復 queue：added={int(res.get('added') or 0)} len={int(res.get('len') or 0)}")
             st.rerun()
         jobs = list_recent_jobs(session_m, limit=30)
         rows_j = []
