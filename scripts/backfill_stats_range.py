@@ -10,7 +10,7 @@ if root_path not in sys.path:
     sys.path.insert(0, root_path)
 
 from database.connection import get_session, init_db
-from database.models import SystemConfig
+from database.models import Race, SystemConfig
 from scoring_engine.draw_stats_daily import rebuild_draw_stats_daily_for_race_date
 from scoring_engine.entry_facts import build_entry_facts_for_race_date
 
@@ -64,6 +64,33 @@ def _dates_from_fixture(session, start_date: date, end_date: date) -> Optional[L
     return out
 
 
+def _dates_from_db_races(session, start_date: date, end_date: date) -> List[date]:
+    start_dt = datetime.combine(start_date, datetime.min.time())
+    end_dt = datetime.combine(end_date + timedelta(days=1), datetime.min.time())
+    rows = (
+        session.query(Race.race_date)
+        .filter(Race.race_date >= start_dt)
+        .filter(Race.race_date < end_dt)
+        .order_by(Race.race_date.asc())
+        .all()
+    )
+    seen = set()
+    out: List[date] = []
+    for (dt,) in rows:
+        if not dt:
+            continue
+        try:
+            d0 = dt.date()
+        except Exception:
+            continue
+        if d0 in seen:
+            continue
+        seen.add(d0)
+        out.append(d0)
+    out.sort()
+    return out
+
+
 def main():
     init_db()
     session = get_session()
@@ -88,11 +115,18 @@ def main():
             if last_done and last_done >= start_date:
                 start_date = min(end_date, last_done + timedelta(days=1))
 
-        days = _dates_from_fixture(session, start_date, end_date)
-        if days is None:
+        use_fixture = str(os.environ.get("USE_FIXTURE_DATES") or "").strip().lower() in ("1", "true", "yes")
+        days: Optional[List[date]] = None
+        if use_fixture:
+            days = _dates_from_fixture(session, start_date, end_date)
+        if not days:
+            days = _dates_from_db_races(session, start_date, end_date)
+        if not days:
             days = [start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1)]
 
-        print(f">>> 批量重建統計快照：{_fmt_ymd(start_date)} -> {_fmt_ymd(end_date)} （days={len(days)}）")
+        print(
+            f">>> 批量重建統計快照：{_fmt_ymd(start_date)} -> {_fmt_ymd(end_date)} （days={len(days)} use_fixture={bool(use_fixture)}）"
+        )
 
         ok_days = 0
         for d in days:

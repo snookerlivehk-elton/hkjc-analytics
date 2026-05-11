@@ -90,11 +90,14 @@ def main():
             if last_done and last_done >= start_date:
                 start_date = min(end_date, last_done + timedelta(days=1))
 
-        days = _dates_from_fixture(session, start_date, end_date)
-        if days is None:
+        use_fixture = str(os.environ.get("USE_FIXTURE_DATES") or "").strip().lower() in ("1", "true", "yes")
+        days: Optional[List[date]] = None
+        if use_fixture:
+            days = _dates_from_fixture(session, start_date, end_date)
+        if not days:
             days = [start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1)]
 
-        print(f">>> 批量回填排位表：{_fmt_ymd(start_date)} -> {_fmt_ymd(end_date)} （days={len(days)}）")
+        print(f">>> 批量回填排位表：{_fmt_ymd(start_date)} -> {_fmt_ymd(end_date)} （days={len(days)} use_fixture={bool(use_fixture)}）")
 
         scraper = RaceCardScraper()
         repo = RacingRepository(session)
