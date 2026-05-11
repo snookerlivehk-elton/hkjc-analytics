@@ -30,6 +30,9 @@ class RaceCardScraper:
             # 請求第一場，因為新版 URL 參數為 racedate
             resp = self.session.get(f"{self.base_url}?racedate={date_str}&RaceNo=1", headers=self.headers, timeout=15)
             soup = BeautifulSoup(resp.text, 'lxml')
+            if soup.select_one("table.starter") is None:
+                print(">>> 未找到排位表（starter table），該日可能無賽事或已不可查（跳過）")
+                return []
             
             race_nos = set()
             # 新版 URL 的參數通常小寫
