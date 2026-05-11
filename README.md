@@ -1,5 +1,10 @@
 # HKJC 賽馬全端數據分析系統 (HKJC Analytics System)
 
+接手流程：
+1) 先讀 OPERATIONS.md（Railway services / cron / 排障）與 CHANGELOG.md（最近改動與口徑）
+2) 再讀本 README 了解資料表/流程/入口
+3) 任何修改先用後台「監察面板→Job 狀態」或對應 service logs 驗收
+
 這是一個針對香港賽馬 (HKJC) 設計的每場賽事獨立計分排名系統。本系統專注於數據抓取、多維度計分以及即時排名輸出。
 
 ## 核心概念

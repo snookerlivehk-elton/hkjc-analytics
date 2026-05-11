@@ -100,6 +100,11 @@ def init_db():
                 )
             )
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_races_race_date_race_no ON races (race_date, race_no)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_entry_facts_day_draw ON entry_facts (race_date_day, draw)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_entry_facts_day_jockey ON entry_facts (race_date_day, jockey_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_entry_facts_day_trainer ON entry_facts (race_date_day, trainer_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_draw_stats_daily_day_draw ON draw_stats_daily (race_date_day, draw)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_draw_stats_daily_day_updated ON draw_stats_daily (race_date_day DESC, updated_at DESC)"))
             if "postgresql" in DATABASE_URL:
                 conn.execute(text("CREATE INDEX IF NOT EXISTS ix_search_documents_search_trgm ON search_documents USING GIN (search_text gin_trgm_ops)"))
     except Exception:

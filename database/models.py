@@ -298,3 +298,73 @@ class HorseHistory(Base):
     created_at = Column(DateTime, default=datetime.now)
     
     horse = relationship("Horse")
+
+
+class EntryFact(Base):
+    __tablename__ = "entry_facts"
+    id = Column(Integer, primary_key=True)
+    entry_id = Column(Integer, ForeignKey("race_entries.id"), unique=True, index=True, nullable=False)
+    race_id = Column(Integer, ForeignKey("races.id"), index=True, nullable=False)
+    race_date_day = Column(Date, index=True, nullable=False)
+    venue = Column(String(10), index=True)
+    race_no = Column(Integer, index=True)
+
+    race_class = Column(String(20), index=True)
+    distance = Column(Integer, index=True)
+    surface = Column(String(20), index=True)
+    course_type = Column(String(10), index=True)
+    going_code = Column(String(20), index=True)
+
+    horse_id = Column(Integer, ForeignKey("horses.id"), index=True)
+    jockey_id = Column(Integer, ForeignKey("jockeys.id"), index=True)
+    trainer_id = Column(Integer, ForeignKey("trainers.id"), index=True)
+
+    draw = Column(Integer, index=True)
+    rating = Column(Integer, index=True)
+
+    rank = Column(Integer, index=True)
+    is_win = Column(Boolean, index=True)
+    is_place = Column(Boolean, index=True)
+
+    sp_win_odds = Column(Float)
+    odds_bucket_sp = Column(String(20), index=True)
+
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+
+class DrawStatsDaily(Base):
+    __tablename__ = "draw_stats_daily"
+    id = Column(Integer, primary_key=True)
+    race_date_day = Column(Date, index=True, nullable=False)
+
+    venue = Column(String(10), index=True)
+    surface = Column(String(20), index=True)
+    course_type = Column(String(10), index=True)
+    going_code = Column(String(20), index=True)
+    race_class = Column(String(20), index=True)
+    distance = Column(Integer, index=True)
+
+    draw = Column(Integer, index=True, nullable=False)
+    odds_bucket_sp = Column(String(20), index=True, nullable=False)
+
+    samples = Column(Integer, nullable=False, default=0)
+    win_cnt = Column(Integer, nullable=False, default=0)
+    place_cnt = Column(Integer, nullable=False, default=0)
+
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, index=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "race_date_day",
+            "venue",
+            "surface",
+            "course_type",
+            "going_code",
+            "race_class",
+            "distance",
+            "draw",
+            "odds_bucket_sp",
+            name="ux_draw_stats_daily_dims",
+        ),
+    )
