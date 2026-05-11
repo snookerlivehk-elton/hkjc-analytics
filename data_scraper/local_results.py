@@ -40,6 +40,20 @@ class LocalResultsScraper:
     def _parse_meta(self, soup: BeautifulSoup) -> Dict[str, Any]:
         text = soup.get_text(separator=" ", strip=True)
 
+        race_date_page = ""
+        m = re.search(r"(賽事日期|賽事日子|racedate)\s*:\s*(\d{4}[/-]\d{2}[/-]\d{2}|\d{2}[/-]\d{2}[/-]\d{4})", text, re.IGNORECASE)
+        if m:
+            s = str(m.group(2) or "").strip().replace("-", "/")
+            if s:
+                try:
+                    if re.match(r"^\d{4}/\d{2}/\d{2}$", s):
+                        race_date_page = s
+                    elif re.match(r"^\d{2}/\d{2}/\d{4}$", s):
+                        dd, mm, yyyy = s.split("/")
+                        race_date_page = f"{yyyy}/{mm}/{dd}"
+                except Exception:
+                    race_date_page = ""
+
         going = ""
         m = re.search(r"場地狀況\s*:\s*([^\s]+)", text)
         if m:
@@ -102,6 +116,7 @@ class LocalResultsScraper:
                     pass
 
         return {
+            "race_date_page": race_date_page,
             "venue": venue,
             "distance": distance,
             "surface": surface,

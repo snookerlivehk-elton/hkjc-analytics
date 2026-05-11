@@ -84,6 +84,10 @@ def main():
         print(f"抓取賽果/派彩：{target_date} {racecourse} 第{race.race_no}場")
         payload = scraper.scrape_single_race(target_date, racecourse, race.race_no)
         meta = payload.get("meta") or {}
+        page_date = str(meta.get("race_date_page") or "").strip().replace("-", "/")
+        if page_date and page_date != str(target_date):
+            print(f"[略過] 賽果頁日期不符：expect={target_date} got={page_date}（通常表示該日未有賽果/網站回傳其他賽日）")
+            continue
 
         div = session.query(RaceDividend).filter_by(race_id=race.id).first()
         if not div:

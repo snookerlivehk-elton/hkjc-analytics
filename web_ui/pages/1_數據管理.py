@@ -650,6 +650,40 @@ with tab_monitor:
                 deleted_sf, deleted_sw, deleted_cfg = cleanup_removed_factor_data(session_m)
                 st.success(f"✅ 已清理：ScoringFactor={deleted_sf} ScoringWeight={deleted_sw} SystemConfig={deleted_cfg}")
                 st.rerun()
+
+            st.divider()
+            c4, c5 = st.columns([1, 3])
+            ok = _confirm_run(c4, "monitor_purge_results", label="輸入 RUN")
+            if c4.button("🧯 清除該日賽果/派彩/走位（修復未開賽誤寫）", use_container_width=True, disabled=not ok, key="monitor_purge_results_btn"):
+                from datetime import datetime as _dt, time as _dtime, timedelta as _td
+                from sqlalchemy import and_
+                from database.models import Race, RaceEntry, RaceResult, RaceDividend, RaceTrackCondition, SystemConfig
+
+                d0 = _dt.strptime(str(date_str), "%Y/%m/%d").date()
+                start = _dt.combine(d0, _dtime.min)
+                end = start + _td(days=1)
+                races = session_m.query(Race.id, Race.race_no).filter(and_(Race.race_date >= start, Race.race_date < end)).all()
+                race_ids = [int(rid) for rid, _ in races]
+                if not race_ids:
+                    st.warning("找不到該日 races，無需清除。")
+                    st.stop()
+
+                entry_ids = [int(x[0]) for x in session_m.query(RaceEntry.id).filter(RaceEntry.race_id.in_(race_ids)).all()]
+
+                n_rr = 0
+                if entry_ids:
+                    n_rr = session_m.query(RaceResult).filter(RaceResult.entry_id.in_(entry_ids)).delete(synchronize_session=False)
+
+                n_div = session_m.query(RaceDividend).filter(RaceDividend.race_id.in_(race_ids)).delete(synchronize_session=False)
+
+                n_tc = session_m.query(RaceTrackCondition).filter(RaceTrackCondition.race_id.in_(race_ids)).filter(RaceTrackCondition.source.like("HKJC_LOCALRESULTS%")).delete(synchronize_session=False)
+
+                keys = [f"race_runpos:{str(date_str)}:{int(rno)}" for _, rno in races]
+                n_cfg = session_m.query(SystemConfig).filter(SystemConfig.key.in_(keys)).delete(synchronize_session=False)
+
+                session_m.commit()
+                st.success(f"✅ 已清除：RaceResult={n_rr} RaceDividend={n_div} RaceTrackCondition={n_tc} SystemConfig(runpos)={n_cfg}")
+                st.rerun()
     finally:
         session_m.close()
 
