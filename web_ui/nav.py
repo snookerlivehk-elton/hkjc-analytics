@@ -96,7 +96,7 @@ def render_admin_nav(show_logout: bool = True, active: str = ""):
             else:
                 st.markdown("[💡 貼士設定](/%E8%B2%BC%E5%A3%AB%E8%A8%AD%E5%AE%9A)")
 
-    cols2 = st.columns([1, 1, 1, 1, 1])
+    cols2 = st.columns([1, 1, 1, 1, 1, 1])
     if cols2[0].button("💡 貼士列表", use_container_width=True):
         try:
             st.switch_page("pages/10_貼士列表.py")
@@ -105,3 +105,12 @@ def render_admin_nav(show_logout: bool = True, active: str = ""):
                 st.page_link("pages/10_貼士列表.py", label="💡 貼士列表")
             else:
                 st.markdown("[💡 貼士列表](/%E8%B2%BC%E5%A3%AB%E5%88%97%E8%A1%A8)")
+
+    if cols2[1].button("🎯 檔位統計", use_container_width=True):
+        try:
+            st.switch_page("pages/11_檔位統計.py")
+        except Exception:
+            if hasattr(st, "page_link"):
+                st.page_link("pages/11_檔位統計.py", label="🎯 檔位統計")
+            else:
+                st.markdown("[🎯 檔位統計](/%E6%AA%94%E4%BD%8D%E7%B5%B1%E8%A8%88)")
