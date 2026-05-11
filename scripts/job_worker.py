@@ -3,6 +3,8 @@ import sys
 import subprocess
 import time
 from datetime import datetime, time as dtime, timedelta
+import traceback
+from urllib.parse import urlparse
 
 from pathlib import Path
 
@@ -16,6 +18,36 @@ from scoring_engine.ai_advisor import run_ai_race_summary
 from scoring_engine.job_queue import append_job_log, claim_next_job, update_job
 from scoring_engine.search_index import index_system_config_doc
 from scoring_engine.core import ScoringEngine
+
+
+def _now() -> str:
+    return datetime.utcnow().isoformat()
+
+
+def _log(msg: str) -> None:
+    try:
+        print(f"{_now()} {str(msg)}", flush=True)
+    except Exception:
+        pass
+
+
+def _safe_db_label() -> str:
+    raw = str(os.environ.get("DATABASE_URL") or "").strip()
+    if not raw:
+        return "DATABASE_URL=missing"
+    try:
+        if raw.startswith("postgres://"):
+            raw = raw.replace("postgres://", "postgresql://", 1)
+        u = urlparse(raw)
+        host = str(u.hostname or "")
+        port = f":{int(u.port)}" if u.port else ""
+        db = str(u.path or "").lstrip("/")
+        scheme = str(u.scheme or "")
+        if db:
+            return f"{scheme}://{host}{port}/{db}"
+        return f"{scheme}://{host}{port}"
+    except Exception:
+        return "DATABASE_URL=present"
 
 
 def _day_range(date_str: str):
@@ -356,11 +388,20 @@ def main():
     if max_poll_sec < base_poll_sec:
         max_poll_sec = base_poll_sec
     idle_sleep = base_poll_sec
+    last_hb_ts = 0.0
+    hb_every_sec = float(os.environ.get("JOB_HEARTBEAT_SEC") or 60.0)
+    if hb_every_sec <= 0:
+        hb_every_sec = 60.0
+    _log(f"job_worker_started db={_safe_db_label()} poll={base_poll_sec}s..{max_poll_sec}s heartbeat={hb_every_sec}s")
     while True:
         session = get_session()
         try:
             job = claim_next_job(session)
             if not job:
+                now_ts = time.time()
+                if now_ts - last_hb_ts >= hb_every_sec:
+                    last_hb_ts = now_ts
+                    _log(f"idle queue_empty sleep={idle_sleep}s")
                 session.close()
                 time.sleep(idle_sleep)
                 idle_sleep = min(max_poll_sec, max(base_poll_sec, idle_sleep * 1.5))
@@ -376,12 +417,18 @@ def main():
                 continue
 
             try:
+                _log(f"claimed job_id={jid} type={jtype}")
                 handler(session, job)
+                _log(f"finished job_id={jid} type={jtype}")
             except Exception as e:
+                _log(f"job_failed job_id={jid} type={jtype} err={str(e)}")
+                _log(traceback.format_exc())
                 update_job(session, jid, {"status": "failed", "error": str(e), "finished_at": datetime.utcnow().isoformat()})
             finally:
                 session.close()
         except Exception:
+            _log("worker_loop_error")
+            _log(traceback.format_exc())
             try:
                 session.close()
             except Exception:
