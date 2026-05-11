@@ -126,44 +126,42 @@ def compute_top5_odds_stats(
     if not race_ids:
         return pd.DataFrame()
 
-    odds_map: Dict[int, float] = {}
     src = str(odds_source or "").strip()
-    if src in {"latest_history", "pre_race_latest"}:
-        if src == "pre_race_latest":
-            sub = (
-                session.query(OddsHistory.entry_id.label("eid"), func.max(OddsHistory.captured_at).label("cap"))
-                .filter(OddsHistory.entry_id.isnot(None))
-                .filter(OddsHistory.odds_type == "PRE")
-                .group_by(OddsHistory.entry_id)
-                .subquery()
-            )
-        else:
-            sub = (
-                session.query(OddsHistory.entry_id.label("eid"), func.max(OddsHistory.captured_at).label("cap"))
-                .filter(OddsHistory.entry_id.isnot(None))
-                .group_by(OddsHistory.entry_id)
-                .subquery()
-            )
-        orows = session.query(OddsHistory.entry_id, OddsHistory.win_odds).join(
-            sub, (sub.c.eid == OddsHistory.entry_id) & (sub.c.cap == OddsHistory.captured_at)
-        )
-        if src == "pre_race_latest":
-            orows = orows.filter(OddsHistory.odds_type == "PRE")
-        orows = orows.all()
-        for eid, wo in orows:
-            try:
-                odds_map[int(eid)] = float(wo) if wo is not None else None
-            except Exception:
-                continue
-    else:
-        odds_map = {}
-
     erows = (
         session.query(RaceEntry.race_id, RaceEntry.horse_no, RaceEntry.id, RaceResult.rank, RaceResult.win_odds)
         .outerjoin(RaceResult, RaceResult.entry_id == RaceEntry.id)
         .filter(RaceEntry.race_id.in_(race_ids))
         .all()
     )
+    entry_ids: List[int] = []
+    for _, _, eid, _, _ in erows:
+        if eid is None:
+            continue
+        try:
+            entry_ids.append(int(eid))
+        except Exception:
+            continue
+    entry_ids = list(dict.fromkeys(entry_ids))
+
+    odds_map: Dict[int, float] = {}
+    if src in {"latest_history", "pre_race_latest"} and entry_ids:
+        sub = session.query(OddsHistory.entry_id.label("eid"), func.max(OddsHistory.captured_at).label("cap")).filter(
+            OddsHistory.entry_id.in_(entry_ids)
+        )
+        if src == "pre_race_latest":
+            sub = sub.filter(OddsHistory.odds_type == "PRE")
+        sub = sub.group_by(OddsHistory.entry_id).subquery()
+
+        orows = session.query(OddsHistory.entry_id, OddsHistory.win_odds).join(
+            sub, (sub.c.eid == OddsHistory.entry_id) & (sub.c.cap == OddsHistory.captured_at)
+        )
+        if src == "pre_race_latest":
+            orows = orows.filter(OddsHistory.odds_type == "PRE")
+        for eid, wo in orows.all():
+            try:
+                odds_map[int(eid)] = float(wo) if wo is not None else None
+            except Exception:
+                continue
     entry_by_race_hn: Dict[Tuple[int, int], Dict[str, Any]] = {}
     for rid, hn, eid, rk, wo in erows:
         try:

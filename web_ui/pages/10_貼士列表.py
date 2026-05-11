@@ -1,6 +1,7 @@
 import sys
 from pathlib import Path
 from datetime import date, datetime, timedelta
+import json
 
 import pandas as pd
 import streamlit as st
@@ -37,6 +38,16 @@ def _race_dates(limit_days: int = 365):
             if len(out) >= need:
                 break
         return out
+    finally:
+        s.close()
+
+
+@st.cache_data(ttl=120)
+def _cached_tips(race_id: int, cfg_json: str):
+    s = get_session()
+    try:
+        cfg0 = json.loads(cfg_json) if cfg_json else {}
+        return generate_top5_tips_for_race(s, race_id=int(race_id), member_email=None, preset_name=None, override_config=cfg0)
     finally:
         s.close()
 
@@ -86,7 +97,8 @@ def main():
         with st.expander("使用中的貼士設定", expanded=False):
             st.json(cfg)
 
-        tips = generate_top5_tips_for_race(session, race_id=int(race.id), member_email=None, preset_name=None, override_config=cfg)
+        cfg_sig = json.dumps(cfg, sort_keys=True, ensure_ascii=False)
+        tips = _cached_tips(int(race.id), cfg_sig)
         if not tips:
             st.info("未有貼士達標（或缺少賠率資料 / 統計樣本不足）。")
             return
