@@ -76,7 +76,7 @@ def main():
         class_opts = [r[0] for r in session.query(EntryFact.race_class).distinct().order_by(EntryFact.race_class.asc()).all() if r and r[0]]
         dist_opts = [r[0] for r in session.query(EntryFact.distance).distinct().order_by(EntryFact.distance.asc()).all() if r and r[0]]
 
-        f1, f2, f3, f4, f5, f6 = st.columns([1.2, 1.2, 1.2, 1.2, 1.2, 1.2])
+        f1, f2, f3, f4, f5, f6, f7, f8 = st.columns([1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2])
         with f1:
             venue = st.selectbox("場地", options=["ALL"] + venue_opts, index=0)
         with f2:
@@ -89,6 +89,14 @@ def main():
             race_class = st.selectbox("班次", options=["ALL"] + class_opts, index=0)
         with f6:
             distance = st.selectbox("途程", options=["ALL"] + [int(x) for x in dist_opts if x], index=0)
+        with f7:
+            runstyle_opts = ["ALL", "LEADER", "PROMINENT", "MIDFIELD", "BACKMARKER", "UNKNOWN"]
+            runstyle_label = {"ALL": "ALL", "LEADER": "領放", "PROMINENT": "跟前", "MIDFIELD": "中置", "BACKMARKER": "後上", "UNKNOWN": "UNKNOWN"}
+            runstyle = st.selectbox("跑法", options=runstyle_opts, format_func=lambda x: runstyle_label.get(str(x), str(x)), index=0)
+        with f8:
+            pace_opts = ["ALL", "FAST", "NORMAL", "SLOW", "UNKNOWN"]
+            pace_label = {"ALL": "ALL", "FAST": "偏快", "NORMAL": "正常", "SLOW": "偏慢", "UNKNOWN": "UNKNOWN"}
+            pace_bucket = st.selectbox("步速", options=pace_opts, format_func=lambda x: pace_label.get(str(x), str(x)), index=0)
 
         q = base
         if venue != "ALL":
@@ -103,6 +111,10 @@ def main():
             q = q.filter(EntryFact.race_class == str(race_class))
         if distance != "ALL":
             q = q.filter(EntryFact.distance == int(distance))
+        if runstyle != "ALL":
+            q = q.filter(EntryFact.runstyle_bucket == str(runstyle))
+        if pace_bucket != "ALL":
+            q = q.filter(EntryFact.pace_bucket == str(pace_bucket))
 
         dims = [EntryFact.venue, EntryFact.surface, EntryFact.course_type]
         cols = ["venue", "surface", "course_type"]

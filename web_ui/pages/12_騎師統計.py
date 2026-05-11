@@ -80,7 +80,7 @@ def main():
         )
         jockey_opts = [("ALL", "ALL")] + [(int(i), str(n or "").strip() or f"J{i}") for i, n in rows_j]
 
-        f1, f2, f3, f4, f5, f6 = st.columns([1.4, 1.2, 1.2, 1.2, 1.2, 1.2])
+        f1, f2, f3, f4, f5, f6, f7, f8 = st.columns([1.4, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2])
         with f1:
             jockey_sel = st.selectbox("騎師", options=jockey_opts, format_func=lambda x: x[1], index=0)
         with f2:
@@ -93,6 +93,14 @@ def main():
             going_code = st.selectbox("場地狀況", options=["ALL"] + [r[0] for r in session.query(EntryFact.going_code).distinct().order_by(EntryFact.going_code.asc()).all() if r and r[0]], index=0)
         with f6:
             race_class = st.selectbox("班次", options=["ALL"] + [r[0] for r in session.query(EntryFact.race_class).distinct().order_by(EntryFact.race_class.asc()).all() if r and r[0]], index=0)
+        with f7:
+            runstyle_opts = ["ALL", "LEADER", "PROMINENT", "MIDFIELD", "BACKMARKER", "UNKNOWN"]
+            runstyle_label = {"ALL": "ALL", "LEADER": "領放", "PROMINENT": "跟前", "MIDFIELD": "中置", "BACKMARKER": "後上", "UNKNOWN": "UNKNOWN"}
+            runstyle = st.selectbox("跑法", options=runstyle_opts, format_func=lambda x: runstyle_label.get(str(x), str(x)), index=0)
+        with f8:
+            pace_opts = ["ALL", "FAST", "NORMAL", "SLOW", "UNKNOWN"]
+            pace_label = {"ALL": "ALL", "FAST": "偏快", "NORMAL": "正常", "SLOW": "偏慢", "UNKNOWN": "UNKNOWN"}
+            pace_bucket = st.selectbox("步速", options=pace_opts, format_func=lambda x: pace_label.get(str(x), str(x)), index=0)
 
         q = base
         if jockey_sel[0] != "ALL":
@@ -107,6 +115,10 @@ def main():
             q = q.filter(EntryFact.going_code == str(going_code))
         if race_class != "ALL":
             q = q.filter(EntryFact.race_class == str(race_class))
+        if runstyle != "ALL":
+            q = q.filter(EntryFact.runstyle_bucket == str(runstyle))
+        if pace_bucket != "ALL":
+            q = q.filter(EntryFact.pace_bucket == str(pace_bucket))
 
         dims = [EntryFact.jockey_id]
         cols = ["jockey_id"]
