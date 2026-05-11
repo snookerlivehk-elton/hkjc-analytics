@@ -18,6 +18,7 @@ from scoring_engine.ai_advisor import run_ai_race_summary
 from scoring_engine.job_queue import append_job_log, claim_next_job, update_job
 from scoring_engine.search_index import index_system_config_doc
 from scoring_engine.core import ScoringEngine
+from scoring_engine.readiness import get_speedpro_readiness
 
 
 def _now() -> str:
@@ -295,7 +296,21 @@ def _handle_daily_update_pipeline(session, job):
             append_job_log(session, job["id"], f"rescore_race_date date={date_str} races={len(races)}")
             _run_rescore_race_date_inner(session, job["id"], date_str, races=races, total=len(races), update_progress=False)
         elif step == "snapshot":
-            _run_script_and_stream_log(session, job["id"], "scripts/generate_predictions.py", env0)
+            min_cov = payload.get("speedpro_min_coverage")
+            try:
+                min_cov_v = float(min_cov) if min_cov is not None else 0.85
+            except Exception:
+                min_cov_v = 0.85
+            ready = get_speedpro_readiness(session, date_str=date_str, min_coverage=min_cov_v)
+            if not bool(ready.get("ok")):
+                append_job_log(
+                    session,
+                    job["id"],
+                    f"step_skipped snapshot reason=speedpro_not_ready min_coverage={ready.get('min_coverage')} races={ready.get('races')}",
+                    max_lines=400,
+                )
+            else:
+                _run_script_and_stream_log(session, job["id"], "scripts/generate_predictions.py", env0)
         elif step == "results":
             _run_script_and_stream_log(session, job["id"], "scripts/fetch_race_results.py", env0)
         else:

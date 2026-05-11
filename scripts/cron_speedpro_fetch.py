@@ -96,7 +96,7 @@ def _retry_minutes(attempt_count: int) -> int:
     v = str(os.environ.get("SPEEDPRO_RETRY_MINUTES") or "").strip()
     if v.isdigit():
         return max(1, int(v))
-    return 120
+    return 90
 
 
 def _window(session, racedate_str: str) -> Tuple[Optional[datetime], Optional[datetime]]:
@@ -104,8 +104,17 @@ def _window(session, racedate_str: str) -> Tuple[Optional[datetime], Optional[da
         d = datetime.strptime(racedate_str, "%Y/%m/%d").date()
     except Exception:
         return None, None
-    start = datetime.combine(d - timedelta(days=1), datetime.strptime("12:00", "%H:%M").time()).replace(tzinfo=HK_TZ)
-    end = datetime.combine(d, datetime.max.time()).replace(tzinfo=HK_TZ)
+    anchor_time = "12:00"
+    cfg = _get_cfg(session, "race_day_anchor_time_hk")
+    if cfg and isinstance(cfg.value, str) and cfg.value.strip():
+        anchor_time = cfg.value.strip()
+    try:
+        tt = datetime.strptime(anchor_time, "%H:%M").time()
+    except Exception:
+        tt = datetime.strptime("12:00", "%H:%M").time()
+    anchor = datetime.combine(d, tt).replace(tzinfo=HK_TZ)
+    start = anchor - timedelta(hours=60)
+    end = anchor - timedelta(hours=20)
     return start, end
 
 
