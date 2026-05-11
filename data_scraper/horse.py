@@ -3,6 +3,7 @@ import requests
 from bs4 import BeautifulSoup
 from typing import List, Dict, Any
 from datetime import datetime
+from urllib.parse import parse_qs, urlparse
 from utils.logger import logger
 
 class HorseScraper:
@@ -44,6 +45,23 @@ class HorseScraper:
                     if not re.match(r"^\d{3}$", idx_text): continue
                     
                     try:
+                        href = ""
+                        a = tds[0].find("a", href=True)
+                        if a is not None:
+                            href = str(a.get("href") or "").strip()
+                        racedate = ""
+                        racecourse = ""
+                        raceno = None
+                        if href and "localresults" in href:
+                            u = urlparse(href)
+                            q = parse_qs(u.query)
+                            racedate = str((q.get("racedate") or [""])[0] or "").strip()
+                            racecourse = str((q.get("Racecourse") or [""])[0] or "").strip()
+                            try:
+                                raceno = int(str((q.get("RaceNo") or [""])[0] or "").strip() or 0) or None
+                            except Exception:
+                                raceno = None
+
                         record = {
                             "race_index": idx_text,
                             "rank": tds[1].get_text(strip=True),
@@ -57,7 +75,10 @@ class HorseScraper:
                             "trainer": tds[9].get_text(strip=True),
                             "jockey": tds[10].get_text(strip=True),
                             "weight": tds[13].get_text(strip=True),
-                            "finish_time": tds[15].get_text(strip=True) if len(tds) > 15 else ""
+                            "finish_time": tds[15].get_text(strip=True) if len(tds) > 15 else "",
+                            "racedate": racedate,
+                            "racecourse": racecourse,
+                            "raceno": raceno,
                         }
                         history.append(record)
                     except:
