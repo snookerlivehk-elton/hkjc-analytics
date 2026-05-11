@@ -1,4 +1,6 @@
 import os
+import sys
+import subprocess
 import time
 from datetime import datetime, time as dtime, timedelta
 
@@ -7,6 +9,7 @@ from database.models import Race, SystemConfig
 from scoring_engine.ai_advisor import run_ai_race_summary
 from scoring_engine.job_queue import append_job_log, claim_next_job, update_job
 from scoring_engine.search_index import index_system_config_doc
+from scoring_engine.core import ScoringEngine
 
 
 def _day_range(date_str: str):
@@ -139,23 +142,224 @@ def _handle_ai_batch_generate(session, job):
     )
 
 
+def _handle_rescore_race_date(session, job):
+    payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
+    date_str = str(payload.get("date") or "").strip()
+    if not date_str:
+        raise ValueError("missing date")
+    start, end = _day_range(date_str)
+
+    races = (
+        session.query(Race)
+        .filter(Race.race_date >= start)
+        .filter(Race.race_date < end)
+        .order_by(Race.race_no.asc(), Race.id.asc())
+        .all()
+    )
+    total = len(races)
+    update_job(session, job["id"], {"progress": {"total": total, "done": 0, "current": ""}})
+    append_job_log(session, job["id"], f"rescore_race_date date={date_str} races={total}")
+
+    ok, failed = _run_rescore_race_date_inner(session, job["id"], date_str, races=races, total=total, update_progress=True)
+
+    update_job(
+        session,
+        job["id"],
+        {
+            "status": "done",
+            "finished_at": datetime.utcnow().isoformat(),
+            "progress": {"total": total, "done": total, "current": ""},
+            "result": {"ok": ok, "failed": failed, "total": total},
+        },
+    )
+
+
+def _run_script_and_stream_log(session, job_id: str, script_path: str, env: dict) -> None:
+    argv = [sys.executable, str(script_path)]
+    proc = subprocess.Popen(
+        argv,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=env,
+        bufsize=1,
+    )
+    try:
+        if proc.stdout:
+            for line in iter(proc.stdout.readline, ""):
+                s = str(line or "").rstrip()
+                if s:
+                    append_job_log(session, job_id, s, max_lines=400)
+    finally:
+        try:
+            if proc.stdout:
+                proc.stdout.close()
+        except Exception:
+            pass
+    code = proc.wait()
+    if int(code or 0) != 0:
+        raise RuntimeError(f"script_failed:{script_path}:exit_code={code}")
+
+
+def _run_rescore_race_date_inner(session, job_id: str, date_str: str, *, races: list, total: int, update_progress: bool) -> tuple:
+    engine = ScoringEngine(session)
+    ok = 0
+    failed = 0
+    for i, r in enumerate(races, 1):
+        if update_progress:
+            update_job(session, job_id, {"progress": {"total": total, "done": i - 1, "current": f"R{int(r.race_no)}"}})
+        try:
+            engine.score_race(int(r.id))
+            ok += 1
+        except Exception as e:
+            failed += 1
+            append_job_log(session, job_id, f"R{int(r.race_no)} failed err={str(e)}", max_lines=400)
+        if i % 3 == 0:
+            append_job_log(session, job_id, f"progress races={i}", max_lines=400)
+    return ok, failed
+
+
+def _handle_daily_update_pipeline(session, job):
+    payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
+    date_str = str(payload.get("date") or "").strip()
+    steps = payload.get("steps")
+    if not date_str:
+        raise ValueError("missing date")
+    if not isinstance(steps, list) or not steps:
+        steps = ["scrape", "history", "rescore", "snapshot"]
+
+    steps = [str(x).strip().lower() for x in steps if str(x).strip()]
+    total = len(steps)
+    update_job(session, job["id"], {"progress": {"total": total, "done": 0, "current": ""}})
+    append_job_log(session, job["id"], f"daily_update_pipeline date={date_str} steps={','.join(steps)}")
+
+    env0 = os.environ.copy()
+    env0["TARGET_DATE"] = date_str
+
+    for i, step in enumerate(steps, 1):
+        update_job(session, job["id"], {"progress": {"total": total, "done": i - 1, "current": step}})
+        append_job_log(session, job["id"], f"step_start {step}")
+        if step == "scrape":
+            _run_script_and_stream_log(session, job["id"], "scripts/run_scraper.py", env0)
+        elif step == "history":
+            env = dict(env0)
+            env["BACKFILL_MODE"] = "date"
+            _run_script_and_stream_log(session, job["id"], "scripts/fetch_history.py", env)
+        elif step == "rescore":
+            start, end = _day_range(date_str)
+            races = (
+                session.query(Race)
+                .filter(Race.race_date >= start)
+                .filter(Race.race_date < end)
+                .order_by(Race.race_no.asc(), Race.id.asc())
+                .all()
+            )
+            append_job_log(session, job["id"], f"rescore_race_date date={date_str} races={len(races)}")
+            _run_rescore_race_date_inner(session, job["id"], date_str, races=races, total=len(races), update_progress=False)
+        elif step == "snapshot":
+            _run_script_and_stream_log(session, job["id"], "scripts/generate_predictions.py", env0)
+        elif step == "results":
+            _run_script_and_stream_log(session, job["id"], "scripts/fetch_race_results.py", env0)
+        else:
+            raise ValueError(f"unknown_step:{step}")
+        append_job_log(session, job["id"], f"step_done {step}")
+
+    update_job(
+        session,
+        job["id"],
+        {
+            "status": "done",
+            "finished_at": datetime.utcnow().isoformat(),
+            "progress": {"total": total, "done": total, "current": ""},
+            "result": {"date": date_str, "steps": steps},
+        },
+    )
+
+
+def _handle_fetch_race_results(session, job):
+    payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
+    date_str = str(payload.get("date") or "").strip()
+    if not date_str:
+        raise ValueError("missing date")
+    update_job(session, job["id"], {"progress": {"total": 1, "done": 0, "current": "fetch_race_results"}})
+    append_job_log(session, job["id"], f"fetch_race_results date={date_str}")
+    env0 = os.environ.copy()
+    env0["TARGET_DATE"] = date_str
+    _run_script_and_stream_log(session, job["id"], "scripts/fetch_race_results.py", env0)
+    update_job(
+        session,
+        job["id"],
+        {
+            "status": "done",
+            "finished_at": datetime.utcnow().isoformat(),
+            "progress": {"total": 1, "done": 1, "current": ""},
+            "result": {"date": date_str},
+        },
+    )
+
+
+def _handle_speedpro_fetch(session, job):
+    payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
+    date_str = str(payload.get("date") or "").strip()
+    if not date_str:
+        raise ValueError("missing date")
+    race_nos = str(payload.get("race_nos") or "").strip()
+    retry_minutes = int(payload.get("retry_minutes") or 120)
+    force = bool(payload.get("force") if payload.get("force") is not None else True)
+
+    update_job(session, job["id"], {"progress": {"total": 1, "done": 0, "current": "speedpro_fetch"}})
+    append_job_log(session, job["id"], f"speedpro_fetch date={date_str} race_nos={race_nos} retry_minutes={retry_minutes} force={force}")
+
+    env0 = os.environ.copy()
+    env0["TARGET_DATE"] = date_str
+    if race_nos:
+        env0["RACE_NOS"] = race_nos
+    env0["SPEEDPRO_RETRY_MINUTES"] = str(int(retry_minutes))
+    if force:
+        env0["FORCE_SPEEDPRO_FETCH"] = "1"
+
+    _run_script_and_stream_log(session, job["id"], "scripts/cron_speedpro_fetch.py", env0)
+    update_job(
+        session,
+        job["id"],
+        {
+            "status": "done",
+            "finished_at": datetime.utcnow().isoformat(),
+            "progress": {"total": 1, "done": 1, "current": ""},
+            "result": {"date": date_str},
+        },
+    )
+
+
 JOB_HANDLERS = {
     "ai_batch_generate": _handle_ai_batch_generate,
     "search_backfill": _handle_search_backfill,
+    "rescore_race_date": _handle_rescore_race_date,
+    "daily_update_pipeline": _handle_daily_update_pipeline,
+    "fetch_race_results": _handle_fetch_race_results,
+    "speedpro_fetch": _handle_speedpro_fetch,
 }
 
 
 def main():
     init_db()
-    poll_sec = float(os.environ.get("JOB_POLL_SEC") or 3.0)
+    base_poll_sec = float(os.environ.get("JOB_POLL_SEC") or 3.0)
+    max_poll_sec = float(os.environ.get("JOB_POLL_MAX_SEC") or 30.0)
+    if base_poll_sec <= 0:
+        base_poll_sec = 3.0
+    if max_poll_sec < base_poll_sec:
+        max_poll_sec = base_poll_sec
+    idle_sleep = base_poll_sec
     while True:
         session = get_session()
         try:
             job = claim_next_job(session)
             if not job:
                 session.close()
-                time.sleep(poll_sec)
+                time.sleep(idle_sleep)
+                idle_sleep = min(max_poll_sec, max(base_poll_sec, idle_sleep * 1.5))
                 continue
+            idle_sleep = base_poll_sec
 
             jid = str(job.get("id") or "").strip()
             jtype = str(job.get("type") or "").strip()
@@ -176,7 +380,8 @@ def main():
                 session.close()
             except Exception:
                 pass
-            time.sleep(poll_sec)
+            time.sleep(idle_sleep)
+            idle_sleep = min(max_poll_sec, max(base_poll_sec, idle_sleep * 1.5))
 
 
 if __name__ == "__main__":

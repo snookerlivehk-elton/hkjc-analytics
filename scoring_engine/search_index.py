@@ -184,6 +184,27 @@ def index_race_entry_bundle(session: Session, race_id: int) -> None:
         .filter(RaceEntry.race_id == int(race.id))
         .all()
     )
+
+    entry_ids = [int(getattr(e, "id", 0) or 0) for e, _, _, _ in entries if int(getattr(e, "id", 0) or 0) > 0]
+    rr_by_entry_id: Dict[int, Any] = {}
+    if entry_ids:
+        rr_rows = session.query(RaceResult).filter(RaceResult.entry_id.in_(entry_ids)).all()
+        rr_by_entry_id = {int(getattr(r, "entry_id", 0) or 0): r for r in rr_rows}
+
+    factors_by_entry_id: Dict[int, List[Tuple[Any, Any]]] = {}
+    if entry_ids:
+        fac_rows = (
+            session.query(ScoringFactor.entry_id, ScoringFactor.factor_name, ScoringFactor.raw_data_display)
+            .filter(ScoringFactor.entry_id.in_(entry_ids))
+            .order_by(ScoringFactor.entry_id.asc(), ScoringFactor.factor_name.asc())
+            .all()
+        )
+        for eid, fn, disp in fac_rows:
+            k = int(eid or 0)
+            if k <= 0:
+                continue
+            factors_by_entry_id.setdefault(k, []).append((fn, disp))
+
     for e, h, j, t in entries:
         hn = int(getattr(e, "horse_no", 0) or 0)
         horse_nm = str(getattr(h, "name_ch", "") or "").strip()
@@ -191,18 +212,13 @@ def index_race_entry_bundle(session: Session, race_id: int) -> None:
         trainer_nm = str(getattr(t, "name_ch", "") or "").strip() if t else ""
         draw = int(getattr(e, "draw", 0) or 0)
 
-        rr = session.query(RaceResult).filter_by(entry_id=int(e.id)).first()
+        eid = int(getattr(e, "id", 0) or 0)
+        rr = rr_by_entry_id.get(eid)
         rk2 = int(getattr(rr, "rank", 0) or 0) if rr else 0
         wo = getattr(rr, "win_odds", None) if rr else None
 
-        fac_rows = (
-            session.query(ScoringFactor.factor_name, ScoringFactor.raw_data_display)
-            .filter(ScoringFactor.entry_id == int(e.id))
-            .order_by(ScoringFactor.factor_name.asc())
-            .all()
-        )
         fac_lines = []
-        for fn, disp in fac_rows:
+        for fn, disp in factors_by_entry_id.get(eid, []):
             s = str(disp or "").strip()
             if not s:
                 continue

@@ -14,6 +14,7 @@ if root_path not in sys.path:
 from database.connection import get_session, init_db
 from scoring_engine.core import ScoringEngine
 from scoring_engine.member_stats import HIT_METRICS, METRIC_LABELS
+from scoring_engine.job_queue import get_job, list_recent_jobs
 from web_ui.auth import require_superadmin
 from web_ui.nav import render_admin_nav
 from web_ui.utils import _confirm_run
@@ -274,6 +275,46 @@ with tab_monitor:
         start_dt, end_dt = _day_range(sel_date)
         date_str = sel_date.strftime("%Y/%m/%d")
 
+        st.markdown("#### 🧾 Job 狀態（worker 任務）")
+        c_j1, c_j2 = st.columns([1, 3])
+        if c_j1.button("刷新", use_container_width=True, key="monitor_jobs_refresh"):
+            st.rerun()
+        jobs = list_recent_jobs(session_m, limit=30)
+        rows_j = []
+        for j in jobs:
+            if not isinstance(j, dict):
+                continue
+            pid = str(j.get("id") or "")
+            prog = j.get("progress") if isinstance(j.get("progress"), dict) else {}
+            rows_j.append(
+                {
+                    "id": pid,
+                    "type": str(j.get("type") or ""),
+                    "status": str(j.get("status") or ""),
+                    "current": str(prog.get("current") or ""),
+                    "done/total": f"{int(prog.get('done') or 0)}/{int(prog.get('total') or 0)}",
+                    "updated_at": str(j.get("updated_at") or ""),
+                }
+            )
+        df_jobs = pd.DataFrame(rows_j)
+        if df_jobs.empty:
+            st.caption("未有任何 job（或尚未啟動 worker）。")
+        else:
+            st.dataframe(df_jobs, use_container_width=True, hide_index=True)
+            job_ids = [r.get("id") for r in rows_j if str(r.get("id") or "").strip()]
+            sel_job = c_j2.selectbox("查看 job 詳情", options=[""] + job_ids, index=0, key="monitor_job_sel")
+            if sel_job:
+                job = get_job(session_m, str(sel_job))
+                if not isinstance(job, dict):
+                    st.info("找不到 job。")
+                else:
+                    st.json({k: job.get(k) for k in ["id", "type", "status", "created_at", "started_at", "finished_at", "progress", "result", "error"]})
+                    log = job.get("log") if isinstance(job.get("log"), list) else []
+                    if log:
+                        st.code("\n".join([str(x) for x in log[-200:]]), language="text")
+                    else:
+                        st.caption("暫無 log。")
+
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("races.updated_at", str(_max_dt(session_m, Race, "updated_at") or ""))
         c2.metric("race_entries.updated_at", str(_max_dt(session_m, RaceEntry, "updated_at") or ""))
@@ -306,31 +347,73 @@ with tab_monitor:
             st.info("該日未有賽事資料（請先抓取排位）。")
             st.stop()
 
+        race_ids = [int(getattr(r, "id") or 0) for r in races if int(getattr(r, "id") or 0) > 0]
+        race_no_by_id = {int(getattr(r, "id") or 0): int(getattr(r, "race_no") or 0) for r in races if int(getattr(r, "id") or 0) > 0}
+
+        entries_race_ids = set(rid for (rid,) in session_m.query(RaceEntry.race_id).filter(RaceEntry.race_id.in_(race_ids)).distinct().all())
+        scores_race_ids = set(
+            rid
+            for (rid,) in session_m.query(RaceEntry.race_id)
+            .filter(RaceEntry.race_id.in_(race_ids))
+            .filter(RaceEntry.total_score != None)
+            .distinct()
+            .all()
+        )
+        factors_race_ids = set(
+            rid
+            for (rid,) in session_m.query(RaceEntry.race_id)
+            .join(ScoringFactor, ScoringFactor.entry_id == RaceEntry.id)
+            .filter(RaceEntry.race_id.in_(race_ids))
+            .distinct()
+            .all()
+        )
+        results_race_ids = set(
+            rid
+            for (rid,) in session_m.query(RaceEntry.race_id)
+            .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
+            .filter(RaceEntry.race_id.in_(race_ids))
+            .distinct()
+            .all()
+        )
+        div_race_ids = set(rid for (rid,) in session_m.query(RaceDividend.race_id).filter(RaceDividend.race_id.in_(race_ids)).distinct().all())
+        tc_race_ids = set(rid for (rid,) in session_m.query(RaceTrackCondition.race_id).filter(RaceTrackCondition.race_id.in_(race_ids)).distinct().all())
+        hh_race_ids = set(
+            rid
+            for (rid,) in session_m.query(RaceEntry.race_id)
+            .join(HorseHistory, HorseHistory.horse_id == RaceEntry.horse_id)
+            .filter(RaceEntry.race_id.in_(race_ids))
+            .distinct()
+            .all()
+        )
+        top5_race_ids = set(rid for (rid,) in session_m.query(PredictionTop5.race_id).filter(PredictionTop5.race_id.in_(race_ids)).distinct().all())
+        cor_race_ids = set(rid for (rid,) in session_m.query(RaceCoRunning.race_id).filter(RaceCoRunning.race_id.in_(race_ids)).distinct().all())
+
+        runpos_keys = [f"race_runpos:{date_str}:{int(race_no_by_id.get(rid) or 0)}" for rid in race_ids if int(race_no_by_id.get(rid) or 0) > 0]
+        ai_keys = [f"ai_race_report:{date_str}:{int(race_no_by_id.get(rid) or 0)}" for rid in race_ids if int(race_no_by_id.get(rid) or 0) > 0]
+        syscfg_keys = list(dict.fromkeys([k for k in (runpos_keys + ai_keys) if str(k).strip()]))
+        syscfg_key_set = set()
+        if syscfg_keys:
+            syscfg_key_set = set(k for (k,) in session_m.query(SystemConfig.key).filter(SystemConfig.key.in_(syscfg_keys)).all())
+
         rows = []
         for r in races:
             rid = int(getattr(r, "id") or 0)
             rn = int(getattr(r, "race_no") or 0)
-            has_entries = bool(session_m.query(RaceEntry.id).filter(RaceEntry.race_id == rid).limit(1).first())
-            has_scores = bool(
-                session_m.query(RaceEntry.id)
-                .filter(RaceEntry.race_id == rid)
-                .filter(RaceEntry.total_score != None)
-                .limit(1)
-                .first()
-            )
-            has_factors = bool(session_m.query(ScoringFactor.id).join(RaceEntry, RaceEntry.id == ScoringFactor.entry_id).filter(RaceEntry.race_id == rid).limit(1).first())
-            has_results = bool(session_m.query(RaceResult.id).join(RaceEntry, RaceEntry.id == RaceResult.entry_id).filter(RaceEntry.race_id == rid).limit(1).first())
-            has_div = bool(session_m.query(RaceDividend.id).filter(RaceDividend.race_id == rid).limit(1).first())
-            has_tc = bool(session_m.query(RaceTrackCondition.id).filter(RaceTrackCondition.race_id == rid).limit(1).first())
-            has_hh = bool(session_m.query(HorseHistory.id).join(RaceEntry, RaceEntry.horse_id == HorseHistory.horse_id).filter(RaceEntry.race_id == rid).limit(1).first())
-            has_top5 = bool(session_m.query(PredictionTop5.id).filter(PredictionTop5.race_id == rid).limit(1).first())
+            has_entries = rid in entries_race_ids
+            has_scores = rid in scores_race_ids
+            has_factors = rid in factors_race_ids
+            has_results = rid in results_race_ids
+            has_div = rid in div_race_ids
+            has_tc = rid in tc_race_ids
+            has_hh = rid in hh_race_ids
+            has_top5 = rid in top5_race_ids
 
             runpos_key = f"race_runpos:{date_str}:{rn}"
-            has_runpos = bool(session_m.query(SystemConfig.id).filter_by(key=runpos_key).first())
-            has_cor = bool(session_m.query(RaceCoRunning.id).filter_by(race_id=rid).first())
+            has_runpos = runpos_key in syscfg_key_set
+            has_cor = rid in cor_race_ids
 
             rep_key = f"ai_race_report:{date_str}:{rn}"
-            has_ai = bool(session_m.query(SystemConfig.id).filter_by(key=rep_key).first())
+            has_ai = rep_key in syscfg_key_set
 
             rows.append(
                 {
@@ -413,81 +496,63 @@ with tab_monitor:
 
         c_confirm, c_btn = st.columns([2, 3])
         ok = _confirm_run(c_confirm, "oneclick_update_monitor", label="輸入 RUN 以執行一鍵完整更新")
-        if c_btn.button("⚡ 一鍵：抓排位 → 回填馬匹往績 → 重算當日 → 生成Top5快照", use_container_width=True, disabled=not ok, key="monitor_oneclick"):
-            ok1 = trigger_scraper(target_date=date_str)
-            if not ok1:
-                st.error("❌ 抓取排位/即時數據失敗，已中止後續流程。")
-            else:
-                st.success(f"✅ {date_str} 排位/即時數據更新完成。")
-                ok2 = trigger_history_backfill(target_date=date_str, mode="date")
-                if not ok2:
-                    st.error("❌ 回填馬匹往績失敗，已中止後續流程。")
-                else:
-                    st.success(f"✅ {date_str} 馬匹往績回填完成。")
-                    session_rescore = get_session()
-                    try:
-                        races_to_score = (
-                            session_rescore.query(Race)
-                            .filter(Race.race_date >= start_dt)
-                            .filter(Race.race_date < end_dt)
-                            .order_by(Race.race_no.asc(), Race.id.asc())
-                            .all()
-                        )
-                        if not races_to_score:
-                            st.warning("⚠️ 找不到該日賽事資料（請先確認排位已成功入庫）。")
-                        else:
-                            engine = ScoringEngine(session_rescore)
-                            progress_bar = st.progress(0)
-                            status_text = st.empty()
-                            for i, race in enumerate(races_to_score):
-                                status_text.text(f"正在重算：第 {race.race_no} 場...")
-                                engine.score_race(race.id)
-                                progress_bar.progress((i + 1) / len(races_to_score))
-                            st.success(f"✅ 已完成 {date_str} {len(races_to_score)} 場賽事重新計分。")
-                    except Exception as e:
-                        st.error(f"❌ 重算當日賽事失敗: {e}")
-                    finally:
-                        session_rescore.close()
+        st.markdown("**一鍵完整更新：可選步驟**")
+        c_s1, c_s2, c_s3, c_s4, c_s5 = st.columns(5)
+        step_scrape = c_s1.checkbox("抓排位", value=True, key="oneclick_step_scrape")
+        step_history = c_s2.checkbox("回填往績", value=True, key="oneclick_step_history")
+        step_rescore = c_s3.checkbox("重算", value=True, key="oneclick_step_rescore")
+        step_snapshot = c_s4.checkbox("Top5快照", value=True, key="oneclick_step_snapshot")
+        step_results = c_s5.checkbox("賽果/派彩", value=False, key="oneclick_step_results")
 
-                    ok4 = trigger_predictions_snapshot(date_str)
-                    if ok4:
-                        st.success(f"✅ 已生成 {date_str} Top5 預測快照（包含 factor + preset）。")
-                    else:
-                        st.error("❌ 生成 Top5 預測快照失敗。")
+        if c_btn.button("⚡ 一鍵：抓排位 → 回填馬匹往績 → 重算當日 → 生成Top5快照", use_container_width=True, disabled=not ok, key="monitor_oneclick"):
+            from scoring_engine.job_queue import enqueue_job
+
+            steps = []
+            if step_scrape:
+                steps.append("scrape")
+            if step_history:
+                steps.append("history")
+            if step_rescore:
+                steps.append("rescore")
+            if step_snapshot:
+                steps.append("snapshot")
+            if step_results:
+                steps.append("results")
+            if not steps:
+                st.error("❌ 請至少勾選一個步驟。")
+                st.stop()
+
+            job = enqueue_job(
+                session_m,
+                "daily_update_pipeline",
+                {"date": str(date_str), "steps": steps},
+            )
+            st.success(f"✅ 已排程一鍵完整更新（job_id={str(job.get('id') or '')}）。請到上方 Job 狀態查看進度。")
             st.rerun()
 
         c1, c2, c3 = st.columns(3)
         ok2 = _confirm_run(c1, "monitor_fetch_results", label="輸入 RUN")
         if c1.button("🏁 抓取賽果與派彩", use_container_width=True, disabled=not ok2, key="monitor_fetch_results_btn"):
-            if trigger_race_results_fetch(target_date=date_str):
-                st.success(f"✅ 已完成 {date_str} 賽果與派彩同步！")
-                st.rerun()
+            from scoring_engine.job_queue import enqueue_job
+
+            job = enqueue_job(session_m, "fetch_race_results", {"date": str(date_str)})
+            st.success(f"✅ 已排程抓取賽果與派彩（job_id={str(job.get('id') or '')}）。請到上方 Job 狀態查看進度。")
+            st.rerun()
 
         ok3 = _confirm_run(c2, "monitor_snapshot", label="輸入 RUN")
         if c2.button("🧾 生成 Top5 快照", use_container_width=True, disabled=not ok3, key="monitor_snapshot_btn"):
-            if trigger_predictions_snapshot(date_str):
-                st.success(f"✅ 已生成 {date_str} Top5 預測快照！")
-                st.rerun()
+            from scoring_engine.job_queue import enqueue_job
+
+            job = enqueue_job(session_m, "daily_update_pipeline", {"date": str(date_str), "steps": ["snapshot"]})
+            st.success(f"✅ 已排程生成 Top5 快照（job_id={str(job.get('id') or '')}）。請到上方 Job 狀態查看進度。")
+            st.rerun()
 
         ok4 = _confirm_run(c3, "monitor_rescore", label="輸入 RUN")
         if c3.button("🚀 重算該日所有場次", use_container_width=True, disabled=not ok4, key="monitor_rescore_btn"):
-            session_rescore2 = get_session()
-            try:
-                races_to_score2 = (
-                    session_rescore2.query(Race)
-                    .filter(Race.race_date >= start_dt)
-                    .filter(Race.race_date < end_dt)
-                    .order_by(Race.race_no.asc(), Race.id.asc())
-                    .all()
-                )
-                engine = ScoringEngine(session_rescore2)
-                progress_bar = st.progress(0)
-                for i, race in enumerate(races_to_score2):
-                    engine.score_race(race.id)
-                    progress_bar.progress((i + 1) / max(1, len(races_to_score2)))
-                st.success(f"✅ 已重算 {date_str}（races={len(races_to_score2)}）。")
-            finally:
-                session_rescore2.close()
+            from scoring_engine.job_queue import enqueue_job
+
+            job = enqueue_job(session_m, "rescore_race_date", {"date": str(date_str)})
+            st.success(f"✅ 已排程重算 {date_str}（job_id={str(job.get('id') or '')}）。")
             st.rerun()
 
         with st.expander("🧰 進階修復（低頻）", expanded=False):
@@ -495,14 +560,18 @@ with tab_monitor:
             c1, c2 = st.columns(2)
             ok = _confirm_run(c1, "monitor_scrape", label="輸入 RUN")
             if c1.button("🔄 只抓取該日賽事（排位/即時）", use_container_width=True, disabled=not ok, key="monitor_scrape_btn"):
-                if trigger_scraper(target_date=date_str):
-                    st.success("✅ 已完成抓取。")
-                    st.rerun()
+                from scoring_engine.job_queue import enqueue_job
+
+                job = enqueue_job(session_m, "daily_update_pipeline", {"date": str(date_str), "steps": ["scrape"]})
+                st.success(f"✅ 已排程抓取排位（job_id={str(job.get('id') or '')}）。請到上方 Job 狀態查看進度。")
+                st.rerun()
             ok = _confirm_run(c2, "monitor_history", label="輸入 RUN")
             if c2.button("📚 只回填該日馬匹往績", use_container_width=True, disabled=not ok, key="monitor_history_btn"):
-                if trigger_history_backfill(target_date=date_str, mode="date"):
-                    st.success("✅ 已完成回填。")
-                    st.rerun()
+                from scoring_engine.job_queue import enqueue_job
+
+                job = enqueue_job(session_m, "daily_update_pipeline", {"date": str(date_str), "steps": ["history"]})
+                st.success(f"✅ 已排程回填往績（job_id={str(job.get('id') or '')}）。請到上方 Job 狀態查看進度。")
+                st.rerun()
 
         with st.expander("🧨 維護工具（高風險）", expanded=False):
             st.caption("只在排障/遷移/清理時使用。")
@@ -514,9 +583,11 @@ with tab_monitor:
                     st.rerun()
             ok = _confirm_run(c2, "monitor_speedpro", label="輸入 RUN")
             if c2.button("⚡ 立即抓取 SpeedPRO（cron 備用）", use_container_width=True, disabled=not ok, key="monitor_speedpro_btn"):
-                if trigger_speedpro_fetch(target_date=date_str, race_nos="", retry_minutes=120, force=True):
-                    st.success("✅ 已觸發 SpeedPRO 抓取。")
-                    st.rerun()
+                from scoring_engine.job_queue import enqueue_job
+
+                job = enqueue_job(session_m, "speedpro_fetch", {"date": str(date_str), "race_nos": "", "retry_minutes": 120, "force": True})
+                st.success(f"✅ 已排程抓取 SpeedPRO（job_id={str(job.get('id') or '')}）。請到上方 Job 狀態查看進度。")
+                st.rerun()
             ok = _confirm_run(c3, "monitor_cleanup", label="輸入 RUN")
             if c3.button("🧹 清理 trainer_horse_bond 舊記錄", use_container_width=True, disabled=not ok, key="monitor_cleanup_btn"):
                 deleted_sf, deleted_sw, deleted_cfg = cleanup_removed_factor_data(session_m)

@@ -59,8 +59,15 @@ def init_db():
         with engine.begin() as conn:
             if "postgresql" in DATABASE_URL:
                 conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_system_configs_key_pattern ON system_configs (key text_pattern_ops)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_race_entries_race_id ON race_entries (race_id)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_race_entries_race_id_horse_no ON race_entries (race_id, horse_no)"))
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_race_entries_race_id_total_score_horse_no ON race_entries (race_id, total_score DESC, horse_no ASC)"
+                )
+            )
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_race_entries_horse_id_race_id ON race_entries (horse_id, race_id)"))
             conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_race_results_entry_id ON race_results (entry_id)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_scoring_factors_entry_id ON scoring_factors (entry_id)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_scoring_factors_entry_factor ON scoring_factors (entry_id, factor_name)"))
@@ -69,12 +76,30 @@ def init_db():
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_prediction_top5_race_date_no ON prediction_top5 (race_date, race_no)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_prediction_top5_type_key_date ON prediction_top5 (predictor_type, predictor_key, race_date)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_prediction_top5_type_email_date ON prediction_top5 (predictor_type, member_email, race_date)"))
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_prediction_top5_preset_member_key_date_no ON prediction_top5 (predictor_type, member_email, predictor_key, race_date, race_no)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_prediction_top5_factor_key_date_no ON prediction_top5 (predictor_type, predictor_key, race_date, race_no)"
+                )
+            )
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_system_configs_updated_at ON system_configs (updated_at)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_system_configs_job_prefix_updated_at ON system_configs (key, updated_at DESC)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_race_corunning_race_date_no ON race_corunning (race_date, race_no)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_raw_snapshots_entity ON raw_snapshots (entity_type, entity_key)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_search_documents_entity ON search_documents (entity_type, entity_key)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_search_documents_race_day ON search_documents (race_date_day, race_no)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_search_documents_doc_type ON search_documents (doc_type, updated_at)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_search_documents_day_updated ON search_documents (race_date_day DESC, updated_at DESC)"))
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_search_documents_doc_day_updated ON search_documents (doc_type, race_date_day DESC, updated_at DESC)"
+                )
+            )
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_races_race_date_race_no ON races (race_date, race_no)"))
             if "postgresql" in DATABASE_URL:
                 conn.execute(text("CREATE INDEX IF NOT EXISTS ix_search_documents_search_trgm ON search_documents USING GIN (search_text gin_trgm_ops)"))
     except Exception:
@@ -134,6 +159,12 @@ def init_db():
                     conn.execute(text("UPDATE horse_histories SET surface='草地' WHERE (surface IS NULL OR surface='') AND (venue LIKE '%草地%' OR venue LIKE '%TURF%')"))
             except Exception:
                 pass
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_horse_histories_horse_id_race_date ON horse_histories (horse_id, race_date DESC)"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_horse_histories_dedupe_key ON horse_histories (horse_id, race_date, venue, distance, race_class)"))
+        except Exception:
+            pass
     except Exception:
         pass
     
