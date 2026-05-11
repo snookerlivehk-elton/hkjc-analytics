@@ -139,8 +139,8 @@ def main():
             q2.with_entities(
                 *dims,
                 func.count(EntryFact.id).label("samples"),
-                func.sum(func.case((EntryFact.is_win == True, 1), else_=0)).label("win_cnt"),
-                func.sum(func.case((EntryFact.is_place == True, 1), else_=0)).label("place_cnt"),
+                func.sum(case((EntryFact.is_win == True, 1), else_=0)).label("win_cnt"),
+                func.sum(case((EntryFact.is_place == True, 1), else_=0)).label("place_cnt"),
             )
             .group_by(*dims)
             .order_by(*dims)
@@ -176,4 +176,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
