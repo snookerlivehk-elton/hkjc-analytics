@@ -264,14 +264,57 @@ with tab_monitor:
         except Exception:
             return None
 
+    def _load_fixture_dates(session, need: int = 365):
+        cfg = session.query(SystemConfig).filter_by(key="fixture_dates").first()
+        payload, _ = unwrap_value(cfg.value) if cfg else (None, {})
+        raw = payload if isinstance(payload, list) else (cfg.value if cfg and isinstance(cfg.value, list) else [])
+        out = []
+        seen = set()
+        for x in raw or []:
+            s = str(x or "").strip()
+            if not s:
+                continue
+            try:
+                d0 = datetime.strptime(s.replace("-", "/"), "%Y/%m/%d").date()
+            except Exception:
+                continue
+            if d0 in seen:
+                continue
+            seen.add(d0)
+            out.append(d0)
+            if len(out) >= int(need or 365):
+                break
+        out.sort(reverse=True)
+        return out
+
     session_m = get_session()
     try:
-        dates = _list_race_dates(session_m, need=180)
-        if not dates:
-            st.info("資料庫未有任何賽日。")
+        race_dates = _list_race_dates(session_m, need=180)
+        fixture_dates = _load_fixture_dates(session_m, need=365)
+        mode = st.radio("賽日來源", options=["已入庫", "賽期表", "手動輸入"], horizontal=True, key="monitor_date_mode")
+        sel_date = None
+        if mode == "賽期表":
+            if not fixture_dates:
+                st.info("未找到賽期表賽日（可到「維護工具」更新賽期表）。")
+            else:
+                sel_date = st.selectbox("賽日", options=fixture_dates, index=0, key="monitor_date_fixture")
+        elif mode == "手動輸入":
+            s_in = st.text_input("賽日（YYYY/MM/DD）", value="", key="monitor_date_manual")
+            s_in = str(s_in or "").strip()
+            if s_in:
+                try:
+                    sel_date = datetime.strptime(s_in.replace("-", "/"), "%Y/%m/%d").date()
+                except Exception:
+                    st.error("日期格式錯誤，請用 YYYY/MM/DD（例如 2026/05/13）。")
+        else:
+            if not race_dates:
+                st.info("資料庫未有任何已入庫賽日。")
+            else:
+                sel_date = st.selectbox("賽日", options=race_dates, index=0, key="monitor_date")
+
+        if not sel_date:
             st.stop()
 
-        sel_date = st.selectbox("賽日", options=dates, index=0, key="monitor_date")
         start_dt, end_dt = _day_range(sel_date)
         date_str = sel_date.strftime("%Y/%m/%d")
 
@@ -351,152 +394,159 @@ with tab_monitor:
             .all()
         )
         if not races:
-            st.info("該日未有賽事資料（請先抓取排位）。")
-            st.stop()
+            st.info("該日未有賽事資料（未入庫）。可直接用下方按鈕「抓排位」把該日賽事入庫。")
+        else:
+            race_ids = [int(getattr(r, "id") or 0) for r in races if int(getattr(r, "id") or 0) > 0]
+            race_no_by_id = {int(getattr(r, "id") or 0): int(getattr(r, "race_no") or 0) for r in races if int(getattr(r, "id") or 0) > 0}
 
-        race_ids = [int(getattr(r, "id") or 0) for r in races if int(getattr(r, "id") or 0) > 0]
-        race_no_by_id = {int(getattr(r, "id") or 0): int(getattr(r, "race_no") or 0) for r in races if int(getattr(r, "id") or 0) > 0}
-
-        entries_race_ids = set(rid for (rid,) in session_m.query(RaceEntry.race_id).filter(RaceEntry.race_id.in_(race_ids)).distinct().all())
-        scores_race_ids = set(
-            rid
-            for (rid,) in session_m.query(RaceEntry.race_id)
-            .filter(RaceEntry.race_id.in_(race_ids))
-            .filter(RaceEntry.total_score != None)
-            .distinct()
-            .all()
-        )
-        factors_race_ids = set(
-            rid
-            for (rid,) in session_m.query(RaceEntry.race_id)
-            .join(ScoringFactor, ScoringFactor.entry_id == RaceEntry.id)
-            .filter(RaceEntry.race_id.in_(race_ids))
-            .distinct()
-            .all()
-        )
-        results_race_ids = set(
-            rid
-            for (rid,) in session_m.query(RaceEntry.race_id)
-            .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
-            .filter(RaceEntry.race_id.in_(race_ids))
-            .distinct()
-            .all()
-        )
-        div_race_ids = set(rid for (rid,) in session_m.query(RaceDividend.race_id).filter(RaceDividend.race_id.in_(race_ids)).distinct().all())
-        tc_race_ids = set(rid for (rid,) in session_m.query(RaceTrackCondition.race_id).filter(RaceTrackCondition.race_id.in_(race_ids)).distinct().all())
-        hh_race_ids = set(
-            rid
-            for (rid,) in session_m.query(RaceEntry.race_id)
-            .join(HorseHistory, HorseHistory.horse_id == RaceEntry.horse_id)
-            .filter(RaceEntry.race_id.in_(race_ids))
-            .distinct()
-            .all()
-        )
-        top5_race_ids = set(rid for (rid,) in session_m.query(PredictionTop5.race_id).filter(PredictionTop5.race_id.in_(race_ids)).distinct().all())
-        cor_race_ids = set(rid for (rid,) in session_m.query(RaceCoRunning.race_id).filter(RaceCoRunning.race_id.in_(race_ids)).distinct().all())
-
-        runpos_keys = [f"race_runpos:{date_str}:{int(race_no_by_id.get(rid) or 0)}" for rid in race_ids if int(race_no_by_id.get(rid) or 0) > 0]
-        ai_keys = [f"ai_race_report:{date_str}:{int(race_no_by_id.get(rid) or 0)}" for rid in race_ids if int(race_no_by_id.get(rid) or 0) > 0]
-        syscfg_keys = list(dict.fromkeys([k for k in (runpos_keys + ai_keys) if str(k).strip()]))
-        syscfg_key_set = set()
-        if syscfg_keys:
-            syscfg_key_set = set(k for (k,) in session_m.query(SystemConfig.key).filter(SystemConfig.key.in_(syscfg_keys)).all())
-
-        rows = []
-        for r in races:
-            rid = int(getattr(r, "id") or 0)
-            rn = int(getattr(r, "race_no") or 0)
-            has_entries = rid in entries_race_ids
-            has_scores = rid in scores_race_ids
-            has_factors = rid in factors_race_ids
-            has_results = rid in results_race_ids
-            has_div = rid in div_race_ids
-            has_tc = rid in tc_race_ids
-            has_hh = rid in hh_race_ids
-            has_top5 = rid in top5_race_ids
-
-            runpos_key = f"race_runpos:{date_str}:{rn}"
-            has_runpos = runpos_key in syscfg_key_set
-            has_cor = rid in cor_race_ids
-
-            rep_key = f"ai_race_report:{date_str}:{rn}"
-            has_ai = rep_key in syscfg_key_set
-
-            rows.append(
-                {
-                    "RaceNo": rn,
-                    "RaceID": rid,
-                    "地點": venue_label(getattr(r, "venue", ""), track_type=getattr(r, "track_type", None)),
-                    "排位": "✅" if has_entries else "—",
-                    "往績": "✅" if has_hh else "—",
-                    "計分": "✅" if has_scores else "—",
-                    "因子": "✅" if has_factors else "—",
-                    "Top5快照": "✅" if has_top5 else "—",
-                    "賽果": "✅" if has_results else "—",
-                    "派彩": "✅" if has_div else "—",
-                    "場地狀況": "✅" if has_tc else "—",
-                    "runpos": "✅" if has_runpos else "—",
-                    "corunning": "✅" if has_cor else "—",
-                    "AI報告": "✅" if has_ai else "—",
-                }
+            entries_race_ids = set(rid for (rid,) in session_m.query(RaceEntry.race_id).filter(RaceEntry.race_id.in_(race_ids)).distinct().all())
+            scores_race_ids = set(
+                rid
+                for (rid,) in session_m.query(RaceEntry.race_id)
+                .filter(RaceEntry.race_id.in_(race_ids))
+                .filter(RaceEntry.total_score != None)
+                .distinct()
+                .all()
+            )
+            factors_race_ids = set(
+                rid
+                for (rid,) in session_m.query(RaceEntry.race_id)
+                .join(ScoringFactor, ScoringFactor.entry_id == RaceEntry.id)
+                .filter(RaceEntry.race_id.in_(race_ids))
+                .distinct()
+                .all()
+            )
+            results_race_ids = set(
+                rid
+                for (rid,) in session_m.query(RaceEntry.race_id)
+                .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
+                .filter(RaceEntry.race_id.in_(race_ids))
+                .distinct()
+                .all()
+            )
+            div_race_ids = set(
+                rid for (rid,) in session_m.query(RaceDividend.race_id).filter(RaceDividend.race_id.in_(race_ids)).distinct().all()
+            )
+            tc_race_ids = set(
+                rid for (rid,) in session_m.query(RaceTrackCondition.race_id).filter(RaceTrackCondition.race_id.in_(race_ids)).distinct().all()
+            )
+            hh_race_ids = set(
+                rid
+                for (rid,) in session_m.query(RaceEntry.race_id)
+                .join(HorseHistory, HorseHistory.horse_id == RaceEntry.horse_id)
+                .filter(RaceEntry.race_id.in_(race_ids))
+                .distinct()
+                .all()
+            )
+            top5_race_ids = set(
+                rid for (rid,) in session_m.query(PredictionTop5.race_id).filter(PredictionTop5.race_id.in_(race_ids)).distinct().all()
+            )
+            cor_race_ids = set(
+                rid for (rid,) in session_m.query(RaceCoRunning.race_id).filter(RaceCoRunning.race_id.in_(race_ids)).distinct().all()
             )
 
-        df = pd.DataFrame(rows).sort_values(["RaceNo"])
-        st.dataframe(df, use_container_width=True, hide_index=True)
+            runpos_keys = [f"race_runpos:{date_str}:{int(race_no_by_id.get(rid) or 0)}" for rid in race_ids if int(race_no_by_id.get(rid) or 0) > 0]
+            ai_keys = [f"ai_race_report:{date_str}:{int(race_no_by_id.get(rid) or 0)}" for rid in race_ids if int(race_no_by_id.get(rid) or 0) > 0]
+            syscfg_keys = list(dict.fromkeys([k for k in (runpos_keys + ai_keys) if str(k).strip()]))
+            syscfg_key_set = set()
+            if syscfg_keys:
+                syscfg_key_set = set(k for (k,) in session_m.query(SystemConfig.key).filter(SystemConfig.key.in_(syscfg_keys)).all())
 
-        st.markdown("#### 🔎 資料內容檢視")
-        race_nos = [int(x) for x in df["RaceNo"].tolist() if int(x or 0) > 0]
-        sel_rn = st.selectbox("選擇場次", options=race_nos, index=0, key="monitor_race_no")
-        rr = next((x for x in races if int(getattr(x, "race_no") or 0) == int(sel_rn)), None)
-        sel_rid = int(getattr(rr, "id") or 0) if rr else 0
+            rows = []
+            for r in races:
+                rid = int(getattr(r, "id") or 0)
+                rn = int(getattr(r, "race_no") or 0)
+                has_entries = rid in entries_race_ids
+                has_scores = rid in scores_race_ids
+                has_factors = rid in factors_race_ids
+                has_results = rid in results_race_ids
+                has_div = rid in div_race_ids
+                has_tc = rid in tc_race_ids
+                has_hh = rid in hh_race_ids
+                has_top5 = rid in top5_race_ids
 
-        v1, v2 = st.columns(2)
-        with v1.expander("runpos 快照", expanded=False):
-            key = f"race_runpos:{date_str}:{int(sel_rn)}"
-            cfg = session_m.query(SystemConfig).filter_by(key=key).first()
-            payload, meta = unwrap_value(cfg.value) if cfg else (None, {})
-            if not cfg:
-                st.info("未找到 runpos 快照。")
-            else:
-                st.caption(f"key={key}｜updated_at={getattr(cfg,'updated_at',None)}")
-                if meta:
-                    st.caption("｜".join([f"{k}={str(meta.get(k) or '').strip()}" for k in ["source", "schema", "fetched_at", "saved_at"] if str(meta.get(k) or "").strip()]))
-                st.json(payload if isinstance(payload, dict) else {})
+                runpos_key = f"race_runpos:{date_str}:{rn}"
+                has_runpos = runpos_key in syscfg_key_set
+                has_cor = rid in cor_race_ids
 
-        with v2.expander("corunning（賽後走勢評述）", expanded=False):
-            row = session_m.query(RaceCoRunning).filter_by(race_id=int(sel_rid)).first()
-            if not row or not isinstance(row.items, dict) or not row.items:
-                st.info("未找到 corunning 資料。")
-            else:
-                cap = f"race_id={sel_rid}"
-                try:
-                    if getattr(row, "fetched_at", None):
-                        cap += f"｜fetched_at={row.fetched_at.isoformat()}"
-                except Exception:
-                    pass
-                if str(getattr(row, "source", "") or "").strip():
-                    cap += f"｜source={str(getattr(row,'source','') or '').strip()}"
-                meta = row.meta if isinstance(row.meta, dict) else {}
-                if str(meta.get("schema") or "").strip():
-                    cap += f"｜schema={str(meta.get('schema') or '').strip()}"
-                st.caption(cap)
-                tbl = []
-                for k, v in row.items.items():
-                    if not isinstance(v, dict):
-                        continue
+                rep_key = f"ai_race_report:{date_str}:{rn}"
+                has_ai = rep_key in syscfg_key_set
+
+                rows.append(
+                    {
+                        "RaceNo": rn,
+                        "RaceID": rid,
+                        "地點": venue_label(getattr(r, "venue", ""), track_type=getattr(r, "track_type", None)),
+                        "排位": "✅" if has_entries else "—",
+                        "往績": "✅" if has_hh else "—",
+                        "計分": "✅" if has_scores else "—",
+                        "因子": "✅" if has_factors else "—",
+                        "Top5快照": "✅" if has_top5 else "—",
+                        "賽果": "✅" if has_results else "—",
+                        "派彩": "✅" if has_div else "—",
+                        "場地狀況": "✅" if has_tc else "—",
+                        "runpos": "✅" if has_runpos else "—",
+                        "corunning": "✅" if has_cor else "—",
+                        "AI報告": "✅" if has_ai else "—",
+                    }
+                )
+
+            df = pd.DataFrame(rows).sort_values(["RaceNo"])
+            st.dataframe(df, use_container_width=True, hide_index=True)
+
+            st.markdown("#### 🔎 資料內容檢視")
+            race_nos = [int(x) for x in df["RaceNo"].tolist() if int(x or 0) > 0]
+            sel_rn = st.selectbox("選擇場次", options=race_nos, index=0, key="monitor_race_no")
+            rr = next((x for x in races if int(getattr(x, "race_no") or 0) == int(sel_rn)), None)
+            sel_rid = int(getattr(rr, "id") or 0) if rr else 0
+
+            v1, v2 = st.columns(2)
+            with v1.expander("runpos 快照", expanded=False):
+                key = f"race_runpos:{date_str}:{int(sel_rn)}"
+                cfg = session_m.query(SystemConfig).filter_by(key=key).first()
+                payload, meta = unwrap_value(cfg.value) if cfg else (None, {})
+                if not cfg:
+                    st.info("未找到 runpos 快照。")
+                else:
+                    st.caption(f"key={key}｜updated_at={getattr(cfg,'updated_at',None)}")
+                    if meta:
+                        st.caption("｜".join([f"{k}={str(meta.get(k) or '').strip()}" for k in ["source", "schema", "fetched_at", "saved_at"] if str(meta.get(k) or "").strip()]))
+                    st.json(payload if isinstance(payload, dict) else {})
+
+            with v2.expander("corunning（賽後走勢評述）", expanded=False):
+                row = session_m.query(RaceCoRunning).filter_by(race_id=int(sel_rid)).first()
+                if not row or not isinstance(row.items, dict) or not row.items:
+                    st.info("未找到 corunning 資料。")
+                else:
+                    cap = f"race_id={sel_rid}"
                     try:
-                        hn = int(k)
+                        if getattr(row, "fetched_at", None):
+                            cap += f"｜fetched_at={row.fetched_at.isoformat()}"
                     except Exception:
-                        continue
-                    tbl.append(
-                        {
-                            "馬號": hn,
-                            "馬名": str(v.get("horse_name") or v.get("name") or "").strip(),
-                            "走勢評述": str(v.get("commentary") or v.get("comment") or "").strip(),
-                        }
-                    )
-                tbl.sort(key=lambda x: int(x.get("馬號") or 0))
-                st.dataframe(tbl, use_container_width=True, hide_index=True)
+                        pass
+                    if str(getattr(row, "source", "") or "").strip():
+                        cap += f"｜source={str(getattr(row,'source','') or '').strip()}"
+                    meta = row.meta if isinstance(row.meta, dict) else {}
+                    if str(meta.get("schema") or "").strip():
+                        cap += f"｜schema={str(meta.get('schema') or '').strip()}"
+                    st.caption(cap)
+                    tbl = []
+                    for k, v in row.items.items():
+                        if not isinstance(v, dict):
+                            continue
+                        try:
+                            hn = int(k)
+                        except Exception:
+                            continue
+                        tbl.append(
+                            {
+                                "馬號": hn,
+                                "馬名": str(v.get("horse_name") or v.get("name") or "").strip(),
+                                "走勢評述": str(v.get("commentary") or v.get("comment") or "").strip(),
+                            }
+                        )
+                    tbl.sort(key=lambda x: int(x.get("馬號") or 0))
+                    st.dataframe(tbl, use_container_width=True, hide_index=True)
 
         st.markdown("#### ⚡ 常用更新（集中）")
         st.caption("主流程建議只用下面幾個按鈕；進階/維護工具收合在下方，避免誤用導致資料不一致。")
