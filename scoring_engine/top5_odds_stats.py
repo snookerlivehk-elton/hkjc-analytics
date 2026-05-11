@@ -149,14 +149,14 @@ def compute_top5_odds_stats(
             OddsHistory.entry_id.in_(entry_ids)
         )
         if src == "pre_race_latest":
-            sub = sub.filter(OddsHistory.odds_type == "PRE")
+            sub = sub.filter(OddsHistory.odds_type.like("PRE%"))
         sub = sub.group_by(OddsHistory.entry_id).subquery()
 
         orows = session.query(OddsHistory.entry_id, OddsHistory.win_odds).join(
             sub, (sub.c.eid == OddsHistory.entry_id) & (sub.c.cap == OddsHistory.captured_at)
         )
         if src == "pre_race_latest":
-            orows = orows.filter(OddsHistory.odds_type == "PRE")
+            orows = orows.filter(OddsHistory.odds_type.like("PRE%"))
         for eid, wo in orows.all():
             try:
                 odds_map[int(eid)] = float(wo) if wo is not None else None

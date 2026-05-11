@@ -36,7 +36,7 @@ def _odds_source_label(s: str) -> str:
     if k == "latest_history":
         return "最新 OddsHistory"
     if k == "pre_race_latest":
-        return "賽前賠率（PRE）"
+        return "賽前賠率（PRE*）"
     return k or "未知"
 
 
@@ -95,7 +95,7 @@ def _get_race_odds_map(session: Session, race_id: int, odds_source: str) -> Dict
         q = session.query(OddsHistory.entry_id, OddsHistory.win_odds, OddsHistory.captured_at)
         q = q.filter(OddsHistory.entry_id.in_(entry_ids))
         if src == "pre_race_latest":
-            q = q.filter(OddsHistory.odds_type == "PRE")
+            q = q.filter(OddsHistory.odds_type.like("PRE%"))
         q = q.order_by(OddsHistory.entry_id.asc(), OddsHistory.captured_at.desc())
         latest: Dict[int, Optional[float]] = {}
         for eid, wo, _cap in q.all():
