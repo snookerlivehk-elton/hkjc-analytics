@@ -7,7 +7,7 @@ if root_path not in sys.path:
     sys.path.insert(0, root_path)
 
 from database.connection import get_session, init_db
-from database.models import SystemConfig
+from database.models import RaceDayWeather, SystemConfig
 from data_scraper.windtracker import WindTrackerScraper
 from scoring_engine.config_value import build_meta, wrap_value
 from scoring_engine.search_index import upsert_search_document
@@ -80,6 +80,42 @@ def main():
             meta={"url": str(scraper.url), "schema": key},
             fetched_at=datetime.utcnow(),
         )
+
+        if ds and v and race_date_day:
+            metrics0 = metrics if isinstance(metrics, dict) else {}
+            winds0 = winds if isinstance(winds, list) else []
+            speeds = []
+            dirs = []
+            for w0 in winds0:
+                if not isinstance(w0, dict):
+                    continue
+                d0 = str(w0.get("direction") or "").strip()
+                if d0:
+                    dirs.append(d0)
+                try:
+                    s0 = float(w0.get("speed_kmh")) if w0.get("speed_kmh") is not None else None
+                except Exception:
+                    s0 = None
+                if s0 is not None:
+                    speeds.append(float(s0))
+            wind_avg = (sum(speeds) / float(len(speeds))) if speeds else None
+            wind_max = max(speeds) if speeds else None
+            wind_dir = dirs[0] if dirs else ""
+
+            row_w = session.query(RaceDayWeather).filter_by(race_date_day=race_date_day, venue=v).first()
+            if not row_w:
+                row_w = RaceDayWeather(race_date_day=race_date_day, venue=v)
+                session.add(row_w)
+            row_w.updated_at_text = updated_at or None
+            row_w.temperature_c = metrics0.get("temperature_c")
+            row_w.humidity_pct = metrics0.get("humidity_pct")
+            row_w.rain_total_mm = metrics0.get("rain_total_mm")
+            row_w.rain_10min_mm = metrics0.get("rain_10min_mm")
+            row_w.soil_moisture_pct = metrics0.get("soil_moisture_pct")
+            row_w.wind_direction = wind_dir or None
+            row_w.wind_speed_kmh_avg = wind_avg
+            row_w.wind_speed_kmh_max = wind_max
+            row_w.raw = {"metrics": metrics0, "winds": winds0, "updated_at": updated_at, "source_key": key}
 
         session.commit()
         logger.info(f"fetch_windtracker_ok key={key}")

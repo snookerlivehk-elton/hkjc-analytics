@@ -190,6 +190,31 @@ def init_db():
     except Exception:
         pass
 
+    try:
+        inspector = inspect(engine)
+        cols = {c["name"] for c in inspector.get_columns("entry_facts")}
+        to_add = []
+        if "runpos_early" not in cols:
+            to_add.append(("runpos_early", "INTEGER"))
+        if "runstyle_bucket" not in cols:
+            to_add.append(("runstyle_bucket", "VARCHAR(20)"))
+        if "pace_delta_sec" not in cols:
+            to_add.append(("pace_delta_sec", "DOUBLE PRECISION"))
+        if "pace_bucket" not in cols:
+            to_add.append(("pace_bucket", "VARCHAR(20)"))
+        if to_add:
+            with engine.begin() as conn:
+                for name, typ in to_add:
+                    conn.execute(text(f"ALTER TABLE entry_facts ADD COLUMN {name} {typ}"))
+            try:
+                with engine.begin() as conn:
+                    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_entry_facts_day_runstyle ON entry_facts (race_date_day, runstyle_bucket)"))
+                    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_entry_facts_day_pace_bucket ON entry_facts (race_date_day, pace_bucket)"))
+            except Exception:
+                pass
+    except Exception:
+        pass
+
     # 自動預填/補齊權重配置 (避免既有資料庫因新增/改名因子而無法顯示)
     from database.models import ScoringWeight
     session = Session()

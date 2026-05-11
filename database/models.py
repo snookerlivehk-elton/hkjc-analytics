@@ -322,6 +322,11 @@ class EntryFact(Base):
     draw = Column(Integer, index=True)
     rating = Column(Integer, index=True)
 
+    runpos_early = Column(Integer)
+    runstyle_bucket = Column(String(20), index=True)
+    pace_delta_sec = Column(Float)
+    pace_bucket = Column(String(20), index=True)
+
     rank = Column(Integer, index=True)
     is_win = Column(Boolean, index=True)
     is_place = Column(Boolean, index=True)
@@ -368,3 +373,26 @@ class DrawStatsDaily(Base):
             name="ux_draw_stats_daily_dims",
         ),
     )
+
+
+class RaceDayWeather(Base):
+    __tablename__ = "race_day_weather"
+    id = Column(Integer, primary_key=True)
+    race_date_day = Column(Date, index=True, nullable=False)
+    venue = Column(String(10), index=True, nullable=False)
+
+    updated_at_text = Column(String(40))
+    temperature_c = Column(Float)
+    humidity_pct = Column(Float)
+    rain_total_mm = Column(Float)
+    rain_10min_mm = Column(Float)
+    soil_moisture_pct = Column(Float)
+    wind_direction = Column(String(20))
+    wind_speed_kmh_avg = Column(Float)
+    wind_speed_kmh_max = Column(Float)
+    raw = Column(JSON)
+
+    fetched_at = Column(DateTime, default=datetime.now, index=True)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, index=True)
+
+    __table_args__ = (UniqueConstraint("race_date_day", "venue", name="ux_race_day_weather_day_venue"),)
