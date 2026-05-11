@@ -4,6 +4,12 @@ import subprocess
 import time
 from datetime import datetime, time as dtime, timedelta
 
+from pathlib import Path
+
+root_path = str(Path(__file__).resolve().parent.parent)
+if root_path not in sys.path:
+    sys.path.insert(0, root_path)
+
 from database.connection import init_db, get_session
 from database.models import Race, SystemConfig
 from scoring_engine.ai_advisor import run_ai_race_summary
