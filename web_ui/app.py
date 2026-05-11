@@ -30,6 +30,7 @@ from scoring_engine.member_stats import (
     HIT_METRICS,
 )
 from web_ui.ui_table import render_dividends
+from web_ui.auth import clear_auth_query_param, persist_auth_to_query_param, restore_auth_from_query_param, set_member_authenticated
 from utils.logger import logger
 import asyncio
 import subprocess
@@ -440,12 +441,16 @@ def load_scoring_data(session: Session, race_id: int, weight_map: dict):
     return df
 
 def main():
+    restore_auth_from_query_param()
+    persist_auth_to_query_param()
     st.title("🏇 HKJC 每場賽事獨立計分排名系統")
     st.markdown("---")
 
     session = get_db()
 
     if st.session_state.get("member_logout_requested"):
+        clear_auth_query_param()
+        st.session_state.pop("auth_token", None)
         for k in list(st.session_state.keys()):
             if (
                 k in {"member_email", "active_weight_map", "selected_preset_name", "pending_weight_map"}
@@ -458,6 +463,8 @@ def main():
         st.rerun()
 
     if st.session_state.get("superadmin_logout_requested"):
+        clear_auth_query_param()
+        st.session_state.pop("auth_token", None)
         st.session_state["is_superadmin"] = False
         st.session_state.pop("superadmin_logout_requested", None)
         st.rerun()
@@ -476,7 +483,7 @@ def main():
             if submitted:
                 e = str(email or "").strip().lower()
                 if e and e in wl:
-                    st.session_state["member_email"] = e
+                    set_member_authenticated(e)
                     st.rerun()
                 else:
                     st.error("❌ 未授權：請先在後台白名單加入此 Email。")

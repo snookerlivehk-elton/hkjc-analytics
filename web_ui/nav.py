@@ -1,5 +1,7 @@
 import streamlit as st
 
+from web_ui.auth import clear_auth_query_param
+
 
 def render_admin_nav(show_logout: bool = True, active: str = ""):
     cols = st.columns([1, 1, 1, 1, 1, 1, 1, 1, 1, 0.8] if show_logout else [1, 1, 1, 1, 1, 1, 1, 1, 1])
@@ -63,6 +65,8 @@ def render_admin_nav(show_logout: bool = True, active: str = ""):
         c10 = cols[9]
         if c10.button("🚪 登出", use_container_width=True):
             st.session_state["is_superadmin"] = False
+            st.session_state.pop("auth_token", None)
+            clear_auth_query_param()
             st.rerun()
 
     if c7.button("🐴 馬匹往績", use_container_width=True):

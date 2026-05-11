@@ -14,30 +14,13 @@ from database.models import Race, RaceCoRunning, SystemConfig
 from scoring_engine.config_value import unwrap_value
 from scoring_engine.normalization import bucket_parts, venue_label
 from scoring_engine.track_profile import compute_track_profiles
+from web_ui.auth import require_superadmin
 from web_ui.nav import render_admin_nav
 
 st.set_page_config(page_title="重算/回填狀態 - HKJC Analytics", page_icon="🧭", layout="wide")
 
 init_db()
-
-if not st.session_state.get("is_superadmin", False):
-    st.title("🧭 重算/回填狀態")
-    st.markdown("🔐 需要 Superadmin 登入後才能查看。")
-    super_pw = os.environ.get("SUPERADMIN_PASSWORD", "")
-    if not super_pw:
-        st.error("❌ 未設定 SUPERADMIN_PASSWORD 環境變數，無法登入後台。")
-        st.stop()
-
-    with st.form("superadmin_login_form_status"):
-        pw = st.text_input("Superadmin 密碼", value="", type="password")
-        submitted = st.form_submit_button("登入", type="primary")
-        if submitted:
-            if str(pw) == super_pw:
-                st.session_state["is_superadmin"] = True
-                st.rerun()
-            else:
-                st.error("❌ 密碼錯誤")
-    st.stop()
+require_superadmin("🧭 重算/回填狀態")
 
 render_admin_nav(active="status")
 st.title("🧭 重算/回填狀態")
@@ -183,4 +166,3 @@ try:
     c2.info("runpos 與 corunning 來源係「抓取賽果與派彩」。如缺失，先確保該日已成功抓取賽果。")
 finally:
     session.close()
-

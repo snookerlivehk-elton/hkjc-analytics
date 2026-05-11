@@ -14,6 +14,7 @@ if root_path not in sys.path:
 from database.connection import get_session, init_db
 from scoring_engine.core import ScoringEngine
 from scoring_engine.member_stats import HIT_METRICS, METRIC_LABELS
+from web_ui.auth import require_superadmin
 from web_ui.nav import render_admin_nav
 from web_ui.utils import _confirm_run
 
@@ -42,24 +43,7 @@ st.markdown(
 # 初始化資料庫 (確保在雲端環境表結構存在)
 init_db()
 
-if not st.session_state.get("is_superadmin", False):
-    st.title("🛠️ 數據管理後台")
-    st.markdown("🔐 需要 Superadmin 登入後才能操作。")
-    super_pw = os.environ.get("SUPERADMIN_PASSWORD", "")
-    if not super_pw:
-        st.error("❌ 未設定 SUPERADMIN_PASSWORD 環境變數，無法登入後台。")
-        st.stop()
-
-    with st.form("superadmin_login_form"):
-        pw = st.text_input("Superadmin 密碼", value="", type="password")
-        submitted = st.form_submit_button("登入", type="primary")
-        if submitted:
-            if str(pw) == super_pw:
-                st.session_state["is_superadmin"] = True
-                st.rerun()
-            else:
-                st.error("❌ 密碼錯誤")
-    st.stop()
+require_superadmin("🛠️ 數據管理後台")
 
 st.title("🛠️ 數據管理後台")
 st.markdown("在此頁面執行數據更新、回填與清理操作。")
