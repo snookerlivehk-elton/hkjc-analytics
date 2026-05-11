@@ -9,7 +9,7 @@
 - **Top5 快照（PredictionTop5）**：把「某賽日、某場次、某條件/組合」的 Top5 預測落庫，作為之後命中統計/對外輸出的唯一來源。
 - **命中結算**：賽果入庫後，會用 Top5 快照 + 賽果 Top5 計算命中（獨贏/位置/正Q/PQ/三重/四連），並回寫到快照 meta。
 
-## 專案結構 (Phase 1)
+## 專案結構
 
 ```
 hkjc_analytics/
@@ -29,7 +29,31 @@ hkjc_analytics/
 └── .env                   # 環境變數 (資料庫連線字串等)
 ```
 
-## 第四階段功能說明 (Streamlit UI)
+## 主要資料表（摘要）
+
+- `races`：賽日/場次主檔（含 `post_time_hk` 作每場開跑時間基準）
+- `race_entries`：排位/出賽馬匹（horse/jockey/trainer/draw/rating…）
+- `scoring_factors`：計分因子明細（可作診斷/透明化）
+- `prediction_top5`：Top5 快照（統計與貼士的核心來源）
+- `odds_history`：賠率快照/歷史（`odds_type` 支援 `PRE_*`、`Live` 等）
+- `system_configs`：系統快照/狀態/queue（例如 SpeedPRO、job queue、fixture、runpos…）
+- `search_documents`：全站搜尋索引（統一 AND 搜索入口）
+
+## 服務架構（Railway）
+
+- Web（Streamlit）：`web_ui/app.py`
+- Worker（常駐）：`python scripts/job_worker.py`
+  - 後台按鈕會 enqueue job（存於 `system_configs`），由 worker claim 後執行
+- Cron（定時）：跑 `scripts/cron_*.py`
+  - 例：fixture/draw 檢查、SpeedPRO 追齊、Final Snapshot、賽果補抓、01:00 賽前賠率快照
+
+## 模式 3（資料未齊不生成快照）
+
+當 SpeedPRO（EA/SR）覆蓋未達門檻時：
+- `daily_update_pipeline` 的 `snapshot` step 會寫入 `step_skipped ... speedpro_not_ready`，並不生成/覆蓋快照
+- `Final Snapshot` cron 亦只會在「開跑前約 6 小時窗口」且覆蓋達標時 enqueue `rescore+snapshot`
+
+## Streamlit UI（摘要）
 
 1. **互動式 Dashboard (web_ui/app.py)**：
    - **賽事選擇**：左側選單可依日期與場次切換數據。
@@ -66,6 +90,11 @@ hkjc_analytics/
    streamlit run web_ui/app.py
    ```
    啟動後，瀏覽器會自動打開 `http://localhost:8501`。
+
+## 運維與更新日誌
+
+- 運維/排程/常見問題：見 [OPERATIONS.md](file:///c:/Users/User/.trae/hkjc_analytics/OPERATIONS.md)
+- 更新日誌（便於下次接手/回溯）：見 [CHANGELOG.md](file:///c:/Users/User/.trae/hkjc_analytics/CHANGELOG.md)
 
 ## Top5 快照與命中結算（手動）
 
