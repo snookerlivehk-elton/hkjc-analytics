@@ -770,13 +770,15 @@ def main():
 
                         sugg = res.get("suggested_weights") if isinstance(res.get("suggested_weights"), dict) else {}
                         out_rows = []
-                        for fn, desc in [(w.factor_name, w.description) for w in weights]:
-                            if fn not in base_weight_map:
+                        for w in weights_rows:
+                            fn = str(w.get("factor_name") or "").strip()
+                            if not fn or fn not in base_weight_map:
                                 continue
+                            desc = str(w.get("description") or fn).strip()
                             out_rows.append(
                                 {
-                                    "條件": str(desc or fn),
-                                    "代號": str(fn),
+                                    "條件": desc,
+                                    "代號": fn,
                                     "目前權重": round(float(updated_weights.get(fn) or 0.0), 3),
                                     "建議權重": round(float(sugg.get(fn) or 0.0), 3),
                                 }
@@ -875,7 +877,7 @@ def main():
 
                 if act in ("另存新組合", "更新目前組合"):
                     total_w = sum(float(v) for v in wmap.values()) if wmap else 0.0
-                    weights_lookup = {w.factor_name: w.description for w in weights}
+                    weights_lookup = {str(w.get("factor_name") or "").strip(): str(w.get("description") or "").strip() for w in weights_rows if str(w.get("factor_name") or "").strip()}
                     rows = []
                     for k, v in wmap.items():
                         if k in weights_lookup:
