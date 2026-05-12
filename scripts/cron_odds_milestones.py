@@ -10,7 +10,7 @@ if root_path not in sys.path:
     sys.path.insert(0, root_path)
 
 from database.connection import init_db, get_session
-from database.models import OddsHistory, Race, RaceEntry, RacePoolSnapshot, SystemConfig
+from database.models import OddsHistory, Race, RaceDayWeather, RaceEntry, RacePoolSnapshot, SystemConfig
 from data_scraper.odds import OddsScraper
 from scoring_engine.normalization import venue_code
 from scoring_engine.raw_snapshots import upsert_raw_snapshot
@@ -141,6 +141,19 @@ def main():
         date_str = _target_racedate_str(session)
         start, end = _day_range(date_str)
 
+        enable_weather = str(os.environ.get("ENABLE_WINDTRACKER_IN_ODDS") or "1").strip().lower() in ("1", "true", "yes")
+        weather_done: set[tuple[str, str, str]] = set()
+        weather_before_s = str(os.environ.get("WEATHER_WATCH_BEFORE_MINUTES") or "").strip()
+        weather_after_s = str(os.environ.get("WEATHER_WATCH_AFTER_MINUTES") or "").strip()
+        try:
+            weather_before_min = int(weather_before_s) if weather_before_s else 60
+        except Exception:
+            weather_before_min = 60
+        try:
+            weather_after_min = int(weather_after_s) if weather_after_s else 10
+        except Exception:
+            weather_after_min = 10
+
         watch_before_s = str(os.environ.get("ODDS_WATCH_BEFORE_MINUTES") or "").strip()
         watch_after_s = str(os.environ.get("ODDS_WATCH_AFTER_MINUTES") or "").strip()
         try:
@@ -179,6 +192,51 @@ def main():
 
         ok_events = 0
         total_events = 0
+
+        def _bucket_5m_key(dt_hk: datetime) -> str:
+            try:
+                m0 = (int(dt_hk.minute) // 5) * 5
+            except Exception:
+                m0 = 0
+            dt2 = dt_hk.replace(minute=int(m0), second=0, microsecond=0)
+            return dt2.strftime("%Y%m%d%H%M")
+
+        def _maybe_update_weather(venue: str, delta_min: int):
+            if not enable_weather:
+                return
+            if int(delta_min) > int(weather_before_min) or int(delta_min) < -int(weather_after_min):
+                return
+            bkey = _bucket_5m_key(now_hk)
+            sig = (str(date_str), str(venue), str(bkey))
+            if sig in weather_done:
+                return
+
+            try:
+                race_day = datetime.strptime(str(date_str), "%Y/%m/%d").date()
+            except Exception:
+                return
+            try:
+                row_w = session.query(RaceDayWeather).filter_by(race_date_day=race_day, venue=str(venue)).first()
+                if row_w and getattr(row_w, "updated_at", None):
+                    try:
+                        age_sec = (datetime.utcnow() - row_w.updated_at).total_seconds()
+                        if age_sec >= 0 and age_sec < 290:
+                            weather_done.add(sig)
+                            return
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            try:
+                from scripts.fetch_windtracker import main as _fetch_windtracker_main
+
+                os.environ["TARGET_DATE"] = str(date_str)
+                os.environ["TARGET_VENUE"] = str(venue)
+                _fetch_windtracker_main()
+                weather_done.add(sig)
+            except Exception:
+                return
 
         for rid, rn, v, post_time_hk_db in races:
             try:
@@ -226,6 +284,8 @@ def main():
             if delta_min < -int(watch_after_min):
                 continue
 
+            _maybe_update_weather(venue, delta_min)
+
             should_fetch = False
             if prev_delta is not None:
                 for m in ms:
@@ -261,6 +321,7 @@ def main():
                 post_dt2 = _parse_hhmm_dt(date_str, post_time_hk_use)
                 if post_dt2 is not None:
                     delta_min = int(round((post_dt2 - now_hk).total_seconds() / 60.0))
+                _maybe_update_weather(venue, delta_min)
                 try:
                     rr = session.query(Race).filter(Race.id == int(rid)).first()
                     if rr and str(rr.post_time_hk or "").strip() != post_time_hk_snap:
