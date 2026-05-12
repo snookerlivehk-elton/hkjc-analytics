@@ -214,7 +214,22 @@ with tab_monitor:
     st.caption("用途：一眼檢查各資料域最後更新時間、缺口與重算狀態；並集中提供常用更新按鈕（分層：主流程／進階修復／維護工具）。")
 
     from datetime import date, datetime, time as dtime, timedelta
-    from database.models import Race, RaceEntry, RaceResult, RaceDividend, RaceTrackCondition, HorseHistory, OddsHistory, ScoringFactor, PredictionTop5, SystemConfig, RaceCoRunning, RawSnapshot
+    from database.models import (
+        HorseHistory,
+        OddsHistory,
+        PredictionTop5,
+        Race,
+        RaceCoRunning,
+        RaceDayWeather,
+        RaceDividend,
+        RaceEntry,
+        RacePoolSnapshot,
+        RaceResult,
+        RaceTrackCondition,
+        RawSnapshot,
+        ScoringFactor,
+        SystemConfig,
+    )
     from scoring_engine.config_value import unwrap_value
     from scoring_engine.normalization import venue_label
     from sqlalchemy import func
@@ -484,6 +499,79 @@ with tab_monitor:
             except Exception:
                 reportext_by_race_id = {}
 
+            venues = sorted(set(str(getattr(r, "venue", "") or "").strip() for r in races if str(getattr(r, "venue", "") or "").strip()))
+            has_weather_by_venue = set()
+            try:
+                w_rows = (
+                    session_m.query(RaceDayWeather.venue)
+                    .filter(RaceDayWeather.race_date_day == start_dt.date())
+                    .filter(RaceDayWeather.venue.in_(venues))
+                    .all()
+                )
+                has_weather_by_venue = set(str(v or "").strip() for (v,) in w_rows if str(v or "").strip())
+            except Exception:
+                has_weather_by_venue = set()
+
+            # SpeedPRO / FormGuide snapshots (SystemConfig)
+            sp_energy_keys = [f"speedpro_energy:{date_str}:{int(race_no_by_id.get(rid) or 0)}" for rid in race_ids if int(race_no_by_id.get(rid) or 0) > 0]
+            fg_keys = [f"speedpro_formguide:{date_str}:{int(race_no_by_id.get(rid) or 0)}" for rid in race_ids if int(race_no_by_id.get(rid) or 0) > 0]
+            sp_key_set = set()
+            fg_key_set = set()
+            sp_val_by_key = {}
+            fg_val_by_key = {}
+            try:
+                all_keys = list(dict.fromkeys([k for k in (sp_energy_keys + fg_keys) if str(k).strip()]))
+                if all_keys:
+                    rows_cfg = session_m.query(SystemConfig.key, SystemConfig.value).filter(SystemConfig.key.in_(all_keys)).all()
+                    for k, v in rows_cfg:
+                        kk = str(k or "").strip()
+                        if not kk:
+                            continue
+                        if kk.startswith("speedpro_energy:"):
+                            sp_key_set.add(kk)
+                            sp_val_by_key[kk] = v
+                        elif kk.startswith("speedpro_formguide:"):
+                            fg_key_set.add(kk)
+                            fg_val_by_key[kk] = v
+            except Exception:
+                sp_key_set, fg_key_set = set(), set()
+                sp_val_by_key, fg_val_by_key = {}, {}
+
+            # Odds snapshots (OddsHistory) + pool snapshots (RacePoolSnapshot)
+            odds_types = ["PRE_0100", "PRE_30M", "PRE_15M", "PRE_10M", "PRE_5M"]
+            odds_cnt = {}
+            pool_has = set()
+            try:
+                o_rows = (
+                    session_m.query(RaceEntry.race_id, OddsHistory.odds_type, func.count(func.distinct(OddsHistory.entry_id)))
+                    .join(OddsHistory, OddsHistory.entry_id == RaceEntry.id)
+                    .filter(RaceEntry.race_id.in_(race_ids))
+                    .filter(OddsHistory.odds_type.in_(odds_types))
+                    .group_by(RaceEntry.race_id, OddsHistory.odds_type)
+                    .all()
+                )
+                for rid, ot, cnt in o_rows:
+                    ridi = int(rid or 0)
+                    ots = str(ot or "").strip()
+                    if ridi > 0 and ots:
+                        odds_cnt[(ridi, ots)] = int(cnt or 0)
+            except Exception:
+                odds_cnt = {}
+            try:
+                p_rows = (
+                    session_m.query(RacePoolSnapshot.race_id, RacePoolSnapshot.snapshot_type)
+                    .filter(RacePoolSnapshot.race_id.in_(race_ids))
+                    .filter(RacePoolSnapshot.snapshot_type.in_(odds_types))
+                    .all()
+                )
+                for rid, stype in p_rows:
+                    ridi = int(rid or 0)
+                    stype_s = str(stype or "").strip()
+                    if ridi > 0 and stype_s:
+                        pool_has.add((ridi, stype_s))
+            except Exception:
+                pool_has = set()
+
             runpos_keys = [f"race_runpos:{date_str}:{int(race_no_by_id.get(rid) or 0)}" for rid in race_ids if int(race_no_by_id.get(rid) or 0) > 0]
             ai_keys = [f"ai_race_report:{date_str}:{int(race_no_by_id.get(rid) or 0)}" for rid in race_ids if int(race_no_by_id.get(rid) or 0) > 0]
             syscfg_keys = list(dict.fromkeys([k for k in (runpos_keys + ai_keys) if str(k).strip()]))
@@ -520,6 +608,60 @@ with tab_monitor:
                 elif rep_items > 0:
                     rep_disp = str(rep_items)
 
+                sp_key = f"speedpro_energy:{date_str}:{rn}"
+                sp_disp = "—"
+                if exp_cnt > 0 and sp_key in sp_key_set:
+                    v = sp_val_by_key.get(sp_key)
+                    good = 0
+                    if isinstance(v, dict):
+                        for _, vv in v.items():
+                            if not isinstance(vv, dict):
+                                continue
+                            if (vv.get("energy_assess") is not None) and (vv.get("status_rating") is not None):
+                                good += 1
+                    if good > 0:
+                        sp_disp = f"{good}/{exp_cnt}"
+
+                fg_key = f"speedpro_formguide:{date_str}:{rn}"
+                fg_disp = "—"
+                if exp_cnt > 0 and fg_key in fg_key_set:
+                    v = fg_val_by_key.get(fg_key)
+                    cnt_fg = int(len(v)) if isinstance(v, dict) else 0
+                    if cnt_fg > 0:
+                        fg_disp = f"{cnt_fg}/{exp_cnt}"
+
+                odds_pre0100 = "—"
+                odds_30m = "—"
+                odds_15m = "—"
+                odds_10m = "—"
+                odds_5m = "—"
+                if exp_cnt > 0:
+                    for ot, var in [
+                        ("PRE_0100", "odds_pre0100"),
+                        ("PRE_30M", "odds_30m"),
+                        ("PRE_15M", "odds_15m"),
+                        ("PRE_10M", "odds_10m"),
+                        ("PRE_5M", "odds_5m"),
+                    ]:
+                        c = int(odds_cnt.get((rid, ot)) or 0)
+                        has_pool = (rid, ot) in pool_has
+                        if c > 0:
+                            val = f"{c}/{exp_cnt}" + (" 💰" if has_pool else "")
+                        else:
+                            val = ("—" + (" 💰" if has_pool else ""))
+                        if var == "odds_pre0100":
+                            odds_pre0100 = val
+                        elif var == "odds_30m":
+                            odds_30m = val
+                        elif var == "odds_15m":
+                            odds_15m = val
+                        elif var == "odds_10m":
+                            odds_10m = val
+                        elif var == "odds_5m":
+                            odds_5m = val
+
+                has_weather = str(getattr(r, "venue", "") or "").strip() in has_weather_by_venue
+
                 rows.append(
                     {
                         "場次": rn,
@@ -527,12 +669,20 @@ with tab_monitor:
                         "場地": venue_label(getattr(r, "venue", ""), track_type=getattr(r, "track_type", None)),
                         "排位表": "✅" if has_entries else "—",
                         "馬匹往績": "✅" if has_hh else "—",
+                        "SpeedPRO（EA/SR）": sp_disp,
+                        "賽績指引（FormGuide）": fg_disp,
                         "計分結果": "✅" if has_scores else "—",
                         "因子明細": "✅" if has_factors else "—",
                         "Top5 快照": "✅" if has_top5 else "—",
+                        "賽前賠率（01:00）": odds_pre0100,
+                        "臨場賠率（-30）": odds_30m,
+                        "臨場賠率（-15）": odds_15m,
+                        "臨場賠率（-10）": odds_10m,
+                        "臨場賠率（-5）": odds_5m,
                         "賽果": "✅" if has_results else "—",
                         "派彩": "✅" if has_div else "—",
                         "場地狀況": "✅" if has_tc else "—",
+                        "天氣/風向（WindTracker）": "✅" if has_weather else "—",
                         "事件摘要（馬號＋描述）": rep_disp,
                         "沿途走位（runpos）": "✅" if has_runpos else "—",
                         "賽後評述（corunning）": "✅" if has_cor else "—",
