@@ -67,11 +67,11 @@ def _pace_class_from_front(front_sum: float, leader_count: int, front_count: int
     lc = int(leader_count or 0)
     fc = int(front_count or 0)
 
-    if fc >= 3 or fs >= 2.1:
+    if fc >= 3 or fs >= 1.85:
         return PACE_VERY_FAST
-    if lc >= 1 and (fc >= 2 or fs >= 1.5):
+    if lc >= 1 and (fc >= 2 or fs >= 1.35):
         return PACE_FAST
-    if fc >= 1 or fs >= 1.0:
+    if fc >= 1 or fs >= 0.85:
         return PACE_MODERATE_FAST
     if lc == 0 and fs <= 0.08:
         return PACE_VERY_SLOW
@@ -146,6 +146,7 @@ def compute_race_pace_forecast_for_race(
     samples = []
 
     horses_out = []
+    fs_list: List[float] = []
     for hid in horse_ids:
         seq = seq_by_hid.get(int(hid)) or []
         n = int(len(seq))
@@ -163,7 +164,7 @@ def compute_race_pace_forecast_for_race(
         p_mid = (float(c_mid) + float(missing) * _NEUTRAL_P) / float(denom)
         p_back = (float(c_back) + float(missing) * _NEUTRAL_P) / float(denom)
         fs = _front_score(p_front)
-        front_sum += float(fs)
+        fs_list.append(float(fs))
         if fs >= 0.33:
             front_count += 1
         if p_front >= 0.70:
@@ -181,6 +182,15 @@ def compute_race_pace_forecast_for_race(
                 "front_score": float(round(fs, 4)),
             }
         )
+
+    topk_s = str(os.environ.get("PACE_FORECAST_FRONT_TOPK") or "").strip()
+    try:
+        topk = int(topk_s) if topk_s else 4
+    except Exception:
+        topk = 4
+    topk = max(1, min(int(topk), int(len(fs_list) or 0) if len(fs_list) > 0 else 1))
+    fs_sorted = sorted([float(x) for x in fs_list if x is not None], reverse=True)
+    front_sum = float(sum(fs_sorted[:topk])) if fs_sorted else 0.0
 
     horses_out.sort(key=lambda x: float(x.get("front_score") or 0.0), reverse=True)
     top_push = [x for x in horses_out if float(x.get("front_score") or 0.0) > 0][:5]
@@ -216,6 +226,7 @@ def compute_race_pace_forecast_for_race(
         "cutoff_day": cutoff_day.isoformat(),
         "sample_n": int(sample_n or 0),
         "smooth_n": int(smooth_n),
+        "front_topk": int(topk),
         "horses": horses_out,
         "top_push": top_push,
         "computed_at": datetime.utcnow().isoformat(),
