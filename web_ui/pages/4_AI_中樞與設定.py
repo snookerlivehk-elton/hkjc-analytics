@@ -874,6 +874,60 @@ try:
                             st.error(f"❌ 反思失敗: {err_reason} ({res.get('error')})")
 
     with tab_track:
+        st.markdown("### 🧪 步速預測自動學習（校準）")
+        calib_cfg = session.query(SystemConfig).filter_by(key="pace_forecast_calibration:v1").first()
+        calib_payload, calib_meta = unwrap_value(calib_cfg.value) if calib_cfg else (None, {})
+        state_cfg = session.query(SystemConfig).filter_by(key="pace_forecast_calib_state:v1").first()
+        state_val = state_cfg.value if (state_cfg and isinstance(state_cfg.value, dict)) else {}
+
+        enabled_auto_learn = str(os.environ.get("ENABLE_PACE_FORECAST_AUTO_LEARN") or "1").strip().lower() in ("1", "true", "yes")
+        enabled_calib_apply = str(os.environ.get("PACE_FORECAST_USE_CALIBRATION") or "1").strip().lower() in ("1", "true", "yes")
+
+        trained_from = ""
+        trained_to = ""
+        n_pairs = 0
+        alpha = ""
+        min_samples = ""
+        groups_n = 0
+        saved_at = ""
+        if isinstance(calib_payload, dict):
+            tr = calib_payload.get("trained_range") if isinstance(calib_payload.get("trained_range"), dict) else {}
+            trained_from = str(tr.get("from") or "")
+            trained_to = str(tr.get("to") or "")
+            try:
+                n_pairs = int(calib_payload.get("n_pairs") or 0)
+            except Exception:
+                n_pairs = 0
+            alpha = str(calib_payload.get("alpha") or "")
+            min_samples = str(calib_payload.get("min_samples") or "")
+            groups = calib_payload.get("groups") if isinstance(calib_payload.get("groups"), dict) else {}
+            groups_n = len(groups)
+        if isinstance(calib_meta, dict):
+            saved_at = str(calib_meta.get("saved_at") or "")
+
+        last_end = str(state_val.get("last_end_date") or "")
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("自動學習", "開啟" if enabled_auto_learn else "關閉")
+        c2.metric("校準套用", "開啟" if enabled_calib_apply else "關閉")
+        c3.metric("上次學習", saved_at or (str(state_val.get("updated_at") or "") or "—"))
+        c4.metric("樣本對數", str(n_pairs) if n_pairs > 0 else "—")
+        c5.metric("分組數", str(groups_n) if groups_n > 0 else "0")
+
+        cap = []
+        if trained_from or trained_to:
+            cap.append(f"訓練範圍={trained_from or '-'}..{trained_to or '-'}")
+        if last_end:
+            cap.append(f"last_end_date={last_end}")
+        if alpha:
+            cap.append(f"alpha={alpha}")
+        if min_samples:
+            cap.append(f"min_samples={min_samples}")
+        if cap:
+            st.caption("｜".join(cap))
+        else:
+            st.caption("尚未有校準配置（等待賽果後的自動學習首次寫入）。")
+
+        st.markdown("---")
         st.markdown("### 📊 跑道 / 場地狀態統計")
         st.caption("用途：統計不同跑道 × 場地狀態下，勝出/入圍馬匹的跑法比率與平均賠率，並可供 AI 賽前分析引用。")
         with st.expander("ℹ️ 統計口徑說明（步速分布／早・中・末段跑法）", expanded=False):
