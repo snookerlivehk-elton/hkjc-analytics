@@ -361,16 +361,21 @@ def _cached_horse_runstyle_profile(cutoff_day_iso: str, horse_ids: tuple):
                 continue
             seq.append(bb)
 
-        label_map = {
-            "LEADER": "領放",
-            "PROMINENT": "跟前",
-            "MIDFIELD": "中置",
-            "BACKMARKER": "後上",
-        }
-        tie_rank = {"LEADER": 0, "PROMINENT": 1, "MIDFIELD": 2, "BACKMARKER": 3}
+        def _bucket3(b: str) -> str:
+            bb = str(b or "").strip().upper()
+            if bb in {"LEADER", "PROMINENT"}:
+                return "放頭"
+            if bb == "MIDFIELD":
+                return "中置"
+            if bb == "BACKMARKER":
+                return "後上"
+            return ""
+
+        tie_rank = {"放頭": 0, "中置": 1, "後上": 2}
 
         def summarize(seq: list, n: int) -> str:
-            s2 = [str(x) for x in (seq or []) if str(x).strip()]
+            s2 = [_bucket3(x) for x in (seq or [])]
+            s2 = [x for x in s2 if str(x).strip()]
             s2 = s2[: int(n or 0)]
             if not s2:
                 return "—"
@@ -387,7 +392,7 @@ def _cached_horse_runstyle_profile(cutoff_day_iso: str, horse_ids: tuple):
                     if int(tie_rank.get(str(k), 99)) < int(tie_rank.get(str(best), 99)):
                         best = k
                         best_c = int(c)
-            zh = str(label_map.get(str(best), str(best)) if best else "—")
+            zh = str(best or "—")
             return f"{zh}({int(best_c)}/{len(s2)})"
 
         out = {}

@@ -30,17 +30,15 @@ PACE_ZH = {
 }
 
 
-def _front_score(p_leader: float, p_prom: float) -> float:
+def _front_score(p_front: float) -> float:
     try:
-        a = float(p_leader)
-        b = float(p_prom)
+        a = float(p_front)
     except Exception:
         return 0.0
-    if not math.isfinite(a) or not math.isfinite(b):
+    if not math.isfinite(a):
         return 0.0
     a = max(0.0, min(1.0, a))
-    b = max(0.0, min(1.0, b))
-    return float(a + 0.6 * b)
+    return float(a)
 
 
 def _calc_confidence(samples: List[int], field_size: int) -> str:
@@ -61,7 +59,7 @@ def _pace_class_from_front(front_sum: float, leader_count: int, front_count: int
     lc = int(leader_count or 0)
     fc = int(front_count or 0)
 
-    if lc >= 2 or fc >= 3 or fs >= 2.4:
+    if fc >= 3 or fs >= 2.4:
         return PACE_VERY_FAST
     if lc >= 1 and (fc >= 2 or fs >= 1.7):
         return PACE_FAST
@@ -143,22 +141,25 @@ def compute_race_pace_forecast_for_race(
                     "horse_id": int(hid),
                     "horse_no": int(entry_map.get(int(hid)) or 0) or None,
                     "n": 0,
-                    "p_leader": 0.0,
-                    "p_prominent": 0.0,
+                    "p_front": 0.0,
+                    "p_mid": 0.0,
+                    "p_back": 0.0,
                     "front_score": 0.0,
                 }
             )
             continue
 
-        c_leader = sum(1 for x in seq if str(x) == "LEADER")
-        c_prom = sum(1 for x in seq if str(x) == "PROMINENT")
-        p_leader = c_leader / float(n)
-        p_prom = c_prom / float(n)
-        fs = _front_score(p_leader, p_prom)
+        c_front = sum(1 for x in seq if str(x) in {"LEADER", "PROMINENT"})
+        c_mid = sum(1 for x in seq if str(x) == "MIDFIELD")
+        c_back = sum(1 for x in seq if str(x) == "BACKMARKER")
+        p_front = c_front / float(n)
+        p_mid = c_mid / float(n)
+        p_back = c_back / float(n)
+        fs = _front_score(p_front)
         front_sum += float(fs)
         if fs >= 0.55:
             front_count += 1
-        if p_leader >= 0.35:
+        if p_front >= 0.70:
             leader_count += 1
 
         horses_out.append(
@@ -166,8 +167,9 @@ def compute_race_pace_forecast_for_race(
                 "horse_id": int(hid),
                 "horse_no": int(entry_map.get(int(hid)) or 0) or None,
                 "n": int(n),
-                "p_leader": float(round(p_leader, 4)),
-                "p_prominent": float(round(p_prom, 4)),
+                "p_front": float(round(p_front, 4)),
+                "p_mid": float(round(p_mid, 4)),
+                "p_back": float(round(p_back, 4)),
                 "front_score": float(round(fs, 4)),
             }
         )

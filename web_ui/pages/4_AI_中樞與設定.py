@@ -880,11 +880,10 @@ try:
             st.markdown(
                 "\n".join(
                     [
-                        "#### 早・中・末段跑法（前領／中置／後上）",
+                        "#### 早・中・末段跑法（放頭／中置／後上）",
                         "- 來源：賽果頁「沿途走位 running_position」，以馬號對應一串位置數字（例如 `7 6 5 3`）。",
                         "- 早段＝第一個位置；中段＝位置序列的中位點；末段＝最後一個位置。",
-                        "- 以全場馬數做分段：前 25% 視為「前領」、25%～60% 視為「中置」、其後視為「後上」。",
-                        "- 綜合跑法：用「早段＋末段」的變化歸類（例如 前領續航／跟前／中置／後上／早放後散）。",
+                        "- 以全場馬數做分段：前 25% 視為「放頭」、25%～60% 視為「中置」、其後視為「後上」。",
                         "",
                         "#### 步速分布（快／正常／慢）",
                         "- 來源：賽果/派彩頁的分段時間 `sectional_times`，使用第一段時間作為該場的 first split。",
@@ -944,11 +943,10 @@ try:
             st.markdown(
                 "\n".join(
                     [
-                        "#### 早・中・末段跑法（前領／中置／後上）",
+                        "#### 早・中・末段跑法（放頭／中置／後上）",
                         "- 來源：賽果頁「沿途走位 running_position」，以馬號對應一串位置數字（例如 `7 6 5 3`）。",
                         "- 早段＝第一個位置；中段＝位置序列的中位點；末段＝最後一個位置。",
-                        "- 以全場馬數做分段：前 25% 視為「前領」、25%～60% 視為「中置」、其後視為「後上」。",
-                        "- 綜合跑法：用「早段＋末段」的變化歸類（例如 前領續航／跟前／中置／後上／早放後散）。",
+                        "- 以全場馬數做分段：前 25% 視為「放頭」、25%～60% 視為「中置」、其後視為「後上」。",
                         "",
                         "#### 步速分布（快／正常／慢）",
                         "- 來源：賽果/派彩頁的分段時間 `sectional_times`，使用第一段時間作為該場的 first split。",
@@ -1025,9 +1023,9 @@ try:
                         st.caption("｜".join(cap))
                 c1, c2 = st.columns(2)
                 c1.markdown("**勝出馬跑法分布**")
-                c1.dataframe(pd.DataFrame([v.get("winner_style_composite_pct") or v.get("winner_style_pct") or {}]), use_container_width=True, hide_index=True)
+                c1.dataframe(pd.DataFrame([v.get("winner_style_pct") or {}]), use_container_width=True, hide_index=True)
                 c2.markdown("**Top4 入圍跑法分布**")
-                c2.dataframe(pd.DataFrame([v.get("top4_style_composite_pct") or v.get("top4_style_pct") or {}]), use_container_width=True, hide_index=True)
+                c2.dataframe(pd.DataFrame([v.get("top4_style_pct") or {}]), use_container_width=True, hide_index=True)
 
                 c1, c2, c3 = st.columns(3)
                 c1.markdown("**Top4 早段跑法**")

@@ -3,7 +3,7 @@ import re
 from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy import inspect, text
-from sqlalchemy.orm import sessionmaker, scoped_session
+from sqlalchemy.orm import sessionmaker
 from database.models import Base
 
 # 預設使用 SQLite，未來可改為 PostgreSQL 連線字串
@@ -48,8 +48,7 @@ engine = create_engine(
 )
 
 # 建立 Session 工廠
-session_factory = sessionmaker(bind=engine)
-Session = scoped_session(session_factory)
+SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
 def init_db():
     """初始化資料庫表結構並預填權重"""
@@ -227,7 +226,7 @@ def init_db():
 
     # 自動預填/補齊權重配置 (避免既有資料庫因新增/改名因子而無法顯示)
     from database.models import ScoringWeight
-    session = Session()
+    session = SessionLocal()
     try:
         need_seed = session.query(ScoringWeight).count() == 0
         if not need_seed:
@@ -348,7 +347,7 @@ def init_db():
         except Exception:
             pass
 
-        session2 = Session()
+        session2 = SessionLocal()
         try:
             q = (
                 session2.query(Race)
@@ -376,7 +375,7 @@ def init_db():
         from database.models import RaceDividend, RaceTrackCondition
         from scoring_engine.track_conditions import normalize_going
 
-        session3 = Session()
+        session3 = SessionLocal()
         try:
             divs = session3.query(RaceDividend.race_id, RaceDividend.meta).all()
             changed = 0
@@ -408,4 +407,4 @@ def init_db():
 
 def get_session():
     """獲取資料庫 Session"""
-    return Session()
+    return SessionLocal()

@@ -90,8 +90,8 @@ def main():
         with f6:
             distance = st.selectbox("途程", options=["ALL"] + [int(x) for x in dist_opts if x], index=0)
         with f7:
-            runstyle_opts = ["ALL", "LEADER", "PROMINENT", "MIDFIELD", "BACKMARKER", "UNKNOWN"]
-            runstyle_label = {"ALL": "ALL", "LEADER": "領放", "PROMINENT": "跟前", "MIDFIELD": "中置", "BACKMARKER": "後上", "UNKNOWN": "UNKNOWN"}
+            runstyle_opts = ["ALL", "放頭", "中置", "後上", "UNKNOWN"]
+            runstyle_label = {"ALL": "ALL", "放頭": "放頭", "中置": "中置", "後上": "後上", "UNKNOWN": "UNKNOWN"}
             runstyle = st.selectbox("跑法", options=runstyle_opts, format_func=lambda x: runstyle_label.get(str(x), str(x)), index=0)
         with f8:
             pace_opts = ["ALL", "FAST", "NORMAL", "SLOW", "UNKNOWN"]
@@ -112,7 +112,15 @@ def main():
         if distance != "ALL":
             q = q.filter(EntryFact.distance == int(distance))
         if runstyle != "ALL":
-            q = q.filter(EntryFact.runstyle_bucket == str(runstyle))
+            rs = str(runstyle)
+            if rs == "放頭":
+                q = q.filter(EntryFact.runstyle_bucket.in_(["LEADER", "PROMINENT"]))
+            elif rs == "中置":
+                q = q.filter(EntryFact.runstyle_bucket == "MIDFIELD")
+            elif rs == "後上":
+                q = q.filter(EntryFact.runstyle_bucket == "BACKMARKER")
+            else:
+                q = q.filter(EntryFact.runstyle_bucket == "UNKNOWN")
         if pace_bucket != "ALL":
             q = q.filter(EntryFact.pace_bucket == str(pace_bucket))
 

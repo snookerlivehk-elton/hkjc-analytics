@@ -58,14 +58,7 @@ def _pos_to_band(pos: Optional[int], field_size: int) -> Optional[str]:
     return "back"
 
 
-STYLE_LABELS = {"front": "前領", "mid": "中置", "back": "後上"}
-COMPOSITE_LABELS = {
-    "front_hold": "前領續航",
-    "stalk": "跟前",
-    "mid": "中置",
-    "closer": "後上",
-    "fade": "早放後散",
-}
+STYLE_LABELS = {"front": "放頭", "mid": "中置", "back": "後上"}
 PACE_LABELS = {"fast": "快步速", "normal": "正常步速", "slow": "慢步速"}
 
 
@@ -223,31 +216,17 @@ def _classify_pace_by_ref(first_split: Optional[float], ref_first: Optional[floa
         return "slow"
     return "normal"
 
-def _composite_style(early: Optional[str], late: Optional[str]) -> Optional[str]:
-    if not early or not late:
-        return None
-    if early == "front" and late in ("front", "mid"):
-        return "front_hold"
-    if early in ("front", "mid") and late == "back":
-        return "fade"
-    if early == "back" and late in ("mid", "front"):
-        return "closer"
-    if early == "mid" and late in ("mid", "front"):
-        return "stalk"
-    return "mid"
-
 def _style_parts_from_runpos(runpos: str, field_size: int) -> Dict[str, Optional[str]]:
     pos = _parse_positions(runpos)
     if not pos:
-        return {"early": None, "mid": None, "late": None, "composite": None}
+        return {"early": None, "mid": None, "late": None}
     early_pos = pos[0]
     mid_pos = pos[len(pos) // 2]
     late_pos = pos[-1]
     early = _pos_to_band(early_pos, field_size)
     mid = _pos_to_band(mid_pos, field_size)
     late = _pos_to_band(late_pos, field_size)
-    comp = _composite_style(early, late)
-    return {"early": early, "mid": mid, "late": late, "composite": comp}
+    return {"early": early, "mid": mid, "late": late}
 
 
 def compute_track_profiles(
@@ -379,8 +358,6 @@ def compute_track_profiles(
                 "top4_early": {"front": 0, "mid": 0, "back": 0},
                 "top4_mid": {"front": 0, "mid": 0, "back": 0},
                 "top4_late": {"front": 0, "mid": 0, "back": 0},
-                "winner_comp": {"front_hold": 0, "stalk": 0, "mid": 0, "closer": 0, "fade": 0},
-                "top4_comp": {"front_hold": 0, "stalk": 0, "mid": 0, "closer": 0, "fade": 0},
                 "pace_winner": {"fast": 0, "normal": 0, "slow": 0},
                 "pace_top4": {"fast": 0, "normal": 0, "slow": 0},
                 "pace_races": 0,
@@ -409,9 +386,6 @@ def compute_track_profiles(
                 v2 = parts.get(k2)
                 if v2:
                     st[f"{prefix}_{k2}"][v2] = int(st[f"{prefix}_{k2}"].get(v2) or 0) + 1
-            comp = parts.get("composite")
-            if comp:
-                st[f"{prefix}_comp"][comp] = int(st[f"{prefix}_comp"].get(comp) or 0) + 1
 
         add_styles(winner[1], "winner")
         for _rk, e, _rr in top4:
@@ -447,9 +421,6 @@ def compute_track_profiles(
         t_mid = _pct(st["top4_mid"], ["front", "mid", "back"])
         t_late = _pct(st["top4_late"], ["front", "mid", "back"])
 
-        w_comp = _pct(st["winner_comp"], ["front_hold", "stalk", "mid", "closer", "fade"])
-        t_comp = _pct(st["top4_comp"], ["front_hold", "stalk", "mid", "closer", "fade"])
-
         pw = _pct(st["pace_winner"], ["fast", "normal", "slow"])
         pt = _pct(st["pace_top4"], ["fast", "normal", "slow"])
 
@@ -474,8 +445,6 @@ def compute_track_profiles(
             "top4_style_mid_samples": t_mid_samples,
             "top4_style_late_pct": {STYLE_LABELS[k]: v for k, v in t_late.items()},
             "top4_style_late_samples": t_late_samples,
-            "winner_style_composite_pct": {COMPOSITE_LABELS[k]: v for k, v in w_comp.items()},
-            "top4_style_composite_pct": {COMPOSITE_LABELS[k]: v for k, v in t_comp.items()},
             "pace_races": int(st.get("pace_races") or 0),
             "winner_pace_pct": {PACE_LABELS[k]: v for k, v in pw.items()},
             "top4_pace_pct": {PACE_LABELS[k]: v for k, v in pt.items()},
@@ -492,7 +461,7 @@ def compute_track_profiles(
         m = build_meta(
             source="TRACK_PROFILE",
             fetched_at=datetime.utcnow().isoformat(),
-            schema="trkprof:v1",
+            schema="trkprof:v2",
             extra={"bucket_key": key, "n_races": int(val.get("n_races") or 0)},
         )
         cfg.value = wrap_value(val, m)
