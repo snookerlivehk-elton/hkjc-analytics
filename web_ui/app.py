@@ -305,6 +305,7 @@ def _cached_race_entries_ui(race_id: int):
             out.append(
                 {
                     "entry_id": int(e.id),
+                    "horse_id": int(e.horse_id or 0),
                     "horse_no": int(e.horse_no or 0),
                     "horse_name": str(getattr(getattr(e, "horse", None), "name_ch", "") or "").strip() or "未知",
                     "horse_code": str(getattr(getattr(e, "horse", None), "code", "") or "").strip(),
@@ -315,6 +316,83 @@ def _cached_race_entries_ui(race_id: int):
                     "rating": int(getattr(e, "rating", 0) or 0),
                 }
             )
+        return out
+    finally:
+        s.close()
+
+
+@st.cache_data(ttl=600)
+def _cached_horse_runstyle_profile(cutoff_day_iso: str, horse_ids: tuple):
+    from datetime import date
+    from database.models import EntryFact
+
+    try:
+        cutoff_day = date.fromisoformat(str(cutoff_day_iso))
+    except Exception:
+        cutoff_day = None
+    hids = [int(x) for x in list(horse_ids or []) if int(x or 0) > 0]
+    if not cutoff_day or not hids:
+        return {}
+
+    s = get_session()
+    try:
+        rows = (
+            s.query(EntryFact.horse_id, EntryFact.race_date_day, EntryFact.runstyle_bucket)
+            .filter(EntryFact.horse_id.in_(hids))
+            .filter(EntryFact.race_date_day < cutoff_day)
+            .filter(EntryFact.runstyle_bucket != None)
+            .filter(EntryFact.runstyle_bucket != "UNKNOWN")
+            .order_by(EntryFact.horse_id.asc(), EntryFact.race_date_day.desc(), EntryFact.id.desc())
+            .all()
+        )
+
+        seq_by_hid = {int(h): [] for h in hids}
+        for hid, _, b in rows:
+            h = int(hid or 0)
+            if h <= 0:
+                continue
+            seq = seq_by_hid.get(h)
+            if seq is None:
+                continue
+            if len(seq) >= 10:
+                continue
+            bb = str(b or "").strip()
+            if not bb or bb == "UNKNOWN":
+                continue
+            seq.append(bb)
+
+        label_map = {
+            "LEADER": "領放",
+            "PROMINENT": "跟前",
+            "MIDFIELD": "中置",
+            "BACKMARKER": "後上",
+        }
+        tie_rank = {"LEADER": 0, "PROMINENT": 1, "MIDFIELD": 2, "BACKMARKER": 3}
+
+        def summarize(seq: list, n: int) -> str:
+            s2 = [str(x) for x in (seq or []) if str(x).strip()]
+            s2 = s2[: int(n or 0)]
+            if not s2:
+                return "—"
+            cnt = {}
+            for x in s2:
+                cnt[x] = int(cnt.get(x, 0)) + 1
+            best = None
+            best_c = -1
+            for k, c in cnt.items():
+                if c > best_c:
+                    best = k
+                    best_c = int(c)
+                elif c == best_c:
+                    if int(tie_rank.get(str(k), 99)) < int(tie_rank.get(str(best), 99)):
+                        best = k
+                        best_c = int(c)
+            zh = str(label_map.get(str(best), str(best)) if best else "—")
+            return f"{zh}({int(best_c)}/{len(s2)})"
+
+        out = {}
+        for hid, seq in seq_by_hid.items():
+            out[int(hid)] = {"近6": summarize(seq, 6), "近10": summarize(seq, 10), "n": int(len(seq))}
         return out
     finally:
         s.close()
@@ -431,12 +509,21 @@ def load_scoring_data(session: Session, race_id: int, weight_map: dict):
     score_map = _cached_race_factor_scores(int(race_id), tuple(wkeys))
 
     data = []
+    race_day = None
+    try:
+        race_row = session.query(Race.race_date).filter(Race.id == int(race_id)).first()
+        if race_row and race_row[0]:
+            race_day = race_row[0].date()
+    except Exception:
+        race_day = None
+
     for e in entries:
         eid = int(e.get("entry_id") or 0)
         row = {
             "馬號": int(e.get("horse_no") or 0),
             "馬名": str(e.get("horse_name") or "未知"),
             "馬匹編號": str(e.get("horse_code") or ""),
+            "_horse_id": int(e.get("horse_id") or 0),
             "排名": 0,
             "騎師": str(e.get("jockey") or ""),
             "練馬師": str(e.get("trainer") or ""),
@@ -464,6 +551,21 @@ def load_scoring_data(session: Session, race_id: int, weight_map: dict):
     except Exception:
         t = None
     df["預估勝率"] = (estimate_win_probability(df["總分"], temperature=float(t) if t else 1.0) * 100).round(1).astype(str) + "%"
+
+    try:
+        if race_day is not None and "_horse_id" in df.columns:
+            hids = [int(x) for x in df["_horse_id"].tolist() if int(x or 0) > 0]
+            prof = _cached_horse_runstyle_profile(race_day.isoformat(), tuple(sorted(set(hids))))
+            df["跑法(近6)"] = df["_horse_id"].apply(lambda x: (prof.get(int(x)) or {}).get("近6") or "—")
+            df["跑法(近10)"] = df["_horse_id"].apply(lambda x: (prof.get(int(x)) or {}).get("近10") or "—")
+    except Exception:
+        pass
+
+    if "_horse_id" in df.columns:
+        try:
+            df = df.drop(columns=["_horse_id"])
+        except Exception:
+            pass
     return df
 
 def main():
@@ -2392,7 +2494,7 @@ def main():
 
         active_name = st.session_state.get("selected_preset_name", "（手動調整）")
         with st.expander(f"🏆 專業排名表（目前權重：{active_name}）", expanded=True):
-            display_cols = ["排名", "馬號", "馬名", "總分", "預估勝率", "建議"]
+            display_cols = ["排名", "馬號", "馬名", "跑法(近6)", "跑法(近10)", "總分", "預估勝率", "建議"]
 
             def get_recommendation(row):
                 if row["排名"] == 1:
@@ -2423,6 +2525,8 @@ def main():
                 hide_index=True,
                 column_config={
                     "馬名": st.column_config.TextColumn(width="medium"),
+                    "跑法(近6)": st.column_config.TextColumn(width="small"),
+                    "跑法(近10)": st.column_config.TextColumn(width="small"),
                     "騎師": st.column_config.TextColumn(width="medium"),
                     "練馬師": st.column_config.TextColumn(width="medium"),
                     "建議": st.column_config.TextColumn(width="medium"),
