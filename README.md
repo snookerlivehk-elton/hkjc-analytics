@@ -101,6 +101,7 @@ hkjc_analytics/
 
 - 運維/排程/常見問題：見 [OPERATIONS.md](file:///c:/Users/User/.trae/hkjc_analytics/OPERATIONS.md)
 - 更新日誌（便於下次接手/回溯）：見 [CHANGELOG.md](file:///c:/Users/User/.trae/hkjc_analytics/CHANGELOG.md)
+- 長期資料一致性（Staging→Canonical）落地規格：見 [CANONICALIZATION_SPEC.md](file:///c:/Users/User/.trae/hkjc_analytics/CANONICALIZATION_SPEC.md)
 
 ## Odds 分段（供 UI 顯示）
 
