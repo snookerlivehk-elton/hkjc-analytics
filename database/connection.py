@@ -79,6 +79,8 @@ def init_db():
                     "CREATE INDEX IF NOT EXISTS ix_race_pool_snapshots_day_no_type ON race_pool_snapshots (race_date_day, venue, race_no, snapshot_type)"
                 )
             )
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_race_pace_snapshots_race_id ON race_pace_snapshots (race_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_race_pace_snapshots_day_no ON race_pace_snapshots (race_date_day, venue, race_no)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_prediction_top5_race_date_no ON prediction_top5 (race_date, race_no)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_prediction_top5_type_key_date ON prediction_top5 (predictor_type, predictor_key, race_date)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_prediction_top5_type_email_date ON prediction_top5 (predictor_type, member_email, race_date)"))

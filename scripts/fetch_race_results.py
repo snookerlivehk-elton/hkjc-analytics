@@ -16,6 +16,7 @@ from scoring_engine.member_stats import update_all_members_preset_stats_for_race
 from scoring_engine.prediction_snapshots import finalize_prediction_top5_hits_for_race_date
 from scoring_engine.entry_facts import build_entry_facts_for_race_date
 from scoring_engine.draw_stats_daily import rebuild_draw_stats_daily_for_race_date
+from scoring_engine.race_pace import compute_race_pace_for_race_date
 from scoring_engine.track_conditions import normalize_going
 from scoring_engine.config_value import build_meta, unwrap_value, wrap_value
 from scoring_engine.normalization import venue_code
@@ -221,6 +222,13 @@ def main():
         print(f"完成：entry_facts={res3} draw_stats_daily={res4}")
     except Exception as e:
         print(f"entry_facts/draw_stats_daily 更新失敗: {e}")
+
+    try:
+        print(f"正在更新每場步速分類（賽日 {target_date}）...")
+        res5 = compute_race_pace_for_race_date(session, date_str=target_date)
+        print(f"完成：race_pace={res5}")
+    except Exception as e:
+        print(f"race_pace 更新失敗: {e}")
 
 
 if __name__ == "__main__":

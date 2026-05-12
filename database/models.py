@@ -172,6 +172,31 @@ class RacePoolSnapshot(Base):
 
     __table_args__ = (UniqueConstraint("race_id", "snapshot_type", "source", name="ux_race_pool_snapshots_race_type_source"),)
 
+
+class RacePaceSnapshot(Base):
+    __tablename__ = "race_pace_snapshots"
+    id = Column(Integer, primary_key=True)
+    race_id = Column(Integer, ForeignKey("races.id"), unique=True, index=True, nullable=False)
+    race_date_day = Column(Date, index=True, nullable=False)
+    venue = Column(String(10), index=True, nullable=False)
+    race_no = Column(Integer, index=True, nullable=False)
+    distance = Column(Integer)
+    surface_code = Column(String(10), index=True)
+    race_class = Column(String(20))
+
+    k_segments = Column(Integer)
+    actual_sec = Column(Float)
+    ref_sec = Column(Float)
+    delta_sec = Column(Float, index=True)
+    pace_class = Column(String(20), index=True)  # very_fast|fast|moderate_fast|moderate|moderate_slow|slow|very_slow|unknown
+    meta = Column(JSON)
+
+    computed_at = Column(DateTime, default=datetime.now, index=True)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, index=True)
+
+    race = relationship("Race")
+
+
 class RaceDividend(Base):
     __tablename__ = 'race_dividends'
     id = Column(Integer, primary_key=True)

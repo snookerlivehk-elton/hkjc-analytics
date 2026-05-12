@@ -223,6 +223,7 @@ with tab_monitor:
         RaceDayWeather,
         RaceDividend,
         RaceEntry,
+        RacePaceSnapshot,
         RacePoolSnapshot,
         RaceResult,
         RaceTrackCondition,
@@ -572,6 +573,25 @@ with tab_monitor:
             except Exception:
                 pool_has = set()
 
+            pace_by_race_id = {}
+            try:
+                pr_rows = (
+                    session_m.query(RacePaceSnapshot.race_id, RacePaceSnapshot.pace_class, RacePaceSnapshot.delta_sec, RacePaceSnapshot.k_segments)
+                    .filter(RacePaceSnapshot.race_id.in_(race_ids))
+                    .all()
+                )
+                for rid, pc, ds, ks in pr_rows:
+                    ridi = int(rid or 0)
+                    if ridi <= 0:
+                        continue
+                    pace_by_race_id[ridi] = {
+                        "pace_class": str(pc or "").strip() or None,
+                        "delta_sec": float(ds) if ds is not None else None,
+                        "k": int(ks) if ks is not None else None,
+                    }
+            except Exception:
+                pace_by_race_id = {}
+
             runpos_keys = [f"race_runpos:{date_str}:{int(race_no_by_id.get(rid) or 0)}" for rid in race_ids if int(race_no_by_id.get(rid) or 0) > 0]
             ai_keys = [f"ai_race_report:{date_str}:{int(race_no_by_id.get(rid) or 0)}" for rid in race_ids if int(race_no_by_id.get(rid) or 0) > 0]
             syscfg_keys = list(dict.fromkeys([k for k in (runpos_keys + ai_keys) if str(k).strip()]))
@@ -661,6 +681,16 @@ with tab_monitor:
                             odds_5m = val
 
                 has_weather = str(getattr(r, "venue", "") or "").strip() in has_weather_by_venue
+                pace_st = pace_by_race_id.get(rid) if isinstance(pace_by_race_id, dict) else None
+                pace_disp = "—"
+                if isinstance(pace_st, dict) and pace_st.get("pace_class"):
+                    ds = pace_st.get("delta_sec")
+                    ks = pace_st.get("k")
+                    if ds is None:
+                        pace_disp = str(pace_st.get("pace_class"))
+                    else:
+                        sfx = f"/{int(ks)}段" if ks else ""
+                        pace_disp = f"{str(pace_st.get('pace_class'))} ({float(ds):+.2f}s{sfx})"
 
                 rows.append(
                     {
@@ -683,6 +713,7 @@ with tab_monitor:
                         "派彩": "✅" if has_div else "—",
                         "場地狀況": "✅" if has_tc else "—",
                         "天氣/風向（WindTracker）": "✅" if has_weather else "—",
+                        "步速（每場）": pace_disp,
                         "事件摘要（馬號＋描述）": rep_disp,
                         "沿途走位（runpos）": "✅" if has_runpos else "—",
                         "賽後評述（corunning）": "✅" if has_cor else "—",
@@ -746,6 +777,26 @@ with tab_monitor:
                         )
                     tbl.sort(key=lambda x: int(x.get("馬號") or 0))
                     st.dataframe(tbl, use_container_width=True, hide_index=True)
+
+            with v2.expander("步速（每場）", expanded=False):
+                row = session_m.query(RacePaceSnapshot).filter_by(race_id=int(sel_rid)).first()
+                if not row:
+                    st.info("未找到步速分類資料。")
+                else:
+                    cap = f"race_id={sel_rid}"
+                    try:
+                        if getattr(row, "updated_at", None):
+                            cap += f"｜updated_at={row.updated_at.isoformat()}"
+                    except Exception:
+                        pass
+                    if str(getattr(row, "pace_class", "") or "").strip():
+                        cap += f"｜pace_class={str(getattr(row,'pace_class','') or '').strip()}"
+                    if getattr(row, "delta_sec", None) is not None:
+                        cap += f"｜delta_sec={float(row.delta_sec):+.3f}"
+                    if getattr(row, "k_segments", None) is not None:
+                        cap += f"｜k={int(row.k_segments)}"
+                    st.caption(cap)
+                    st.json(row.meta if isinstance(row.meta, dict) else {})
 
         st.markdown("#### ⚡ 常用更新（集中）")
         st.caption("主流程建議只用下面幾個按鈕；進階/維護工具收合在下方，避免誤用導致資料不一致。")

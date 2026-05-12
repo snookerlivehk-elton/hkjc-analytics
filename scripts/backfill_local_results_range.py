@@ -15,6 +15,7 @@ from sqlalchemy import func
 from database.connection import get_session, init_db
 from database.models import Horse, Race, RaceDividend, RaceEntry, RaceResult, RaceTrackCondition, SystemConfig
 from data_scraper.local_results import LocalResultsScraper
+from scoring_engine.race_pace import compute_race_pace_for_race
 from scoring_engine.track_conditions import normalize_going
 from scoring_engine.config_value import build_meta, wrap_value
 
@@ -324,6 +325,10 @@ def main():
                 _upsert_track_condition(session, int(race.id), meta)
 
                 ok_rows = _upsert_results(session, race, payload)
+                try:
+                    compute_race_pace_for_race(session, int(race.id))
+                except Exception:
+                    pass
                 session.commit()
                 ok_races += 1 if ok_rows else 0
                 print(
