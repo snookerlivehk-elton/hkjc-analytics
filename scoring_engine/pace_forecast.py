@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy.orm import Session
 
 from database.models import EntryFact, Race, RaceEntry, RacePaceForecastSnapshot
+from scoring_engine.pace_forecast_calibration import apply_pace_forecast_calibration
 from scoring_engine.normalization import surface_code
 
 
@@ -199,11 +200,21 @@ def compute_race_pace_forecast_for_race(
     top_push = [x for x in horses_out if float(x.get("front_score") or 0.0) > 0][:5]
 
     conf = _calc_confidence(samples, field_size=field_size)
-    pace_class = _pace_class_from_front(front_sum, leader_count=leader_count, front_count=front_count)
+    raw_pace_class = _pace_class_from_front(front_sum, leader_count=leader_count, front_count=front_count)
 
     sc = surface_code(getattr(race, "surface", None), course_type=getattr(race, "course_type", None))
     if sc not in {"TURF", "AW"}:
         sc = "TURF"
+
+    score_avg = float(front_sum) / float(int(topk) if int(topk) > 0 else 1)
+    pace_class, calib_info = apply_pace_forecast_calibration(
+        session,
+        venue=str(getattr(race, "venue", "") or "").strip(),
+        surface_code=str(sc),
+        distance=int(getattr(race, "distance", 0) or 0),
+        score_avg=float(score_avg),
+        raw_pace_class=str(raw_pace_class),
+    )
 
     row = session.query(RacePaceForecastSnapshot).filter_by(race_id=int(race_id)).first()
     if not row:
@@ -225,11 +236,14 @@ def compute_race_pace_forecast_for_race(
     row.pace_class = str(pace_class)
     row.confidence = str(conf)
     row.meta = {
-        "schema": "pace_forecast:v3",
+        "schema": "pace_forecast:v4",
         "cutoff_day": cutoff_day.isoformat(),
         "sample_n": int(sample_n or 0),
         "smooth_n": int(smooth_n),
         "front_topk": int(topk),
+        "score_avg": float(round(float(score_avg), 6)),
+        "raw_pace_class": str(raw_pace_class),
+        "calibration": dict(calib_info or {}),
         "horses": horses_out,
         "top_push": top_push,
         "computed_at": datetime.utcnow().isoformat(),

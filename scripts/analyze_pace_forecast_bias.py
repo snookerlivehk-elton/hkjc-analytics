@@ -79,10 +79,39 @@ def main():
         print("actual_dist", act_cnt)
         print("top_pairs", pairs[:30])
 
+        rows2 = (
+            session.query(
+                RacePaceForecastSnapshot.pace_class,
+                RacePaceForecastSnapshot.meta,
+                RacePaceSnapshot.pace_class,
+            )
+            .join(RacePaceSnapshot, RacePaceSnapshot.race_id == RacePaceForecastSnapshot.race_id)
+            .join(Race, Race.id == RacePaceForecastSnapshot.race_id)
+            .filter(Race.race_date >= start_dt)
+            .filter(Race.race_date < end_dt)
+            .all()
+        )
+        raw_pred_cnt_map = {}
+        raw_pair_map = {}
+        for p, m, a in rows2:
+            pred = str(p or "").strip()
+            meta = m if isinstance(m, dict) else {}
+            raw = str(meta.get("raw_pace_class") or pred).strip()
+            act = str(a or "").strip()
+            if raw:
+                raw_pred_cnt_map[raw] = int(raw_pred_cnt_map.get(raw, 0)) + 1
+            if raw and act:
+                k = (raw, act)
+                raw_pair_map[k] = int(raw_pair_map.get(k, 0)) + 1
+
+        raw_pred_cnt = sorted([(k, int(v)) for k, v in raw_pred_cnt_map.items()], key=lambda x: x[1], reverse=True)
+        raw_pairs = sorted([((k[0], k[1]), int(v)) for k, v in raw_pair_map.items()], key=lambda x: x[1], reverse=True)
+        print("raw_pred_dist", raw_pred_cnt)
+        print("raw_top_pairs", raw_pairs[:30])
+
     finally:
         session.close()
 
 
 if __name__ == "__main__":
     main()
-
