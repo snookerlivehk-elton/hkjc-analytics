@@ -15,6 +15,7 @@ from database.connection import init_db, get_session
 from database.models import Race, RaceEntry, SystemConfig
 from data_scraper.speedpro_energy import SpeedProEnergyScraper
 from data_scraper.speedpro_formguide import SpeedProFormGuideScraper
+from scripts.fetch_race_reportext import main as fetch_race_reportext_main
 
 
 HK_TZ = ZoneInfo("Asia/Hong_Kong")
@@ -164,6 +165,99 @@ def _race_nos(session, racedate_str: str):
     return out if out else list(range(1, 10))
 
 
+def _should_enable_race_reportext() -> bool:
+    v = str(os.environ.get("ENABLE_RACEREPORTEXT") or "").strip().lower()
+    if not v:
+        return False
+    return v in ("1", "true", "yes")
+
+
+def _maybe_fetch_race_reportext(session, racedate_str: str, now_hk: datetime) -> None:
+    if not _should_enable_race_reportext():
+        return
+    try:
+        d = datetime.strptime(racedate_str, "%Y/%m/%d").date()
+    except Exception:
+        return
+
+    cnt = (
+        session.query(Race.id)
+        .filter(Race.race_date >= datetime.combine(d, datetime.min.time()))
+        .filter(Race.race_date < datetime.combine(d, datetime.min.time()) + timedelta(days=1))
+        .count()
+    )
+    if int(cnt or 0) <= 0:
+        print(f"racereportext skip racedate={racedate_str} reason=no_races")
+        return
+
+    min_int_s = str(os.environ.get("RACEREPORTEXT_MIN_INTERVAL_MIN") or "").strip()
+    try:
+        min_int = int(min_int_s) if min_int_s else 60
+    except Exception:
+        min_int = 60
+    if min_int < 1:
+        min_int = 1
+
+    state_key = f"racereportext_cron_state:{racedate_str}"
+    st_cfg = _get_cfg(session, state_key)
+    st = st_cfg.value if st_cfg and isinstance(st_cfg.value, dict) else {}
+    last_ok = str(st.get("last_ok_at") or "").strip()
+    if last_ok:
+        try:
+            ts = datetime.fromisoformat(last_ok)
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=HK_TZ)
+            if now_hk - ts < timedelta(minutes=int(min_int)):
+                return
+        except Exception:
+            pass
+
+    st2 = {
+        "last_attempt_at": now_hk.isoformat(),
+        "last_ok_at": st.get("last_ok_at"),
+        "last_result": st.get("last_result"),
+        "last_error": None,
+    }
+    _upsert_cfg(session, state_key, st2, f"RaceReportExt cron state（racedate={racedate_str}）")
+
+    os.environ["TARGET_DATE"] = racedate_str
+    try:
+        res = fetch_race_reportext_main()
+    except Exception as e:
+        st3 = {
+            "last_attempt_at": now_hk.isoformat(),
+            "last_ok_at": st.get("last_ok_at"),
+            "last_result": None,
+            "last_error": str(e),
+        }
+        _upsert_cfg(session, state_key, st3, f"RaceReportExt cron state（racedate={racedate_str}）")
+        print(f"racereportext error racedate={racedate_str} err={e}")
+        return
+
+    rr = res if isinstance(res, dict) else {}
+    ok_races = int(rr.get("ok_races") or 0) if isinstance(rr.get("ok_races"), (int, float, str)) else 0
+    items = int(rr.get("items") or 0) if isinstance(rr.get("items"), (int, float, str)) else 0
+    if ok_races <= 0 and items <= 0:
+        st4 = {
+            "last_attempt_at": now_hk.isoformat(),
+            "last_ok_at": st.get("last_ok_at"),
+            "last_result": rr,
+            "last_error": "no_data",
+        }
+        _upsert_cfg(session, state_key, st4, f"RaceReportExt cron state（racedate={racedate_str}）")
+        print(f"racereportext skip racedate={racedate_str} reason=no_data")
+        return
+
+    st5 = {
+        "last_attempt_at": now_hk.isoformat(),
+        "last_ok_at": now_hk.isoformat(),
+        "last_result": rr,
+        "last_error": None,
+    }
+    _upsert_cfg(session, state_key, st5, f"RaceReportExt cron state（racedate={racedate_str}）")
+    print(f"racereportext ok racedate={racedate_str} ok_races={ok_races} items={items}")
+
+
 def _expected_horse_count(session, racedate_str: str, race_no: int) -> Optional[int]:
     try:
         d = datetime.strptime(racedate_str, "%Y/%m/%d").date()
@@ -193,6 +287,7 @@ def main():
         now_hk = datetime.now(HK_TZ)
         force = str(os.environ.get("FORCE_SPEEDPRO_FETCH") or "").strip().lower() in ("1", "true", "yes")
         racedate_str = _target_racedate_str(session)
+        _maybe_fetch_race_reportext(session, racedate_str, now_hk)
         window_start, window_end = _window(session, racedate_str)
         if (not force) and window_start and now_hk < window_start:
             print(f"too early racedate={racedate_str} window_start={window_start.isoformat()}")

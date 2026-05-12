@@ -45,9 +45,11 @@ def main():
         )
         if not races:
             logger.info(f"race_reportext no_races date={target_date_str}")
-            return
+            return {"date": target_date_str, "races": 0, "ok_races": 0, "failed_races": 0, "items": 0}
 
         total_items = 0
+        ok_races = 0
+        failed_races = 0
         for r in races:
             rn = int(getattr(r, "race_no", 0) or 0)
             v = str(getattr(r, "venue", "") or "").strip()
@@ -59,6 +61,7 @@ def main():
             except Exception as e:
                 logger.warning(f"race_reportext_fetch_failed date={target_date_str} venue={v} race_no={rn} err={str(e)}")
                 session.rollback()
+                failed_races += 1
                 continue
 
             rk = race_key(getattr(r, "race_date", None), v, rn)
@@ -147,9 +150,17 @@ def main():
                 total_items += 1
 
             session.commit()
+            ok_races += 1
             logger.info(f"race_reportext_ok date={target_date_str} venue={v} race_no={rn} items={len(items)} url={url}")
 
         logger.info(f"race_reportext_done date={target_date_str} items={total_items}")
+        return {
+            "date": target_date_str,
+            "races": len(races),
+            "ok_races": int(ok_races),
+            "failed_races": int(failed_races),
+            "items": int(total_items),
+        }
     finally:
         session.close()
 
