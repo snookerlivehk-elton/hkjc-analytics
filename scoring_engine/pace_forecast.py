@@ -148,17 +148,19 @@ def compute_race_pace_forecast_for_race(
     horses_out = []
     fs_list: List[float] = []
     for hid in horse_ids:
-        seq = seq_by_hid.get(int(hid)) or []
-        n = int(len(seq))
-        samples.append(n)
+        seq_all = seq_by_hid.get(int(hid)) or []
+        seq = list(seq_all)[: int(smooth_n)]
+        n_total = int(len(seq_all))
+        n_used = int(len(seq))
+        samples.append(n_used)
 
         c_front = sum(1 for x in seq if str(x) in {"LEADER", "PROMINENT"})
         c_mid = sum(1 for x in seq if str(x) == "MIDFIELD")
         c_back = sum(1 for x in seq if str(x) == "BACKMARKER")
 
-        denom = int(min(int(n), int(smooth_n))) if int(smooth_n) > 0 else int(n)
+        denom = int(smooth_n)
         denom = max(1, denom)
-        missing = int(max(0, int(denom) - int(n)))
+        missing = int(max(0, int(denom) - int(n_used)))
 
         p_front = (float(c_front) + float(missing) * _NEUTRAL_P) / float(denom)
         p_mid = (float(c_mid) + float(missing) * _NEUTRAL_P) / float(denom)
@@ -174,8 +176,9 @@ def compute_race_pace_forecast_for_race(
             {
                 "horse_id": int(hid),
                 "horse_no": int(entry_map.get(int(hid)) or 0) or None,
-                "n": int(n),
-                "smooth_n": int(denom),
+                "n": int(n_total),
+                "n_used": int(n_used),
+                "smooth_n": int(smooth_n),
                 "p_front": float(round(p_front, 4)),
                 "p_mid": float(round(p_mid, 4)),
                 "p_back": float(round(p_back, 4)),
@@ -222,7 +225,7 @@ def compute_race_pace_forecast_for_race(
     row.pace_class = str(pace_class)
     row.confidence = str(conf)
     row.meta = {
-        "schema": "pace_forecast:v2",
+        "schema": "pace_forecast:v3",
         "cutoff_day": cutoff_day.isoformat(),
         "sample_n": int(sample_n or 0),
         "smooth_n": int(smooth_n),
