@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 from datetime import datetime
 
 def setup_logger(name="hkjc_analytics"):
@@ -16,7 +17,7 @@ def setup_logger(name="hkjc_analytics"):
     file_handler.setLevel(logging.INFO)
     
     # 終端機 Handler
-    console_handler = logging.StreamHandler()
+    console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.INFO)
     
     # 格式設定

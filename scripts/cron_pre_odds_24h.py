@@ -162,6 +162,7 @@ def main():
                 f"not_due now_hk={now_hk.isoformat()} trigger={trigger_dt.isoformat()} first_post={first_post.isoformat()} anchor={anchor}"
             )
             return
+        print(f"due date={date_str} now_hk={now_hk.isoformat()} trigger={trigger_dt.isoformat()} first_post={first_post.isoformat()} anchor={anchor}")
 
         start, end = _day_range(date_str)
         races = (
@@ -239,6 +240,20 @@ def main():
         ok_races = 0
         total_races = 0
 
+        min_cov_s = str(os.environ.get("PRE_24H_MIN_COVERAGE") or "").strip()
+        try:
+            min_cov = float(min_cov_s) if min_cov_s else 0.35
+        except Exception:
+            min_cov = 0.35
+        min_cov = max(0.05, min(1.0, float(min_cov)))
+
+        min_rows_s = str(os.environ.get("PRE_24H_MIN_ROWS") or "").strip()
+        try:
+            min_rows = int(min_rows_s) if min_rows_s else 3
+        except Exception:
+            min_rows = 3
+        min_rows = max(1, int(min_rows))
+
         for rid, rn, v in races:
             try:
                 rno = int(rn or 0)
@@ -309,8 +324,11 @@ def main():
                 )
                 valid_cnt += 1
 
-            if valid_cnt < max(6, int(len(entry_by_hn) * 0.6)):
-                print(f"retry {date_str} R{rno} venue={venue} reason=no_odds_yet valid={valid_cnt}/{len(entry_by_hn)}")
+            need_min = max(int(min_rows), int(len(entry_by_hn) * float(min_cov)))
+            if valid_cnt < int(need_min):
+                print(
+                    f"retry {date_str} R{rno} venue={venue} reason=no_odds_yet valid={valid_cnt}/{len(entry_by_hn)} need>={int(need_min)}"
+                )
                 continue
 
             for row in to_add:
