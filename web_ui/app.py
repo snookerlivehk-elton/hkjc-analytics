@@ -1198,6 +1198,26 @@ def main():
             extra.append(f"可能放頭/前速={', '.join(leaders_disp)}")
         if pace_label != "—":
             extra.append(f"前速馬={front_count}｜放頭傾向={leader_count}｜前速強度Σ={front_sum:.2f}")
+            try:
+                hs = meta_pf.get("horses") if isinstance(meta_pf, dict) else None
+                if isinstance(hs, list) and hs:
+                    ns = []
+                    for h in hs:
+                        if not isinstance(h, dict):
+                            continue
+                        try:
+                            ns.append(int(h.get("n") or 0))
+                        except Exception:
+                            continue
+                    if ns:
+                        ok_n = sum(1 for x in ns if int(x) >= 3)
+                        denom = int(getattr(pace_row, "field_size", 0) or 0) if pace_row else 0
+                        denom = denom if denom > 0 else int(len(ns))
+                        cov = (ok_n / float(denom)) if denom > 0 else 0.0
+                        avg_n = sum(ns) / float(len(ns)) if len(ns) > 0 else 0.0
+                        extra.append(f"跑法樣本覆蓋={ok_n}/{denom}({cov*100:.0f}%)｜平均樣本n={avg_n:.1f}")
+            except Exception:
+                pass
         if extra:
             st.caption("｜".join(extra))
     except Exception:
