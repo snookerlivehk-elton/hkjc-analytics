@@ -1010,7 +1010,7 @@ def main():
                     st.markdown(rpt)
 
     with st.expander("🛰️ 數據源更新狀態", expanded=False):
-        from datetime import datetime
+        from datetime import datetime as _dt
         from zoneinfo import ZoneInfo
 
         racedate_str = ""
@@ -1028,7 +1028,7 @@ def main():
 
         def _iso_to_local(s: str):
             try:
-                dt = datetime.fromisoformat(str(s))
+                dt = _dt.fromisoformat(str(s))
                 if dt.tzinfo is None:
                     dt = dt.replace(tzinfo=hk_tz)
                 return dt.astimezone(hk_tz).strftime("%m/%d %H:%M")
@@ -1414,14 +1414,14 @@ def main():
 
                     with st.expander("🎯 會員組合命中率（可篩選）", expanded=False):
                         from sqlalchemy import and_, case, func
-                        from datetime import date, datetime, time, timedelta
+                        from datetime import date, datetime as _dt, time, timedelta
                         from scoring_engine.member_stats import _calc_hits
                         from scoring_engine.track_conditions import going_code_label
                         from scoring_engine.top5_odds_stats import ODDS_BUCKETS, compute_top5_odds_stats
 
                         def _filtered_race_rows(d1: date, d2: date, venue_sel: str, surface_sel: str, course_sel: str, going_sel: str, min_results: int):
-                            start = datetime.combine(d1, time.min)
-                            end = datetime.combine(d2, time.min) + timedelta(days=1)
+                            start = _dt.combine(d1, time.min)
+                            end = _dt.combine(d2, time.min) + timedelta(days=1)
                             q_races = (
                                 session.query(Race.id, Race.race_date, Race.race_no)
                                 .join(RaceEntry, RaceEntry.race_id == Race.id)
