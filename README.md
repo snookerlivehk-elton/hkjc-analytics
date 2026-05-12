@@ -62,7 +62,8 @@ hkjc_analytics/
 
 1. **互動式 Dashboard (web_ui/app.py)**：
    - **賽事選擇**：左側選單可依日期與場次切換數據。
-   - **專業排名表**：顯示排名、馬號、馬名、總分、勝率及系統建議（如首選、價值等）。
+   - **場次按鈕顯示規則**：只會顯示「當日有排位資料（race_entries）」的場次，避免資料不完整時出現多餘場次按鈕。
+   - **專業排名表**：顯示排名、馬號、馬名、跑法（近6）、總分、勝率及系統建議，並提供各時段賠率欄（24H/30M/15M/10M/5M/即時；格式=獨贏/位置）。
    - **動態權重配置**：使用者可透過滑桿即時調整計分因子的權重，系統會立即重新計算排名。
    - **會員組合**：每位會員最多可儲存 3 組權重配置，並可累積命中率統計。
 2. **數據管理後台 (web_ui/pages/1_數據管理.py)**：
@@ -100,6 +101,13 @@ hkjc_analytics/
 
 - 運維/排程/常見問題：見 [OPERATIONS.md](file:///c:/Users/User/.trae/hkjc_analytics/OPERATIONS.md)
 - 更新日誌（便於下次接手/回溯）：見 [CHANGELOG.md](file:///c:/Users/User/.trae/hkjc_analytics/CHANGELOG.md)
+
+## Odds 分段（供 UI 顯示）
+
+- `odds_history.odds_type`：
+  - `PRE_24H`：賽日第 1 場開跑前 24 小時快照
+  - `PRE_30M / PRE_15M / PRE_10M / PRE_5M`：臨場里程碑快照
+  - `Live`：即時賠率（run_scraper/Live）
 
 ## Top5 快照與命中結算（手動）
 

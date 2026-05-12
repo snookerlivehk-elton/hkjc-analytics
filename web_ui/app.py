@@ -1172,7 +1172,7 @@ def main():
         import math
         from typing import Optional
 
-        from database.models import RaceDayWeather, RacePaceForecastSnapshot, SystemConfig
+        from database.models import RaceDayWeather, RacePaceForecastSnapshot
         from scoring_engine.pace_forecast import PACE_ZH, compute_race_pace_forecast_for_race
 
         rday = None
