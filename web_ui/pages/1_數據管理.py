@@ -214,9 +214,10 @@ with tab_monitor:
     st.caption("用途：一眼檢查各資料域最後更新時間、缺口與重算狀態；並集中提供常用更新按鈕（分層：主流程／進階修復／維護工具）。")
 
     from datetime import date, datetime, time as dtime, timedelta
-    from database.models import Race, RaceEntry, RaceResult, RaceDividend, RaceTrackCondition, HorseHistory, OddsHistory, ScoringFactor, PredictionTop5, SystemConfig, RaceCoRunning
+    from database.models import Race, RaceEntry, RaceResult, RaceDividend, RaceTrackCondition, HorseHistory, OddsHistory, ScoringFactor, PredictionTop5, SystemConfig, RaceCoRunning, RawSnapshot
     from scoring_engine.config_value import unwrap_value
     from scoring_engine.normalization import venue_label
+    from sqlalchemy import func
 
     def _list_race_dates(session, need: int = 180):
         take_rows = max(200, int(need) * 20)
@@ -400,6 +401,16 @@ with tab_monitor:
             race_no_by_id = {int(getattr(r, "id") or 0): int(getattr(r, "race_no") or 0) for r in races if int(getattr(r, "id") or 0) > 0}
 
             entries_race_ids = set(rid for (rid,) in session_m.query(RaceEntry.race_id).filter(RaceEntry.race_id.in_(race_ids)).distinct().all())
+            entry_cnt_by_race_id = {
+                int(rid): int(cnt or 0)
+                for (rid, cnt) in (
+                    session_m.query(RaceEntry.race_id, func.count(RaceEntry.id))
+                    .filter(RaceEntry.race_id.in_(race_ids))
+                    .group_by(RaceEntry.race_id)
+                    .all()
+                )
+                if int(rid or 0) > 0
+            }
             scores_race_ids = set(
                 rid
                 for (rid,) in session_m.query(RaceEntry.race_id)
@@ -444,6 +455,34 @@ with tab_monitor:
             cor_race_ids = set(
                 rid for (rid,) in session_m.query(RaceCoRunning.race_id).filter(RaceCoRunning.race_id.in_(race_ids)).distinct().all()
             )
+            reportext_by_race_id = {}
+            try:
+                rep_rows = (
+                    session_m.query(RawSnapshot.race_id, RawSnapshot.payload, RawSnapshot.fetched_at)
+                    .filter(RawSnapshot.race_id.in_(race_ids))
+                    .filter(RawSnapshot.source == "HKJC_RACEREPORTEXT")
+                    .all()
+                )
+                for rid, payload, fetched_at in rep_rows:
+                    ridi = int(rid or 0)
+                    if ridi <= 0:
+                        continue
+                    items = payload.get("items") if isinstance(payload, dict) else None
+                    if not isinstance(items, list):
+                        items = []
+                    horses = set()
+                    for it in items:
+                        if not isinstance(it, dict):
+                            continue
+                        try:
+                            hn = int(it.get("horse_no") or 0)
+                        except Exception:
+                            hn = 0
+                        if hn > 0:
+                            horses.add(hn)
+                    reportext_by_race_id[ridi] = {"items": int(len(horses)), "fetched_at": fetched_at}
+            except Exception:
+                reportext_by_race_id = {}
 
             runpos_keys = [f"race_runpos:{date_str}:{int(race_no_by_id.get(rid) or 0)}" for rid in race_ids if int(race_no_by_id.get(rid) or 0) > 0]
             ai_keys = [f"ai_race_report:{date_str}:{int(race_no_by_id.get(rid) or 0)}" for rid in race_ids if int(race_no_by_id.get(rid) or 0) > 0]
@@ -472,30 +511,40 @@ with tab_monitor:
                 rep_key = f"ai_race_report:{date_str}:{rn}"
                 has_ai = rep_key in syscfg_key_set
 
+                exp_cnt = int(entry_cnt_by_race_id.get(rid) or 0)
+                rep_st = reportext_by_race_id.get(rid) if isinstance(reportext_by_race_id, dict) else None
+                rep_items = int(rep_st.get("items") or 0) if isinstance(rep_st, dict) else 0
+                rep_disp = "—"
+                if exp_cnt > 0 and rep_items > 0:
+                    rep_disp = f"{rep_items}/{exp_cnt}"
+                elif rep_items > 0:
+                    rep_disp = str(rep_items)
+
                 rows.append(
                     {
-                        "RaceNo": rn,
-                        "RaceID": rid,
-                        "地點": venue_label(getattr(r, "venue", ""), track_type=getattr(r, "track_type", None)),
-                        "排位": "✅" if has_entries else "—",
-                        "往績": "✅" if has_hh else "—",
-                        "計分": "✅" if has_scores else "—",
-                        "因子": "✅" if has_factors else "—",
-                        "Top5快照": "✅" if has_top5 else "—",
+                        "場次": rn,
+                        "Race ID": rid,
+                        "場地": venue_label(getattr(r, "venue", ""), track_type=getattr(r, "track_type", None)),
+                        "排位表": "✅" if has_entries else "—",
+                        "馬匹往績": "✅" if has_hh else "—",
+                        "計分結果": "✅" if has_scores else "—",
+                        "因子明細": "✅" if has_factors else "—",
+                        "Top5 快照": "✅" if has_top5 else "—",
                         "賽果": "✅" if has_results else "—",
                         "派彩": "✅" if has_div else "—",
                         "場地狀況": "✅" if has_tc else "—",
-                        "runpos": "✅" if has_runpos else "—",
-                        "corunning": "✅" if has_cor else "—",
-                        "AI報告": "✅" if has_ai else "—",
+                        "事件摘要（馬號＋描述）": rep_disp,
+                        "沿途走位（runpos）": "✅" if has_runpos else "—",
+                        "賽後評述（corunning）": "✅" if has_cor else "—",
+                        "AI 報告": "✅" if has_ai else "—",
                     }
                 )
 
-            df = pd.DataFrame(rows).sort_values(["RaceNo"])
+            df = pd.DataFrame(rows).sort_values(["場次"])
             st.dataframe(df, use_container_width=True, hide_index=True)
 
             st.markdown("#### 🔎 資料內容檢視")
-            race_nos = [int(x) for x in df["RaceNo"].tolist() if int(x or 0) > 0]
+            race_nos = [int(x) for x in df["場次"].tolist() if int(x or 0) > 0]
             sel_rn = st.selectbox("選擇場次", options=race_nos, index=0, key="monitor_race_no")
             rr = next((x for x in races if int(getattr(x, "race_no") or 0) == int(sel_rn)), None)
             sel_rid = int(getattr(rr, "id") or 0) if rr else 0
