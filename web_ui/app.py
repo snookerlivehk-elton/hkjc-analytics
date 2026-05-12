@@ -11,7 +11,7 @@ if root_path not in sys.path:
     sys.path.insert(0, root_path)
 
 from database.connection import get_session, init_db
-from database.models import Race, RaceEntry, ScoringFactor, ScoringWeight, Horse, SystemConfig, RaceResult, RaceDividend, RaceTrackCondition
+from database.models import Race, RaceEntry, ScoringFactor, ScoringWeight, Horse, SystemConfig, RaceResult, RaceDividend, RaceTrackCondition, OddsHistory
 from scoring_engine.core import ScoringEngine
 from scoring_engine.constants import DISABLED_FACTORS
 from scoring_engine.utils import estimate_win_probability
@@ -36,6 +36,15 @@ import asyncio
 import subprocess
 from datetime import datetime
 from datetime import date, time, timedelta
+
+ODDS_SEGMENTS = [
+    ("PRE_24H", "24H"),
+    ("PRE_30M", "30M"),
+    ("PRE_15M", "15M"),
+    ("PRE_10M", "10M"),
+    ("PRE_5M", "5M"),
+    ("Live", "即時"),
+]
 
 # 設定頁面配置
 st.set_page_config(page_title="HKJC 每場賽事獨立計分排名系統", page_icon="🏇", layout="wide")
@@ -433,6 +442,44 @@ def _cached_race_factor_scores(race_id: int, factor_names: tuple):
     finally:
         s.close()
 
+@st.cache_data(ttl=120)
+def _cached_race_odds_by_type(race_id: int, odds_types: tuple):
+    s = get_session()
+    try:
+        ots = [str(x) for x in list(odds_types or []) if str(x).strip()]
+        if not ots:
+            return {}
+        rows = (
+            s.query(RaceEntry.horse_no, OddsHistory.odds_type, OddsHistory.win_odds, OddsHistory.place_odds, OddsHistory.captured_at)
+            .join(OddsHistory, OddsHistory.entry_id == RaceEntry.id)
+            .filter(RaceEntry.race_id == int(race_id))
+            .filter(OddsHistory.odds_type.in_(ots))
+            .order_by(RaceEntry.horse_no.asc(), OddsHistory.odds_type.asc(), OddsHistory.captured_at.desc(), OddsHistory.id.desc())
+            .all()
+        )
+        out = {}
+        seen = set()
+        for hn, ot, wo, po, cat in rows:
+            try:
+                hni = int(hn or 0)
+            except Exception:
+                continue
+            if hni <= 0:
+                continue
+            ots2 = str(ot or "").strip()
+            if not ots2:
+                continue
+            k = (hni, ots2)
+            if k in seen:
+                continue
+            seen.add(k)
+            if hni not in out:
+                out[hni] = {}
+            out[hni][ots2] = {"win_odds": wo, "place_odds": po, "captured_at": cat}
+        return out
+    finally:
+        s.close()
+
 def get_db_status(session: Session):
     """獲取資料庫各表統計數量"""
     from database.models import Race, Horse, Jockey, Trainer, RaceEntry, ScoringFactor
@@ -562,7 +609,35 @@ def load_scoring_data(session: Session, race_id: int, weight_map: dict):
             hids = [int(x) for x in df["_horse_id"].tolist() if int(x or 0) > 0]
             prof = _cached_horse_runstyle_profile(race_day.isoformat(), tuple(sorted(set(hids))))
             df["跑法(近6)"] = df["_horse_id"].apply(lambda x: (prof.get(int(x)) or {}).get("近6") or "—")
-            df["跑法(近10)"] = df["_horse_id"].apply(lambda x: (prof.get(int(x)) or {}).get("近10") or "—")
+    except Exception:
+        pass
+
+    try:
+        odds_types = [x[0] for x in ODDS_SEGMENTS]
+        label_map = {str(k): str(v) for k, v in ODDS_SEGMENTS}
+        odds_map = _cached_race_odds_by_type(int(race_id), tuple(odds_types))
+
+        def _fmt_odds(wo, po) -> str:
+            try:
+                wof = float(wo) if wo is not None else None
+            except Exception:
+                wof = None
+            try:
+                pof = float(po) if po is not None else None
+            except Exception:
+                pof = None
+            if wof is None and pof is None:
+                return "—"
+            if wof is not None and pof is not None:
+                return f"{wof:.1f}/{pof:.1f}"
+            if wof is not None:
+                return f"{wof:.1f}"
+            return f"{pof:.1f}"
+
+        for ot in odds_types:
+            lab = label_map.get(str(ot), str(ot))
+            col = f"賠率({lab})"
+            df[col] = df["馬號"].apply(lambda hn: _fmt_odds((odds_map.get(int(hn)) or {}).get(str(ot), {}).get("win_odds"), (odds_map.get(int(hn)) or {}).get(str(ot), {}).get("place_odds")))
     except Exception:
         pass
 
@@ -2453,6 +2528,39 @@ def main():
                     active_name = st.session_state.get("selected_preset_name", "（手動調整）")
                     active_weights = st.session_state.get("active_weight_map", {})
                     active_top5 = _predict_topk_for_race(session, selected_race_id, active_weights, 5)
+
+                    odds_types = [x[0] for x in ODDS_SEGMENTS]
+                    label_map = {str(k): str(v) for k, v in ODDS_SEGMENTS}
+                    odds_map = _cached_race_odds_by_type(int(selected_race_id), tuple(odds_types))
+
+                    def _fmt_odds2(wo, po) -> str:
+                        try:
+                            wof = float(wo) if wo is not None else None
+                        except Exception:
+                            wof = None
+                        try:
+                            pof = float(po) if po is not None else None
+                        except Exception:
+                            pof = None
+                        if wof is None and pof is None:
+                            return "—"
+                        if wof is not None and pof is not None:
+                            return f"{wof:.1f}/{pof:.1f}"
+                        if wof is not None:
+                            return f"{wof:.1f}"
+                        return f"{pof:.1f}"
+
+                    def _top5_odds_str(top5: list, ot: str) -> str:
+                        xs = []
+                        for hn in (top5 or []):
+                            try:
+                                hni = int(hn)
+                            except Exception:
+                                continue
+                            node = (odds_map.get(int(hni)) or {}).get(str(ot), {}) if isinstance(odds_map, dict) else {}
+                            xs.append(f"{hni}({_fmt_odds2(node.get('win_odds'), node.get('place_odds'))})")
+                        return " ".join(xs) if xs else "—"
+
                     pr.append(
                         {
                             "組合": f"目前頁面：{active_name}",
@@ -2461,6 +2569,12 @@ def main():
                             "Top3": active_top5[2] if len(active_top5) > 2 else "",
                             "Top4": active_top5[3] if len(active_top5) > 3 else "",
                             "Top5": active_top5[4] if len(active_top5) > 4 else "",
+                            "Top5賠率(24H)": _top5_odds_str(active_top5, "PRE_24H"),
+                            "Top5賠率(30M)": _top5_odds_str(active_top5, "PRE_30M"),
+                            "Top5賠率(15M)": _top5_odds_str(active_top5, "PRE_15M"),
+                            "Top5賠率(10M)": _top5_odds_str(active_top5, "PRE_10M"),
+                            "Top5賠率(5M)": _top5_odds_str(active_top5, "PRE_5M"),
+                            "Top5賠率(即時)": _top5_odds_str(active_top5, "Live"),
                         }
                     )
                     for p in presets:
@@ -2473,6 +2587,12 @@ def main():
                                 "Top3": top5[2] if len(top5) > 2 else "",
                                 "Top4": top5[3] if len(top5) > 3 else "",
                                 "Top5": top5[4] if len(top5) > 4 else "",
+                                "Top5賠率(24H)": _top5_odds_str(top5, "PRE_24H"),
+                                "Top5賠率(30M)": _top5_odds_str(top5, "PRE_30M"),
+                                "Top5賠率(15M)": _top5_odds_str(top5, "PRE_15M"),
+                                "Top5賠率(10M)": _top5_odds_str(top5, "PRE_10M"),
+                                "Top5賠率(5M)": _top5_odds_str(top5, "PRE_5M"),
+                                "Top5賠率(即時)": _top5_odds_str(top5, "Live"),
                             }
                         )
                     st.dataframe(pd.DataFrame(pr), use_container_width=True, hide_index=True)
@@ -2656,7 +2776,10 @@ def main():
 
         active_name = st.session_state.get("selected_preset_name", "（手動調整）")
         with st.expander(f"🏆 專業排名表（目前權重：{active_name}）", expanded=True):
-            display_cols = ["排名", "馬號", "馬名", "跑法(近6)", "跑法(近10)", "總分", "預估勝率", "建議"]
+            display_cols = ["排名", "馬號", "馬名", "跑法(近6)", "總分", "預估勝率"]
+            for _, lab in ODDS_SEGMENTS:
+                display_cols.append(f"賠率({lab})")
+            display_cols.append("建議")
 
             def get_recommendation(row):
                 if row["排名"] == 1:
@@ -2691,10 +2814,15 @@ def main():
                 column_config={
                     "馬名": st.column_config.TextColumn(width="medium"),
                     "跑法(近6)": st.column_config.TextColumn(width="small"),
-                    "跑法(近10)": st.column_config.TextColumn(width="small"),
                     "騎師": st.column_config.TextColumn(width="medium"),
                     "練馬師": st.column_config.TextColumn(width="medium"),
                     "建議": st.column_config.TextColumn(width="medium"),
+                        "賠率(24H)": st.column_config.TextColumn(width="small"),
+                        "賠率(30M)": st.column_config.TextColumn(width="small"),
+                        "賠率(15M)": st.column_config.TextColumn(width="small"),
+                        "賠率(10M)": st.column_config.TextColumn(width="small"),
+                        "賠率(5M)": st.column_config.TextColumn(width="small"),
+                        "賠率(即時)": st.column_config.TextColumn(width="small"),
                 }
             )
 
