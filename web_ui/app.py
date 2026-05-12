@@ -254,20 +254,20 @@ def _cached_races_on_date(date_iso: str):
 
         if race_ids:
             e_rows = (
-                s.query(RaceEntry.race_id, RaceEntry.horse_id)
+                s.query(RaceEntry.race_id, RaceEntry.horse_no)
                 .filter(RaceEntry.race_id.in_(race_ids))
-                .order_by(RaceEntry.race_id.asc(), RaceEntry.horse_id.asc())
+                .order_by(RaceEntry.race_id.asc(), RaceEntry.horse_no.asc())
                 .all()
             )
             sig_by_rid = {int(rid): [] for rid in race_ids}
-            for rid, hid in e_rows:
+            for rid, hn in e_rows:
                 try:
                     ridi = int(rid)
-                    hidi = int(hid or 0)
+                    hni = int(hn or 0)
                 except Exception:
                     continue
-                if ridi in sig_by_rid and hidi > 0:
-                    sig_by_rid[ridi].append(hidi)
+                if ridi in sig_by_rid and hni > 0:
+                    sig_by_rid[ridi].append(hni)
 
             best_by_sig = {}
             for item in out:
@@ -289,6 +289,36 @@ def _cached_races_on_date(date_iso: str):
         return out
     finally:
         s.close()
+
+@st.cache_data(ttl=300)
+def _cached_hkjc_race_nos(race_date_slash: str):
+    import re
+    import requests
+    from bs4 import BeautifulSoup
+
+    date_str = str(race_date_slash or "").strip()
+    if not date_str:
+        return []
+    try:
+        url = "https://racing.hkjc.com/zh-hk/local/information/racecard"
+        resp = requests.get(url, params={"racedate": date_str, "RaceNo": 1}, timeout=15)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "lxml")
+        race_nos = set()
+        for a in soup.select("a[href*='RaceNo=']"):
+            m = re.search(r"RaceNo=(\d+)", a.get("href", ""), re.IGNORECASE)
+            if not m:
+                continue
+            try:
+                rn = int(m.group(1))
+            except Exception:
+                continue
+            if rn > 0:
+                race_nos.add(rn)
+        out = sorted(race_nos)
+        return out
+    except Exception:
+        return []
 
 
 @st.cache_data(ttl=60)
@@ -805,9 +835,11 @@ def main():
         selected_date_input = available_dates[0]
         
     selected_date_str = selected_date_input.strftime('%Y-%m-%d')
+    selected_date_hkjc = selected_date_input.strftime("%Y/%m/%d")
     
     # 過濾出該日期的所有場次
     races_on_date = _cached_races_on_date(selected_date_str)
+    hkjc_race_nos = _cached_hkjc_race_nos(selected_date_hkjc)
     
     st.sidebar.markdown("🏁 **選擇場次**")
 
@@ -815,21 +847,37 @@ def main():
         st.sidebar.warning("該日期沒有場次資料。")
         return
 
-    race_no_options = [int(r.get("race_no") or 0) for r in races_on_date if int(r.get("race_no") or 0) > 0]
-    race_no_to_id = {int(r.get("race_no")): int(r.get("id")) for r in races_on_date if int(r.get("race_no") or 0) > 0 and int(r.get("id") or 0) > 0}
+    race_no_to_id = {}
+    for r in races_on_date:
+        try:
+            rn = int(r.get("race_no") or 0)
+            rid = int(r.get("id") or 0)
+        except Exception:
+            continue
+        if rn <= 0 or rid <= 0:
+            continue
+        if rn not in race_no_to_id:
+            race_no_to_id[rn] = rid
 
-    if "selected_race_no" not in st.session_state or st.session_state.selected_race_no not in race_no_options:
-        st.session_state.selected_race_no = race_no_options[0]
+    race_no_options = hkjc_race_nos if hkjc_race_nos else sorted(list(race_no_to_id.keys()))
+    available_rns = [int(x) for x in race_no_options if int(x) in race_no_to_id]
+    if not available_rns:
+        st.sidebar.warning("該日期尚未有可用排位資料。")
+        return
+
+    if "selected_race_no" not in st.session_state or int(st.session_state.selected_race_no) not in available_rns:
+        st.session_state.selected_race_no = available_rns[0]
 
     cols = st.sidebar.columns(min(6, max(1, len(race_no_options))))
     for i, rn in enumerate(race_no_options):
         col = cols[i % len(cols)]
         label = f"{rn}"
-        if col.button(label, key=f"race_btn_{selected_date_str}_{rn}", use_container_width=True):
+        disabled = int(rn) not in race_no_to_id
+        if col.button(label, key=f"race_btn_{selected_date_str}_{rn}", use_container_width=True, disabled=disabled):
             st.session_state.selected_race_no = rn
             st.rerun()
 
-    selected_race_id = race_no_to_id[st.session_state.selected_race_no]
+    selected_race_id = race_no_to_id[int(st.session_state.selected_race_no)]
 
     # Sidebar: 權重動態調整 (可折疊)
     with st.sidebar.expander("⚙️ 權重配置 (動態調整)"):
