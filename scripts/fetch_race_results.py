@@ -1,6 +1,6 @@
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 # 加入專案根目錄到路徑，避免在部署環境找不到 database 模組
@@ -17,6 +17,8 @@ from scoring_engine.prediction_snapshots import finalize_prediction_top5_hits_fo
 from scoring_engine.entry_facts import build_entry_facts_for_race_date
 from scoring_engine.draw_stats_daily import rebuild_draw_stats_daily_for_race_date
 from scoring_engine.race_pace import compute_race_pace_for_race_date
+from scoring_engine.pace_forecast import compute_race_pace_forecast_for_race
+from scoring_engine.pace_forecast_calibration import learn_pace_forecast_calibration, save_pace_forecast_calibration
 from scoring_engine.track_conditions import normalize_going
 from scoring_engine.config_value import build_meta, unwrap_value, wrap_value
 from scoring_engine.normalization import venue_code
@@ -253,6 +255,89 @@ def main():
         print(f"完成：race_pace={res5}")
     except Exception as e:
         print(f"race_pace 更新失敗: {e}")
+
+    try:
+        enabled = str(os.environ.get("ENABLE_PACE_FORECAST_AUTO_LEARN") or "1").strip().lower() in ("1", "true", "yes")
+        if not enabled:
+            return
+
+        force = str(os.environ.get("FORCE_PACE_FORECAST_LEARN") or "").strip().lower() in ("1", "true", "yes")
+        learned_key = f"pace_forecast_calib_learned:{target_date}"
+        cfg0 = session.query(SystemConfig).filter_by(key=learned_key).first()
+        if cfg0 and not force:
+            payload0, _ = unwrap_value(cfg0.value)
+            if isinstance(payload0, dict) and payload0.get("done") is True:
+                print(f"Skip: pace forecast auto-learn already done ({target_date})")
+                return
+
+        lookback_s = str(os.environ.get("PACE_FORECAST_LEARN_LOOKBACK_DAYS") or "").strip()
+        try:
+            lookback_days = int(lookback_s) if lookback_s else 180
+        except Exception:
+            lookback_days = 180
+        lookback_days = max(30, int(lookback_days))
+
+        min_s = str(os.environ.get("PACE_FORECAST_LEARN_MIN_SAMPLES") or "").strip()
+        try:
+            min_samples = int(min_s) if min_s else 80
+        except Exception:
+            min_samples = 80
+
+        alpha_s = str(os.environ.get("PACE_FORECAST_LEARN_ALPHA") or "").strip()
+        try:
+            alpha = float(alpha_s) if alpha_s else 0.25
+        except Exception:
+            alpha = 0.25
+        alpha = max(0.0, min(1.0, float(alpha)))
+
+        try:
+            sample_n = int(str(os.environ.get("PACE_FORECAST_SAMPLE_N") or "").strip() or 10)
+        except Exception:
+            sample_n = 10
+
+        print(f"Auto-learn pace forecast calibration: date={target_date} lookback_days={lookback_days} alpha={alpha} min_samples={min_samples}")
+
+        for race in races:
+            try:
+                compute_race_pace_forecast_for_race(session, race_id=int(race.id), sample_n=int(sample_n))
+            except Exception:
+                pass
+
+        end_d = race_date_dt.date()
+        start_d = end_d - timedelta(days=int(lookback_days) - 1)
+        payload = learn_pace_forecast_calibration(
+            session,
+            start_date=start_d,
+            end_date=end_d,
+            min_samples=int(min_samples),
+            alpha=float(alpha),
+        )
+        save_pace_forecast_calibration(session, payload)
+
+        for race in races:
+            try:
+                compute_race_pace_forecast_for_race(session, race_id=int(race.id), sample_n=int(sample_n))
+            except Exception:
+                pass
+
+        cfg = session.query(SystemConfig).filter_by(key=learned_key).first()
+        if not cfg:
+            cfg = SystemConfig(key=learned_key, description="步速預測自動學習完成標記")
+            session.add(cfg)
+        cfg.value = wrap_value(
+            {
+                "done": True,
+                "date": str(target_date),
+                "trained_range": payload.get("trained_range") if isinstance(payload, dict) else None,
+                "n_pairs": int(payload.get("n_pairs") or 0) if isinstance(payload, dict) else 0,
+                "alpha": float(payload.get("alpha") or 0.0) if isinstance(payload, dict) else None,
+            },
+            build_meta(source="fetch_race_results", schema="pace_forecast_auto_learn:v1"),
+        )
+        session.commit()
+        print("OK: pace forecast calibration learned and applied")
+    except Exception as e:
+        print(f"[警告] pace forecast auto-learn failed: {e}")
 
 
 if __name__ == "__main__":

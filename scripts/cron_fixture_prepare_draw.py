@@ -11,7 +11,9 @@ if root_path not in sys.path:
     sys.path.insert(0, root_path)
 
 from database.connection import init_db, get_session
-from database.models import SystemConfig, PredictionTop5
+from sqlalchemy import func
+
+from database.models import Race, RacePaceSnapshot, SystemConfig, PredictionTop5
 from scripts.fetch_fixture import main as fetch_fixture_main
 
 
@@ -162,12 +164,89 @@ def main():
         session3 = get_session()
         try:
             from scoring_engine.prediction_snapshots import generate_prediction_top5_for_race_date
+            from scoring_engine.pace_forecast import compute_race_pace_forecast_for_race
+            from scoring_engine.pace_forecast_calibration import learn_pace_forecast_calibration, save_pace_forecast_calibration
 
             res = generate_prediction_top5_for_race_date(session3, target_date_str)
             print(f"OK: regenerated snapshots races={res.get('races')} factor_rows={res.get('factor_rows')} preset_rows={res.get('preset_rows')}")
 
             _upsert_cfg(session3, f"draw_card_hash:{target_date_str}", h, f"Draw hash for {target_date_str}")
             _upsert_cfg(session3, f"draw_prepared_at:{target_date_str}", datetime.now(HK_TZ).isoformat(), f"Prepared draw/rescore/snapshots at (HK) for {target_date_str}")
+
+            enabled = str(os.environ.get("ENABLE_PACE_FORECAST_AUTO_LEARN") or "1").strip().lower() in ("1", "true", "yes")
+            if enabled:
+                force = str(os.environ.get("FORCE_PACE_FORECAST_LEARN") or "").strip().lower() in ("1", "true", "yes")
+                state_key = "pace_forecast_calib_state:v1"
+                cfg_state = _get_cfg(session3, state_key)
+                last_end = str(cfg_state.value.get("last_end_date") or "") if (cfg_state and isinstance(cfg_state.value, dict)) else ""
+
+                latest_actual = session3.query(func.max(RacePaceSnapshot.race_date_day)).scalar()
+                if latest_actual and (force or str(latest_actual.isoformat()) != str(last_end)):
+                    lookback_s = str(os.environ.get("PACE_FORECAST_LEARN_LOOKBACK_DAYS") or "").strip()
+                    try:
+                        lookback_days = int(lookback_s) if lookback_s else 180
+                    except Exception:
+                        lookback_days = 180
+                    lookback_days = max(30, int(lookback_days))
+
+                    min_s = str(os.environ.get("PACE_FORECAST_LEARN_MIN_SAMPLES") or "").strip()
+                    try:
+                        min_samples = int(min_s) if min_s else 80
+                    except Exception:
+                        min_samples = 80
+
+                    alpha_s = str(os.environ.get("PACE_FORECAST_LEARN_ALPHA") or "").strip()
+                    try:
+                        alpha = float(alpha_s) if alpha_s else 0.25
+                    except Exception:
+                        alpha = 0.25
+                    alpha = max(0.0, min(1.0, float(alpha)))
+
+                    start_d = latest_actual - timedelta(days=int(lookback_days) - 1)
+                    end_d = latest_actual
+                    payload = learn_pace_forecast_calibration(
+                        session3,
+                        start_date=start_d,
+                        end_date=end_d,
+                        min_samples=int(min_samples),
+                        alpha=float(alpha),
+                    )
+                    save_pace_forecast_calibration(session3, payload)
+                    _upsert_cfg(
+                        session3,
+                        state_key,
+                        {
+                            "last_end_date": str(end_d.isoformat()),
+                            "trained_range": payload.get("trained_range") if isinstance(payload, dict) else None,
+                            "n_pairs": int(payload.get("n_pairs") or 0) if isinstance(payload, dict) else 0,
+                            "updated_at": datetime.utcnow().isoformat(),
+                        },
+                        "步速預測校準學習狀態",
+                    )
+                    print(f"OK: auto-learn pace calibration end={end_d.isoformat()} n_pairs={int(payload.get('n_pairs') or 0) if isinstance(payload, dict) else 0}")
+                else:
+                    print("Skip: no new actual pace data for learning")
+
+                try:
+                    sample_n = int(str(os.environ.get("PACE_FORECAST_SAMPLE_N") or "").strip() or 10)
+                except Exception:
+                    sample_n = 10
+                d = datetime.strptime(target_date_str, "%Y/%m/%d").date()
+                start_dt = datetime.combine(d, datetime.min.time())
+                end_dt = start_dt + timedelta(days=1)
+                race_ids = (
+                    session3.query(Race.id)
+                    .filter(Race.race_date >= start_dt)
+                    .filter(Race.race_date < end_dt)
+                    .order_by(Race.race_no.asc(), Race.id.asc())
+                    .all()
+                )
+                for (rid,) in race_ids:
+                    try:
+                        compute_race_pace_forecast_for_race(session3, race_id=int(rid), sample_n=int(sample_n))
+                    except Exception:
+                        pass
+                print(f"OK: refreshed pace forecasts for {target_date_str}")
         finally:
             session3.close()
     finally:
