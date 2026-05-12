@@ -141,6 +141,17 @@ def main():
         date_str = _target_racedate_str(session)
         start, end = _day_range(date_str)
 
+        watch_before_s = str(os.environ.get("ODDS_WATCH_BEFORE_MINUTES") or "").strip()
+        watch_after_s = str(os.environ.get("ODDS_WATCH_AFTER_MINUTES") or "").strip()
+        try:
+            watch_before_min = int(watch_before_s) if watch_before_s else 90
+        except Exception:
+            watch_before_min = 90
+        try:
+            watch_after_min = int(watch_after_s) if watch_after_s else 10
+        except Exception:
+            watch_after_min = 10
+
         tol_min_s = str(os.environ.get("ODDS_MILESTONE_TOL_MINUTES") or "").strip()
         rearm_s = str(os.environ.get("ODDS_MILESTONE_REARM_MINUTES") or "").strip()
         try:
@@ -194,26 +205,11 @@ def main():
             if not entry_by_hn:
                 continue
 
-            snap = scraper.get_wp_snapshot(race_no=rno, race_date=date_str, venue=venue)
-            odds_map = _normalize_odds_rows(list(snap.get("odds") or []))
-            pools = dict(snap.get("pools") or {})
-            update_time_hk = snap.get("update_time_hk")
-
-            post_time_hk_snap = str(snap.get("post_time_hk") or "").strip()
-            post_time_hk_use = str(post_time_hk_db or "").strip() or post_time_hk_snap
+            post_time_hk_use = str(post_time_hk_db or "").strip()
             post_dt = _parse_hhmm_dt(date_str, post_time_hk_use)
             if post_dt is None:
                 continue
             delta_min = int(round((post_dt - now_hk).total_seconds() / 60.0))
-
-            if post_time_hk_snap and (post_time_hk_snap != str(post_time_hk_db or "").strip()):
-                try:
-                    rr = session.query(Race).filter(Race.id == int(rid)).first()
-                    if rr and str(rr.post_time_hk or "").strip() != post_time_hk_snap:
-                        rr.post_time_hk = post_time_hk_snap
-                        session.commit()
-                except Exception:
-                    pass
 
             last_seen_key = f"odds_milestone_last_seen:{date_str}:{rno}"
             prev_delta: Optional[int] = None
@@ -223,6 +219,55 @@ def main():
                     prev_delta = int(last_v.get("delta_min"))
             except Exception:
                 prev_delta = None
+
+            if delta_min > int(watch_before_min):
+                if prev_delta is None:
+                    continue
+            if delta_min < -int(watch_after_min):
+                continue
+
+            should_fetch = False
+            if prev_delta is not None:
+                for m in ms:
+                    if (prev_delta > int(m)) and (delta_min <= int(m)):
+                        should_fetch = True
+                        break
+            else:
+                for m in ms:
+                    if abs(delta_min - int(m)) <= int(tol_min):
+                        should_fetch = True
+                        break
+
+            if not should_fetch:
+                try:
+                    _upsert_cfg(
+                        session,
+                        last_seen_key,
+                        {"delta_min": int(delta_min), "seen_at_hk": now_hk.isoformat(), "post_time_hk": post_time_hk_use},
+                        f"臨場賠率快照監測（最後一次 delta_min）（{date_str} R{rno}）",
+                    )
+                except Exception:
+                    pass
+                continue
+
+            snap = scraper.get_wp_snapshot(race_no=rno, race_date=date_str, venue=venue)
+            odds_map = _normalize_odds_rows(list(snap.get("odds") or []))
+            pools = dict(snap.get("pools") or {})
+            update_time_hk = snap.get("update_time_hk")
+
+            post_time_hk_snap = str(snap.get("post_time_hk") or "").strip()
+            if post_time_hk_snap and (post_time_hk_snap != post_time_hk_use):
+                post_time_hk_use = post_time_hk_snap
+                post_dt2 = _parse_hhmm_dt(date_str, post_time_hk_use)
+                if post_dt2 is not None:
+                    delta_min = int(round((post_dt2 - now_hk).total_seconds() / 60.0))
+                try:
+                    rr = session.query(Race).filter(Race.id == int(rid)).first()
+                    if rr and str(rr.post_time_hk or "").strip() != post_time_hk_snap:
+                        rr.post_time_hk = post_time_hk_snap
+                        session.commit()
+                except Exception:
+                    pass
 
             for m in ms:
                 total_events += 1
