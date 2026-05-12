@@ -32,6 +32,6 @@ nixPkgs = [
 
 [phases.build]
 cmds = [
-    "python -m pip install -r requirements.txt",
+    "python -m pip install --no-cache-dir --disable-pip-version-check --retries 10 --timeout 60 -r requirements.txt",
     "PLAYWRIGHT_BROWSERS_PATH=/app/playwright_browsers python -m playwright install chromium"
 ]
