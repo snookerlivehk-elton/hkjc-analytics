@@ -61,6 +61,15 @@ class RaceCardScraper:
         try:
             resp = self.session.get(url, headers=self.headers, timeout=10)
             soup = BeautifulSoup(resp.text, 'lxml')
+
+            try:
+                m_url = re.search(r"RaceNo=(\d+)", str(getattr(resp, "url", "") or ""), re.IGNORECASE)
+                if m_url:
+                    got_no = int(m_url.group(1))
+                    if int(got_no) != int(race_no):
+                        return {}
+            except Exception:
+                pass
             
             full_text = soup.get_text(separator=' ', strip=True)
             race_text = full_text
@@ -80,6 +89,8 @@ class RaceCardScraper:
                     end_i = min(cut_marks) if cut_marks else len(full_text)
                     if end_i > start_i:
                         race_text = full_text[start_i:end_i]
+                else:
+                    return {}
             except Exception:
                 race_text = full_text
             venue = "HV" if "跑馬地" in full_text else "ST"

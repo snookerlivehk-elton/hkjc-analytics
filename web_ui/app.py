@@ -243,11 +243,49 @@ def _cached_races_on_date(date_iso: str):
             .all()
         )
         out = []
+        race_ids = []
         for rid, rno, _ in rows:
             try:
-                out.append({"id": int(rid), "race_no": int(rno)})
+                ridi = int(rid)
+                out.append({"id": ridi, "race_no": int(rno)})
+                race_ids.append(ridi)
             except Exception:
                 continue
+
+        if race_ids:
+            e_rows = (
+                s.query(RaceEntry.race_id, RaceEntry.horse_id)
+                .filter(RaceEntry.race_id.in_(race_ids))
+                .order_by(RaceEntry.race_id.asc(), RaceEntry.horse_id.asc())
+                .all()
+            )
+            sig_by_rid = {int(rid): [] for rid in race_ids}
+            for rid, hid in e_rows:
+                try:
+                    ridi = int(rid)
+                    hidi = int(hid or 0)
+                except Exception:
+                    continue
+                if ridi in sig_by_rid and hidi > 0:
+                    sig_by_rid[ridi].append(hidi)
+
+            best_by_sig = {}
+            for item in out:
+                ridi = int(item.get("id") or 0)
+                rno = int(item.get("race_no") or 0)
+                sig = tuple(sig_by_rid.get(ridi) or [])
+                if not sig:
+                    continue
+                cur = best_by_sig.get(sig)
+                if cur is None:
+                    best_by_sig[sig] = {"id": ridi, "race_no": rno}
+                else:
+                    if int(rno) < int(cur.get("race_no") or 0):
+                        best_by_sig[sig] = {"id": ridi, "race_no": rno}
+
+            if best_by_sig:
+                out = list(best_by_sig.values())
+                out.sort(key=lambda x: (int(x.get("race_no") or 0), int(x.get("id") or 0)))
         return out
     finally:
         s.close()
