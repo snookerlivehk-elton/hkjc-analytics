@@ -10,9 +10,10 @@ if root_path not in sys.path:
     sys.path.insert(0, root_path)
 
 from database.connection import init_db, get_session
-from database.models import OddsHistory, Race, RaceEntry, SystemConfig
+from database.models import OddsHistory, Race, RaceEntry, RacePoolSnapshot, SystemConfig
 from data_scraper.odds import OddsScraper
 from scoring_engine.normalization import venue_code
+from scoring_engine.raw_snapshots import upsert_raw_snapshot
 
 
 HK_TZ = ZoneInfo("Asia/Hong_Kong")
@@ -54,6 +55,8 @@ def _target_racedate_str(session) -> str:
 
 
 def _is_within_window(now_hk: datetime) -> bool:
+    if str(os.environ.get("IGNORE_WINDOW") or "").strip().lower() in ("1", "true", "yes"):
+        return True
     d0 = now_hk.date()
     start = datetime.combine(d0, dtime(0, 30)).replace(tzinfo=HK_TZ)
     end = datetime.combine(d0, dtime(2, 0)).replace(tzinfo=HK_TZ)
@@ -85,6 +88,23 @@ def _normalize_odds_rows(rows: List[Dict]) -> Dict[int, Dict[str, float]]:
             continue
         out[int(hn)] = {"win_odds": wo_f, "place_odds": po_f}
     return out
+
+
+def _pool_amount(pools: Dict, label: str) -> Optional[int]:
+    if not isinstance(pools, dict):
+        return None
+    if label in pools:
+        try:
+            return int(pools[label])
+        except Exception:
+            return None
+    for k, v in pools.items():
+        if str(k).strip() == label:
+            try:
+                return int(v)
+            except Exception:
+                return None
+    return None
 
 
 def main():
@@ -162,8 +182,10 @@ def main():
             if venue not in {"HV", "ST"}:
                 venue = "HV"
 
-            odds_rows = scraper.get_win_place_odds(race_no=rno, race_date=date_str, venue=venue)
-            odds_map = _normalize_odds_rows(odds_rows)
+            snap = scraper.get_wp_snapshot(race_no=rno, race_date=date_str, venue=venue)
+            odds_map = _normalize_odds_rows(list(snap.get("odds") or []))
+            pools = dict(snap.get("pools") or {})
+            update_time_hk = snap.get("update_time_hk")
 
             valid_cnt = 0
             to_add: List[OddsHistory] = []
@@ -188,6 +210,47 @@ def main():
 
             for row in to_add:
                 session.add(row)
+
+            try:
+                day = start.date()
+                win_pool = _pool_amount(pools, "獨贏")
+                pla_pool = _pool_amount(pools, "位置")
+                ps = (
+                    session.query(RacePoolSnapshot)
+                    .filter_by(race_id=int(rid), snapshot_type="PRE_0100", source="BET_WP")
+                    .first()
+                )
+                if not ps:
+                    ps = RacePoolSnapshot(
+                        race_id=int(rid),
+                        race_date_day=day,
+                        venue=str(venue),
+                        race_no=int(rno),
+                        snapshot_type="PRE_0100",
+                        source="BET_WP",
+                    )
+                    session.add(ps)
+                ps.update_time_hk = str(update_time_hk or "").strip() or None
+                ps.pools = pools
+                ps.win_pool = int(win_pool) if win_pool is not None else None
+                ps.place_pool = int(pla_pool) if pla_pool is not None else None
+            except Exception:
+                pass
+
+            try:
+                upsert_raw_snapshot(
+                    session,
+                    source="BET_WP",
+                    entity_type="race",
+                    entity_key=f"{date_str}:{venue}:{int(rno)}:PRE_0100",
+                    payload=snap,
+                    race_id=int(rid),
+                    meta={"odds_type": "PRE_0100"},
+                    fetched_at=datetime.utcnow(),
+                )
+            except Exception:
+                pass
+
             session.commit()
             any_ok = True
             ok_races += 1
@@ -217,4 +280,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

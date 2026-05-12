@@ -152,6 +152,26 @@ class OddsHistory(Base):
     place_odds = Column(Float)
     captured_at = Column(DateTime, default=datetime.now)
 
+class RacePoolSnapshot(Base):
+    __tablename__ = "race_pool_snapshots"
+    id = Column(Integer, primary_key=True)
+    race_id = Column(Integer, ForeignKey("races.id"), index=True, nullable=False)
+    race_date_day = Column(Date, index=True, nullable=False)
+    venue = Column(String(10), index=True, nullable=False)
+    race_no = Column(Integer, index=True, nullable=False)
+    snapshot_type = Column(String(20), index=True, nullable=False)  # PRE_0100 | PRE_30M | PRE_15M | PRE_10M | PRE_5M | LIVE
+    source = Column(String(30), default="BET_WP", index=True)
+    update_time_hk = Column(String(20))
+    pools = Column(JSON)
+    win_pool = Column(Integer)
+    place_pool = Column(Integer)
+    captured_at = Column(DateTime, default=datetime.now, index=True)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, index=True)
+
+    race = relationship("Race")
+
+    __table_args__ = (UniqueConstraint("race_id", "snapshot_type", "source", name="ux_race_pool_snapshots_race_type_source"),)
+
 class RaceDividend(Base):
     __tablename__ = 'race_dividends'
     id = Column(Integer, primary_key=True)
