@@ -1124,8 +1124,6 @@ def main():
 
         pace_class = str(getattr(pace_row, "pace_class", "") or "").strip() if pace_row else ""
         pace_label = str(PACE_ZH.get(pace_class, "—"))
-        conf = str(getattr(pace_row, "confidence", "") or "").strip() if pace_row else ""
-        conf_zh = {"high": "高", "mid": "中", "low": "低"}.get(conf, "—")
         front_count = int(getattr(pace_row, "front_count", 0) or 0) if pace_row else 0
         leader_count = int(getattr(pace_row, "leader_count", 0) or 0) if pace_row else 0
         try:
@@ -1182,7 +1180,7 @@ def main():
         raint_s = _as_hk(getattr(w, "rain_total_mm", None) if w else None, "mm")
 
         p1, p2, p3, p4 = st.columns(4)
-        p1.metric("步速預測", f"{pace_label}（{conf_zh}）" if pace_label != "—" else "—")
+        p1.metric("步速預測", pace_label if pace_label != "—" else "—")
         p2.metric("氣溫", temp_s)
         p3.metric("土壤濕度", moist_s)
         p4.metric("雨量(10分鐘)", rain10_s)
@@ -1198,26 +1196,6 @@ def main():
             extra.append(f"可能放頭/前速={', '.join(leaders_disp)}")
         if pace_label != "—":
             extra.append(f"前速馬={front_count}｜放頭傾向={leader_count}｜前速強度Σ={front_sum:.2f}")
-            try:
-                hs = meta_pf.get("horses") if isinstance(meta_pf, dict) else None
-                if isinstance(hs, list) and hs:
-                    ns = []
-                    for h in hs:
-                        if not isinstance(h, dict):
-                            continue
-                        try:
-                            ns.append(int(h.get("n") or 0))
-                        except Exception:
-                            continue
-                    if ns:
-                        ok_n = sum(1 for x in ns if int(x) >= 3)
-                        denom = int(getattr(pace_row, "field_size", 0) or 0) if pace_row else 0
-                        denom = denom if denom > 0 else int(len(ns))
-                        cov = (ok_n / float(denom)) if denom > 0 else 0.0
-                        avg_n = sum(ns) / float(len(ns)) if len(ns) > 0 else 0.0
-                        extra.append(f"跑法樣本覆蓋={ok_n}/{denom}({cov*100:.0f}%)｜平均樣本n={avg_n:.1f}")
-            except Exception:
-                pass
         if extra:
             st.caption("｜".join(extra))
     except Exception:

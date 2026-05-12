@@ -1,4 +1,5 @@
 import math
+import os
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -29,6 +30,8 @@ PACE_ZH = {
     PACE_UNKNOWN: "—",
 }
 
+_NEUTRAL_P = 1.0 / 3.0
+
 
 def _front_score(p_front: float) -> float:
     try:
@@ -38,7 +41,12 @@ def _front_score(p_front: float) -> float:
     if not math.isfinite(a):
         return 0.0
     a = max(0.0, min(1.0, a))
-    return float(a)
+    denom = 1.0 - _NEUTRAL_P
+    if denom <= 0:
+        return 0.0
+    v = (a - _NEUTRAL_P) / denom
+    v = max(0.0, min(1.0, v))
+    return float(v)
 
 
 def _calc_confidence(samples: List[int], field_size: int) -> str:
@@ -59,17 +67,17 @@ def _pace_class_from_front(front_sum: float, leader_count: int, front_count: int
     lc = int(leader_count or 0)
     fc = int(front_count or 0)
 
-    if fc >= 3 or fs >= 2.4:
+    if fc >= 3 or fs >= 2.1:
         return PACE_VERY_FAST
-    if lc >= 1 and (fc >= 2 or fs >= 1.7):
+    if lc >= 1 and (fc >= 2 or fs >= 1.5):
         return PACE_FAST
-    if fc >= 1 or fs >= 1.1:
+    if fc >= 1 or fs >= 1.0:
         return PACE_MODERATE_FAST
-    if lc == 0 and fs <= 0.30:
+    if lc == 0 and fs <= 0.08:
         return PACE_VERY_SLOW
-    if lc == 0 and fs <= 0.70:
+    if lc == 0 and fs <= 0.25:
         return PACE_SLOW
-    if fs <= 0.95:
+    if fs <= 0.55:
         return PACE_MODERATE_SLOW
     return PACE_MODERATE
 
@@ -125,6 +133,13 @@ def compute_race_pace_forecast_for_race(
 
     entry_map = {int(hid): int(hno or 0) for _, hid, hno in entries if int(hid or 0) > 0}
 
+    smooth_s = str(os.environ.get("PACE_FORECAST_SMOOTH_N") or "").strip()
+    try:
+        smooth_n = int(smooth_s) if smooth_s else 6
+    except Exception:
+        smooth_n = 6
+    smooth_n = max(1, min(int(smooth_n), int(sample_n or 0) if int(sample_n or 0) > 0 else 6))
+
     front_sum = 0.0
     front_count = 0
     leader_count = 0
@@ -135,29 +150,21 @@ def compute_race_pace_forecast_for_race(
         seq = seq_by_hid.get(int(hid)) or []
         n = int(len(seq))
         samples.append(n)
-        if n <= 0:
-            horses_out.append(
-                {
-                    "horse_id": int(hid),
-                    "horse_no": int(entry_map.get(int(hid)) or 0) or None,
-                    "n": 0,
-                    "p_front": 0.0,
-                    "p_mid": 0.0,
-                    "p_back": 0.0,
-                    "front_score": 0.0,
-                }
-            )
-            continue
 
         c_front = sum(1 for x in seq if str(x) in {"LEADER", "PROMINENT"})
         c_mid = sum(1 for x in seq if str(x) == "MIDFIELD")
         c_back = sum(1 for x in seq if str(x) == "BACKMARKER")
-        p_front = c_front / float(n)
-        p_mid = c_mid / float(n)
-        p_back = c_back / float(n)
+
+        denom = int(min(int(n), int(smooth_n))) if int(smooth_n) > 0 else int(n)
+        denom = max(1, denom)
+        missing = int(max(0, int(denom) - int(n)))
+
+        p_front = (float(c_front) + float(missing) * _NEUTRAL_P) / float(denom)
+        p_mid = (float(c_mid) + float(missing) * _NEUTRAL_P) / float(denom)
+        p_back = (float(c_back) + float(missing) * _NEUTRAL_P) / float(denom)
         fs = _front_score(p_front)
         front_sum += float(fs)
-        if fs >= 0.55:
+        if fs >= 0.33:
             front_count += 1
         if p_front >= 0.70:
             leader_count += 1
@@ -167,6 +174,7 @@ def compute_race_pace_forecast_for_race(
                 "horse_id": int(hid),
                 "horse_no": int(entry_map.get(int(hid)) or 0) or None,
                 "n": int(n),
+                "smooth_n": int(denom),
                 "p_front": float(round(p_front, 4)),
                 "p_mid": float(round(p_mid, 4)),
                 "p_back": float(round(p_back, 4)),
@@ -204,9 +212,10 @@ def compute_race_pace_forecast_for_race(
     row.pace_class = str(pace_class)
     row.confidence = str(conf)
     row.meta = {
-        "schema": "pace_forecast:v1",
+        "schema": "pace_forecast:v2",
         "cutoff_day": cutoff_day.isoformat(),
         "sample_n": int(sample_n or 0),
+        "smooth_n": int(smooth_n),
         "horses": horses_out,
         "top_push": top_push,
         "computed_at": datetime.utcnow().isoformat(),
