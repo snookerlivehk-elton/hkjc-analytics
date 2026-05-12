@@ -361,7 +361,7 @@ def run_ai_race_summary(
     scenario_tag: str = "",
     save_as_scenario: bool = False,
 ) -> Dict[str, Any]:
-    from database.models import Race, RaceEntry, SystemConfig, PredictionTop5
+    from database.models import Race, RaceEntry, SystemConfig, PredictionTop5, RawSnapshot
     
     race = session.query(Race).filter(Race.id == race_id).first()
     if not race:
@@ -476,9 +476,38 @@ def run_ai_race_summary(
         
     # Build the input text
     fg_data = cfg.value
+    reportext_by_horse_no = {}
+    try:
+        snap = (
+            session.query(RawSnapshot)
+            .filter(RawSnapshot.race_id == int(race_id))
+            .filter(RawSnapshot.source == "HKJC_RACEREPORTEXT")
+            .filter(RawSnapshot.entity_type == "race")
+            .order_by(RawSnapshot.fetched_at.desc(), RawSnapshot.id.desc())
+            .first()
+        )
+        payload = snap.payload if snap and isinstance(snap.payload, dict) else None
+        items = payload.get("items") if isinstance(payload, dict) else None
+        if isinstance(items, list):
+            for it in items:
+                if not isinstance(it, dict):
+                    continue
+                try:
+                    hn = int(it.get("horse_no") or 0)
+                except Exception:
+                    hn = 0
+                if hn <= 0:
+                    continue
+                desc = str(it.get("desc") or "").strip()
+                if not desc:
+                    continue
+                reportext_by_horse_no[str(hn)] = desc
+    except Exception:
+        reportext_by_horse_no = {}
+
     input_lines = [
         f"賽事：{date_str} 第 {race_no} 場",
-        "以下是各匹馬的近期走勢評述與紀錄：\n"
+        "以下是各匹馬的近期走勢評述與紀錄（包含：賽績指引／量化因子／上次競賽事件摘要）：\n"
     ]
 
     try:
@@ -540,6 +569,10 @@ def run_ai_race_summary(
         rating = f_info.get("rating", "?")
         
         input_lines.append(f"### [{horse_no}] {h_name} (檔位: {draw}, 負磅: {weight}, 評分: {rating})")
+
+        rep_desc = reportext_by_horse_no.get(str(horse_no))
+        if rep_desc:
+            input_lines.append(f"上次競賽事件摘要: {rep_desc}")
         
         # Add specific factor scores if available
         f_scores = []
