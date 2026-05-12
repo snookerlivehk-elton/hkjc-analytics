@@ -539,7 +539,7 @@ with tab_monitor:
                 sp_val_by_key, fg_val_by_key = {}, {}
 
             # Odds snapshots (OddsHistory) + pool snapshots (RacePoolSnapshot)
-            odds_types = ["PRE_0100", "PRE_30M", "PRE_15M", "PRE_10M", "PRE_5M"]
+            odds_types = ["PRE_24H", "PRE_0100", "PRE_30M", "PRE_15M", "PRE_10M", "PRE_5M"]
             odds_cnt = {}
             pool_has = set()
             try:
@@ -650,14 +650,14 @@ with tab_monitor:
                     if cnt_fg > 0:
                         fg_disp = f"{cnt_fg}/{exp_cnt}"
 
-                odds_pre0100 = "—"
+                odds_pre24h = "—"
                 odds_30m = "—"
                 odds_15m = "—"
                 odds_10m = "—"
                 odds_5m = "—"
                 if exp_cnt > 0:
                     for ot, var in [
-                        ("PRE_0100", "odds_pre0100"),
+                        ("PRE_24H", "odds_pre24h"),
                         ("PRE_30M", "odds_30m"),
                         ("PRE_15M", "odds_15m"),
                         ("PRE_10M", "odds_10m"),
@@ -669,8 +669,8 @@ with tab_monitor:
                             val = f"{c}/{exp_cnt}" + (" 💰" if has_pool else "")
                         else:
                             val = ("—" + (" 💰" if has_pool else ""))
-                        if var == "odds_pre0100":
-                            odds_pre0100 = val
+                        if var == "odds_pre24h":
+                            odds_pre24h = val
                         elif var == "odds_30m":
                             odds_30m = val
                         elif var == "odds_15m":
@@ -679,6 +679,13 @@ with tab_monitor:
                             odds_10m = val
                         elif var == "odds_5m":
                             odds_5m = val
+                    if odds_pre24h.strip().startswith("—"):
+                        c01 = int(odds_cnt.get((rid, "PRE_0100")) or 0)
+                        has_pool01 = (rid, "PRE_0100") in pool_has
+                        if c01 > 0:
+                            odds_pre24h = f"{c01}/{exp_cnt}" + (" 💰" if has_pool01 else "")
+                        else:
+                            odds_pre24h = ("—" + (" 💰" if has_pool01 else ""))
 
                 has_weather = str(getattr(r, "venue", "") or "").strip() in has_weather_by_venue
                 pace_st = pace_by_race_id.get(rid) if isinstance(pace_by_race_id, dict) else None
@@ -704,7 +711,7 @@ with tab_monitor:
                         "計分結果": "✅" if has_scores else "—",
                         "因子明細": "✅" if has_factors else "—",
                         "Top5 快照": "✅" if has_top5 else "—",
-                        "賽前賠率（01:00）": odds_pre0100,
+                        "賽前賠率（24H）": odds_pre24h,
                         "臨場賠率（-30）": odds_30m,
                         "臨場賠率（-15）": odds_15m,
                         "臨場賠率（-10）": odds_10m,

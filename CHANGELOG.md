@@ -12,3 +12,6 @@
 - 賽果抓取保護：若 localresults 回傳頁面日期不符，略過不寫入；並提供後台清除誤寫賽果/派彩/走位工具。
 - 新增 01:00 賽前賠率快照：`cron_pre_odds_0100.py` 寫入 `odds_history.odds_type=PRE_0100`；統計/貼士的 `pre_race_latest` 支援 `PRE_*`。
 
+## 2026-05-12
+
+- 賽前賠率快照由固定 01:00 改為「賽日 R1 開跑前 24 小時」觸發：新增 `cron_pre_odds_24h.py`（`odds_history.odds_type=PRE_24H`，`race_pool_snapshots.snapshot_type=PRE_24H`）；監察面板顯示改為「賽前賠率（24H）」並兼容舊 `PRE_0100`。

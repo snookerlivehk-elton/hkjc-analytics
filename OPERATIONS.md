@@ -42,18 +42,18 @@
 - `scripts/fetch_race_results.py` 已加入「頁面日期不符就略過」保護
 - 如曾誤寫：後台「維護工具（高風險）」有「清除該日賽果/派彩/走位」
 
-## 6) 01:00 賽前賠率快照（PRE_0100）
+## 6) 賽前 24H 賠率快照（PRE_24H）
 
-- service：`pre-odds-0100`（cron）
-- Start command：`python scripts/cron_pre_odds_0100.py`
-- 建議 schedule（UTC）：`0 17 * * *`（香港 01:00）
-- 腳本內建窗口：HK 00:30–02:00 先工作，其他時間會 `outside window` 退出
+- service：`pre-odds-24h`（cron）
+- Start command：`python scripts/cron_pre_odds_24h.py`（舊 `cron_pre_odds_0100.py` 仍可用但已改為同一邏輯）
+- 建議 schedule（UTC）：`*/5 * * * *`（每 5 分鐘巡邏一次，腳本只會在「R1 開跑前 24 小時」窗口內實際落庫）
+- 腳本窗口：以賽日 R1 `post_time_hk` 作 anchor，觸發時間＝R1 開跑前 24 小時（可用 `PRE_ODDS_24H_WINDOW_MINUTES` 調整容錯窗口）
 - 落庫：
-  - `odds_history.odds_type = PRE_0100`
+  - `odds_history.odds_type = PRE_24H`
+  - `race_pool_snapshots.snapshot_type = PRE_24H`
   - 系統會以 `PRE_*` 作「賽前賠率」來源（`pre_race_latest`）
 
 ## 7) 檢查「每場開跑時間」是否入庫
 
 - `races.post_time_hk` 由排位爬蟲（racecard）抽取
 - 若為空：重新跑一次「抓排位」即可補回
-

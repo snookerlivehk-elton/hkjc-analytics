@@ -159,7 +159,7 @@ class RacePoolSnapshot(Base):
     race_date_day = Column(Date, index=True, nullable=False)
     venue = Column(String(10), index=True, nullable=False)
     race_no = Column(Integer, index=True, nullable=False)
-    snapshot_type = Column(String(20), index=True, nullable=False)  # PRE_0100 | PRE_30M | PRE_15M | PRE_10M | PRE_5M | LIVE
+    snapshot_type = Column(String(20), index=True, nullable=False)  # PRE_24H | PRE_0100 | PRE_30M | PRE_15M | PRE_10M | PRE_5M | LIVE
     source = Column(String(30), default="BET_WP", index=True)
     update_time_hk = Column(String(20))
     pools = Column(JSON)
