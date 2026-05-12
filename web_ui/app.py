@@ -4,6 +4,7 @@ import numpy as np
 import sys
 from pathlib import Path
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 
 # 加入專案路徑
 root_path = str(Path(__file__).resolve().parent.parent)
@@ -232,14 +233,17 @@ def _cached_races_on_date(date_iso: str):
         start = datetime.combine(d0, time.min)
         end = start + timedelta(days=1)
         rows = (
-            s.query(Race.id, Race.race_no)
+            s.query(Race.id, Race.race_no, func.count(RaceEntry.id))
+            .outerjoin(RaceEntry, RaceEntry.race_id == Race.id)
             .filter(Race.race_date >= start)
             .filter(Race.race_date < end)
-            .order_by(Race.race_no.asc())
+            .group_by(Race.id, Race.race_no)
+            .having(func.count(RaceEntry.id) > 0)
+            .order_by(Race.race_no.asc(), Race.id.asc())
             .all()
         )
         out = []
-        for rid, rno in rows:
+        for rid, rno, _ in rows:
             try:
                 out.append({"id": int(rid), "race_no": int(rno)})
             except Exception:
