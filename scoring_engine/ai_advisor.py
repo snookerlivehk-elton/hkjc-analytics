@@ -546,6 +546,7 @@ def run_ai_race_summary(
                             f"- 入圍跑法（末段）：{json.dumps(prof.get('top4_style_late_pct') or {}, ensure_ascii=False)}",
                                     f"- 勝出跑法（早段）：{json.dumps(prof.get('winner_style_early_pct') or prof.get('winner_style_pct') or {}, ensure_ascii=False)}",
                             f"- 步速分布（勝出/入圍；樣本={int(prof.get('pace_races') or 0)}）：{json.dumps({'勝出': (prof.get('winner_pace_pct') or {}), '入圍Top4': (prof.get('top4_pace_pct') or {})}, ensure_ascii=False)}",
+                                    f"- 步速分布（7級｜勝出/入圍；樣本={int(prof.get('pace7_races') or 0)}）：{json.dumps({'勝出': (prof.get('winner_pace7_pct') or {}), '入圍Top4': (prof.get('top4_pace7_pct') or {})}, ensure_ascii=False)}",
                             f"- 勝出 WinOdds（平均/中位）：{prof.get('winner_win_odds_avg')} / {prof.get('winner_win_odds_median')}",
                             f"- Top4 WinOdds（平均/中位）：{prof.get('top4_win_odds_avg')} / {prof.get('top4_win_odds_median')}",
                             "",

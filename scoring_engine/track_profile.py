@@ -8,7 +8,7 @@ from math import ceil
 
 from sqlalchemy.orm import Session
 
-from database.models import Race, RaceEntry, RaceResult, RaceTrackCondition, SystemConfig, RaceDividend
+from database.models import Race, RaceEntry, RaceResult, RaceTrackCondition, SystemConfig, RaceDividend, RacePaceSnapshot
 from scoring_engine.track_conditions import normalize_going
 from scoring_engine.config_value import build_meta, unwrap_value, wrap_value
 from scoring_engine.normalization import dist_bucket as _norm_dist_bucket
@@ -60,6 +60,16 @@ def _pos_to_band(pos: Optional[int], field_size: int) -> Optional[str]:
 
 STYLE_LABELS = {"front": "放頭", "mid": "中置", "back": "後上"}
 PACE_LABELS = {"fast": "快步速", "normal": "正常步速", "slow": "慢步速"}
+PACE7_LABELS = {
+    "very_fast": "極快步速",
+    "fast": "快步速",
+    "moderate_fast": "中等偏快步速",
+    "moderate": "中等步速",
+    "moderate_slow": "中等偏慢步速",
+    "slow": "慢步速",
+    "very_slow": "極慢步速",
+    "unknown": "—",
+}
 
 
 def _pct(counts: Dict[str, int], keys: List[str]) -> Dict[str, float]:
@@ -321,6 +331,25 @@ def compute_track_profiles(
             }
         )
 
+    pace7_by_rid: Dict[int, str] = {}
+    try:
+        race_ids = [int(x.get("race").id) for x in race_rows if isinstance(x, dict) and x.get("race") is not None]
+        race_ids = [int(x) for x in race_ids if int(x) > 0]
+        race_ids = list(dict.fromkeys(race_ids))
+        if race_ids:
+            rows7 = (
+                session.query(RacePaceSnapshot.race_id, RacePaceSnapshot.pace_class)
+                .filter(RacePaceSnapshot.race_id.in_(race_ids))
+                .all()
+            )
+            for rid, pc in rows7:
+                try:
+                    pace7_by_rid[int(rid)] = str(pc or "").strip() or "unknown"
+                except Exception:
+                    continue
+    except Exception:
+        pace7_by_rid = {}
+
     pacebase = {}
     for k, vals in pacebase_samples.items():
         v = [float(x) for x in vals if x is not None and float(x) > 0]
@@ -361,6 +390,9 @@ def compute_track_profiles(
                 "pace_winner": {"fast": 0, "normal": 0, "slow": 0},
                 "pace_top4": {"fast": 0, "normal": 0, "slow": 0},
                 "pace_races": 0,
+                "pace7_winner": {k: 0 for k in PACE7_LABELS.keys()},
+                "pace7_top4": {k: 0 for k in PACE7_LABELS.keys()},
+                "pace7_races": 0,
                 "winner_win_odds": [],
                 "top4_win_odds": [],
                 "updated_at": None,
@@ -377,6 +409,16 @@ def compute_track_profiles(
             st["pace_winner"][pace_tag] = int(st["pace_winner"].get(pace_tag) or 0) + 1
             for _rk, _e, _rr in top4:
                 st["pace_top4"][pace_tag] = int(st["pace_top4"].get(pace_tag) or 0) + 1
+
+        pace7_tag = pace7_by_rid.get(int(getattr(row.get("race"), "id", 0) or 0))
+        if pace7_tag:
+            p7 = str(pace7_tag or "").strip() or "unknown"
+            if p7 not in PACE7_LABELS:
+                p7 = "unknown"
+            st["pace7_races"] = int(st.get("pace7_races") or 0) + 1
+            st["pace7_winner"][p7] = int(st["pace7_winner"].get(p7) or 0) + 1
+            for _rk, _e, _rr in top4:
+                st["pace7_top4"][p7] = int(st["pace7_top4"].get(p7) or 0) + 1
 
         def add_styles(e: RaceEntry, prefix: str):
             hn = str(int(getattr(e, "horse_no", 0) or 0))
@@ -423,6 +465,8 @@ def compute_track_profiles(
 
         pw = _pct(st["pace_winner"], ["fast", "normal", "slow"])
         pt = _pct(st["pace_top4"], ["fast", "normal", "slow"])
+        p7w = _pct(st["pace7_winner"], list(PACE7_LABELS.keys()))
+        p7t = _pct(st["pace7_top4"], list(PACE7_LABELS.keys()))
 
         val = {
             "venue": st["venue"],
@@ -448,6 +492,9 @@ def compute_track_profiles(
             "pace_races": int(st.get("pace_races") or 0),
             "winner_pace_pct": {PACE_LABELS[k]: v for k, v in pw.items()},
             "top4_pace_pct": {PACE_LABELS[k]: v for k, v in pt.items()},
+            "pace7_races": int(st.get("pace7_races") or 0),
+            "winner_pace7_pct": {PACE7_LABELS[k]: v for k, v in p7w.items()},
+            "top4_pace7_pct": {PACE7_LABELS[k]: v for k, v in p7t.items()},
             "winner_win_odds_avg": _safe_avg(st["winner_win_odds"]),
             "winner_win_odds_median": _safe_median(st["winner_win_odds"]),
             "top4_win_odds_avg": _safe_avg(st["top4_win_odds"]),
@@ -461,7 +508,7 @@ def compute_track_profiles(
         m = build_meta(
             source="TRACK_PROFILE",
             fetched_at=datetime.utcnow().isoformat(),
-            schema="trkprof:v2",
+            schema="trkprof:v3",
             extra={"bucket_key": key, "n_races": int(val.get("n_races") or 0)},
         )
         cfg.value = wrap_value(val, m)

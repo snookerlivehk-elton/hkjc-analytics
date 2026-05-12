@@ -1041,6 +1041,12 @@ try:
                 c2.markdown(f"**步速分布（Top4；樣本={int(v.get('pace_races') or 0)}）**")
                 c2.dataframe(pd.DataFrame([v.get("top4_pace_pct") or {}]), use_container_width=True, hide_index=True)
 
+                c1, c2 = st.columns(2)
+                c1.markdown(f"**步速分布（7級｜勝出；樣本={int(v.get('pace7_races') or 0)}）**")
+                c1.dataframe(pd.DataFrame([v.get("winner_pace7_pct") or {}]), use_container_width=True, hide_index=True)
+                c2.markdown(f"**步速分布（7級｜Top4；樣本={int(v.get('pace7_races') or 0)}）**")
+                c2.dataframe(pd.DataFrame([v.get("top4_pace7_pct") or {}]), use_container_width=True, hide_index=True)
+
                 st.markdown("**平均賠率（Win Odds）**")
                 st.dataframe(
                     pd.DataFrame(
