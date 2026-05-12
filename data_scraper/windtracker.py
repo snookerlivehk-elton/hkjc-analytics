@@ -108,10 +108,10 @@ class WindTrackerScraper:
                 return None
 
         return {
-            "temperature_c": f(r"氣溫\s*([0-9.]+)\s*°C"),
-            "humidity_pct": f(r"相對濕度\s*([0-9.]+)\s*%"),
-            "rain_total_mm": mm(r"總雨量\s*([0-9.]+)\s*毫米"),
-            "rain_10min_mm": mm(r"最近10分鐘雨量\s*([0-9.]+)\s*毫米"),
+            "temperature_c": f(r"氣溫\s*([0-9.]+)\s*(?:°C|℃|度)"),
+            "humidity_pct": f(r"(?:相對濕度|濕度)\s*([0-9.]+)\s*%"),
+            "rain_total_mm": mm(r"總雨量\s*([0-9.]+)\s*(?:毫米|mm|MM)"),
+            "rain_10min_mm": mm(r"(?:最近\s*10\s*分鐘雨量|10\s*分鐘雨量|最近10分鐘雨量)\s*([0-9.]+)\s*(?:毫米|mm|MM)"),
             "soil_moisture_pct": f(r"土壤濕度\s*([0-9.]+)\s*%"),
         }
 

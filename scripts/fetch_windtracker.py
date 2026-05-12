@@ -1,5 +1,6 @@
+import os
 import sys
-from datetime import datetime
+from datetime import datetime, time as dtime, timedelta
 from pathlib import Path
 
 root_path = str(Path(__file__).resolve().parent.parent)
@@ -7,7 +8,7 @@ if root_path not in sys.path:
     sys.path.insert(0, root_path)
 
 from database.connection import get_session, init_db
-from database.models import RaceDayWeather, SystemConfig
+from database.models import Race, RaceDayWeather, SystemConfig
 from data_scraper.windtracker import WindTrackerScraper
 from scoring_engine.config_value import build_meta, wrap_value
 from scoring_engine.search_index import upsert_search_document
@@ -23,6 +24,40 @@ def main():
         payload = scraper.scrape_latest()
         ds = str(payload.get("race_date") or "").strip()
         v = str(payload.get("venue") or "").strip()
+
+        env_ds = str(os.environ.get("TARGET_DATE") or "").strip()
+        if (not ds) and env_ds:
+            ds = env_ds
+
+        race_date_day = None
+        if ds:
+            try:
+                race_date_day = datetime.strptime(ds, "%Y/%m/%d").date()
+            except Exception:
+                race_date_day = None
+
+        env_v = str(os.environ.get("TARGET_VENUE") or "").strip()
+        if (not v) and env_v:
+            v = env_v
+        if (not v) and race_date_day:
+            try:
+                start = datetime.combine(race_date_day, dtime.min)
+                end = start + timedelta(days=1)
+                rows_v = (
+                    session.query(Race.venue)
+                    .filter(Race.race_date >= start)
+                    .filter(Race.race_date < end)
+                    .filter(Race.venue != None)
+                    .distinct()
+                    .all()
+                )
+                venues = [str(x[0] or "").strip() for x in rows_v if x and str(x[0] or "").strip()]
+                venues = list(dict.fromkeys(venues))
+                if len(venues) == 1:
+                    v = venues[0]
+            except Exception:
+                pass
+
         key = f"windtracker:{ds}:{v}" if (ds and v) else "windtracker:latest"
 
         meta = build_meta(source="HKJC_WINDTRACKER", url=str(scraper.url), schema=key, extra={"race_date": ds, "venue": v})
@@ -34,13 +69,6 @@ def main():
             session.add(row)
         else:
             row.value = wrapped
-
-        race_date_day = None
-        if ds:
-            try:
-                race_date_day = datetime.strptime(ds, "%Y/%m/%d").date()
-            except Exception:
-                race_date_day = None
 
         metrics = payload.get("metrics") if isinstance(payload, dict) else None
         winds = payload.get("winds") if isinstance(payload, dict) else None
