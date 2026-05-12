@@ -117,11 +117,21 @@ async def run_daily_scraper():
                 if not tc:
                     tc = RaceTrackCondition(race_id=int(race.id), source="HKJC_RACECARD")
                     session.add(tc)
-                if going_raw and (not str(getattr(tc, "going_raw", "") or "").strip()):
-                    tc.going_raw = going_raw
-                    tc.going_code = str(going_code or going_raw)
-                if track_raw and (not str(getattr(tc, "track_raw", "") or "").strip()):
-                    tc.track_raw = track_raw
+                tc_source = str(getattr(tc, "source", "") or "").strip().upper()
+                if tc_source != "HKJC_LOCALRESULTS":
+                    old_raw = str(getattr(tc, "going_raw", "") or "").strip()
+                    old_code = str(getattr(tc, "going_code", "") or "").strip()
+                    if going_raw and (not old_raw or old_raw != going_raw):
+                        tc.going_raw = going_raw
+                    new_code = str(going_code or "").strip()
+                    if new_code and (not old_code or old_code != new_code):
+                        tc.going_code = new_code
+                    elif going_raw and (not old_code or old_code != going_raw) and (not new_code):
+                        tc.going_code = going_raw
+
+                    old_trk = str(getattr(tc, "track_raw", "") or "").strip()
+                    if track_raw and (not old_trk or old_trk != track_raw):
+                        tc.track_raw = track_raw
             except Exception:
                 pass
             
