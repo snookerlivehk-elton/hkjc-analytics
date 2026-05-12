@@ -10,7 +10,7 @@ if root_path not in sys.path:
     sys.path.insert(0, root_path)
 
 from database.connection import init_db, get_session
-from database.models import OddsHistory, Race, RaceEntry, RacePoolSnapshot, SystemConfig
+from database.models import OddsHistory, Race, RaceDayWeather, RaceEntry, RacePoolSnapshot, SystemConfig
 from data_scraper.odds import OddsScraper
 from scoring_engine.normalization import venue_code
 from scoring_engine.raw_snapshots import upsert_raw_snapshot
@@ -128,6 +128,65 @@ def main():
         if not races:
             print(f"no races date={date_str}")
             return
+
+        enable_weather = str(os.environ.get("ENABLE_WINDTRACKER_IN_PRE_ODDS") or "1").strip().lower() in ("1", "true", "yes")
+        weather_done: set[tuple[str, str, str]] = set()
+
+        def _bucket_5m_key(dt_hk: datetime) -> str:
+            try:
+                m0 = (int(dt_hk.minute) // 5) * 5
+            except Exception:
+                m0 = 0
+            dt2 = dt_hk.replace(minute=int(m0), second=0, microsecond=0)
+            return dt2.strftime("%Y%m%d%H%M")
+
+        def _maybe_update_weather(venue: str):
+            if not enable_weather:
+                return
+            bkey = _bucket_5m_key(now_hk)
+            sig = (str(date_str), str(venue), str(bkey))
+            if sig in weather_done:
+                return
+
+            try:
+                race_day = datetime.strptime(str(date_str), "%Y/%m/%d").date()
+            except Exception:
+                return
+            try:
+                row_w = session.query(RaceDayWeather).filter_by(race_date_day=race_day, venue=str(venue)).first()
+                if row_w and getattr(row_w, "updated_at", None):
+                    try:
+                        age_sec = (datetime.utcnow() - row_w.updated_at).total_seconds()
+                        if age_sec >= 0 and age_sec < 290:
+                            weather_done.add(sig)
+                            return
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            try:
+                from scripts.fetch_windtracker import main as _fetch_windtracker_main
+
+                os.environ["TARGET_DATE"] = str(date_str)
+                os.environ["TARGET_VENUE"] = str(venue)
+                _fetch_windtracker_main()
+                weather_done.add(sig)
+            except Exception:
+                return
+
+        try:
+            venues = []
+            for _rid, _rn, _v in races:
+                vv = venue_code(str(_v or "").strip())
+                if vv not in {"HV", "ST"}:
+                    vv = "HV"
+                venues.append(vv)
+            venues = list(dict.fromkeys(venues))
+            for vv in venues:
+                _maybe_update_weather(vv)
+        except Exception:
+            pass
 
         scraper = OddsScraper()
         any_ok = False
