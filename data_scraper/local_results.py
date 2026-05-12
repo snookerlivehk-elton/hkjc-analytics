@@ -62,6 +62,14 @@ class LocalResultsScraper:
         venue = ""
         venue = venue_code("HV" if (("跑馬地" in text) or ("Happy Valley" in text)) else ("ST" if (("沙田" in text) or ("Sha Tin" in text)) else ""))
 
+        race_no_page = None
+        m = re.search(r"第\s*(\d{1,2})\s*場", text)
+        if m:
+            try:
+                race_no_page = int(m.group(1))
+            except Exception:
+                race_no_page = None
+
         distance = 0
         m = re.search(r"(\d{3,4})\s*米", text)
         if m:
@@ -118,6 +126,7 @@ class LocalResultsScraper:
         return {
             "race_date_page": race_date_page,
             "venue": venue,
+            "race_no_page": race_no_page,
             "distance": distance,
             "surface": surface,
             "course_type": course_type,
@@ -158,6 +167,9 @@ class LocalResultsScraper:
                 header_row = cells
                 break
 
+        if header_row is None:
+            return []
+
         headers = header_row or []
         header_norms = [h.replace(" ", "") for h in headers]
         idx = {}
@@ -177,6 +189,9 @@ class LocalResultsScraper:
             elif ("獨贏" in h) and ("賠率" in h):
                 idx["win_odds"] = i
 
+        if "horse_no" not in idx:
+            return []
+
         rows = []
         for tr in table.find_all("tr"):
             tds = tr.find_all("td")
@@ -190,7 +205,7 @@ class LocalResultsScraper:
                     return ""
                 return cols[i]
 
-            rank_s = get_i("rank") or (cols[0] if cols else "")
+            rank_s = get_i("rank")
             horse_no_s = get_i("horse_no")
             horse_name_s = get_i("horse_name")
             margin_s = get_i("margin")
@@ -217,7 +232,7 @@ class LocalResultsScraper:
                 }
             )
 
-        rows = [r for r in rows if r.get("horse_no")]
+        rows = [r for r in rows if r.get("horse_no") and r.get("rank")]
         return rows
 
     def _parse_dividends(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:

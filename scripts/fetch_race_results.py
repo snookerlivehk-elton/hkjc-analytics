@@ -91,6 +91,17 @@ def main():
         if page_date and page_date != str(target_date):
             print(f"[略過] 賽果頁日期不符：expect={target_date} got={page_date}（通常表示該日未有賽果/網站回傳其他賽日）")
             continue
+        page_venue = str(meta.get("venue") or "").strip().upper()
+        if page_venue and page_venue != str(racecourse).strip().upper():
+            print(f"[略過] 賽果頁場地不符：expect={racecourse} got={page_venue}")
+            continue
+        try:
+            page_rn = int(meta.get("race_no_page")) if meta.get("race_no_page") is not None else None
+        except Exception:
+            page_rn = None
+        if page_rn and int(page_rn) != int(race.race_no or 0):
+            print(f"[略過] 賽果頁場次不符：expect={int(race.race_no or 0)} got={int(page_rn)}")
+            continue
 
         div = session.query(RaceDividend).filter_by(race_id=race.id).first()
         if not div:
@@ -112,6 +123,19 @@ def main():
             tc.updated_at = datetime.now()
 
         results = payload.get("results") or []
+        has_any_time = False
+        try:
+            for r in results:
+                if not isinstance(r, dict):
+                    continue
+                if str(r.get("finish_time") or "").strip():
+                    has_any_time = True
+                    break
+        except Exception:
+            has_any_time = False
+        if results and (not has_any_time):
+            print(f"[略過] 尚未有賽果（無完成時間）：{target_date} {racecourse} R{int(race.race_no or 0)}")
+            continue
         runpos_by_horse_no = {}
         for r in results:
             horse_no = r.get("horse_no") or 0

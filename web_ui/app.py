@@ -2654,6 +2654,7 @@ def main():
                 .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
                 .filter(RaceEntry.race_id == selected_race_id)
                 .filter(RaceResult.rank != None)
+                .filter(RaceResult.finish_time_sec != None)
                 .all()
             )
             rank_map = {int(h): int(r) for h, r in res_rows if h is not None and r is not None}
