@@ -99,13 +99,7 @@ def _trigger_time_for_raceday(session, date_str: str) -> Tuple[Optional[datetime
 def _is_within_trigger_window(now_hk: datetime, trigger_dt: datetime) -> bool:
     if str(os.environ.get("IGNORE_WINDOW") or "").strip().lower() in ("1", "true", "yes"):
         return True
-    win_s = str(os.environ.get("PRE_ODDS_24H_WINDOW_MINUTES") or "").strip()
-    try:
-        win_m = int(win_s) if win_s else 20
-    except Exception:
-        win_m = 20
-    win_m = max(1, int(win_m))
-    return (now_hk >= trigger_dt) and (now_hk <= (trigger_dt + timedelta(minutes=int(win_m))))
+    return now_hk >= trigger_dt
 
 
 def _normalize_odds_rows(rows: List[Dict]) -> Dict[int, Dict[str, float]]:
@@ -391,4 +385,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

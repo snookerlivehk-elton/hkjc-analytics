@@ -46,8 +46,8 @@
 
 - service：`pre-odds-24h`（cron）
 - Start command：`python scripts/cron_pre_odds_24h.py`（舊 `cron_pre_odds_0100.py` 仍可用但已改為同一邏輯）
-- 建議 schedule（UTC）：`*/5 * * * *`（每 5 分鐘巡邏一次，腳本只會在「R1 開跑前 24 小時」窗口內實際落庫）
-- 腳本窗口：以賽日 R1 `post_time_hk` 作 anchor，觸發時間＝R1 開跑前 24 小時（可用 `PRE_ODDS_24H_WINDOW_MINUTES` 調整容錯窗口）
+- 建議 schedule（UTC）：`*/5 * * * *`（每 5 分鐘巡邏一次；到達「R1 開跑前 24 小時」後會開始工作，直到落庫成功）
+- 腳本窗口：以賽日 R1 `post_time_hk` 作 anchor，觸發時間＝R1 開跑前 24 小時；若當刻未有 odds，後續 cron 會繼續 retry 直到成功（done key/exists guard 會避免重覆寫入）
 - 落庫：
   - `odds_history.odds_type = PRE_24H`
   - `race_pool_snapshots.snapshot_type = PRE_24H`
