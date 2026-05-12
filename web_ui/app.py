@@ -1061,6 +1061,143 @@ def main():
         going_display = str(getattr(race, "going", "") or "").strip()
     col4.metric("場地狀況", going_display or "N/A")
 
+    try:
+        from datetime import datetime as _dt
+        import math
+        from typing import Optional
+
+        from database.models import RaceDayWeather, RacePaceForecastSnapshot, SystemConfig
+        from scoring_engine.pace_forecast import PACE_ZH, compute_race_pace_forecast_for_race
+
+        rday = None
+        try:
+            rday = race.race_date.date() if race and getattr(race, "race_date", None) else None
+        except Exception:
+            rday = None
+
+        def _as_hk(v: Optional[float], unit: str = "") -> str:
+            if v is None:
+                return "—"
+            try:
+                f = float(v)
+            except Exception:
+                return "—"
+            if not math.isfinite(f):
+                return "—"
+            return f"{f:.1f}{unit}" if unit else f"{f:.1f}"
+
+        def _penetrometer_range_for_going(gc: str) -> Optional[str]:
+            gcs = str(gc or "").strip().upper()
+            if not gcs:
+                return None
+            cfg = session.query(SystemConfig).filter_by(key="racing_course:v1").first()
+            payload, _m = unwrap_value(cfg.value) if cfg else (None, {})
+            node = payload if isinstance(payload, dict) else {}
+            turf = ((node.get("going_maps") or {}).get("turf") if isinstance(node.get("going_maps"), dict) else None)
+            if not isinstance(turf, list):
+                return None
+            for row in turf:
+                if not isinstance(row, dict):
+                    continue
+                if str(row.get("going_code") or "").strip().upper() == gcs:
+                    v = str(row.get("penetrometer_range") or "").strip()
+                    return v or None
+            return None
+
+        pace_row = session.query(RacePaceForecastSnapshot).filter_by(race_id=int(selected_race_id)).first()
+        need_recalc = True
+        if pace_row and getattr(pace_row, "updated_at", None):
+            try:
+                dt0 = pace_row.updated_at
+                if dt0 and (_dt.utcnow() - dt0).total_seconds() < 1800:
+                    need_recalc = False
+            except Exception:
+                need_recalc = True
+        if need_recalc:
+            compute_race_pace_forecast_for_race(session, race_id=int(selected_race_id), sample_n=10)
+            pace_row = session.query(RacePaceForecastSnapshot).filter_by(race_id=int(selected_race_id)).first()
+
+        pace_class = str(getattr(pace_row, "pace_class", "") or "").strip() if pace_row else ""
+        pace_label = str(PACE_ZH.get(pace_class, "—"))
+        conf = str(getattr(pace_row, "confidence", "") or "").strip() if pace_row else ""
+        conf_zh = {"high": "高", "mid": "中", "low": "低"}.get(conf, "—")
+        front_count = int(getattr(pace_row, "front_count", 0) or 0) if pace_row else 0
+        leader_count = int(getattr(pace_row, "leader_count", 0) or 0) if pace_row else 0
+        try:
+            front_sum = float(getattr(pace_row, "front_sum", 0.0) or 0.0) if pace_row else 0.0
+        except Exception:
+            front_sum = 0.0
+
+        top_push = []
+        try:
+            meta_pf = getattr(pace_row, "meta", None) if pace_row else None
+            top_push = (meta_pf.get("top_push") if isinstance(meta_pf, dict) else None) or []
+            if not isinstance(top_push, list):
+                top_push = []
+        except Exception:
+            top_push = []
+        name_map = {}
+        try:
+            for e in _cached_race_entries_ui(int(selected_race_id)) or []:
+                try:
+                    name_map[int(e.get("horse_no") or 0)] = str(e.get("horse_name") or "").strip()
+                except Exception:
+                    continue
+        except Exception:
+            name_map = {}
+        leaders_disp = []
+        for x in top_push[:3]:
+            if not isinstance(x, dict):
+                continue
+            try:
+                hn = int(x.get("horse_no") or 0)
+            except Exception:
+                hn = 0
+            if hn <= 0:
+                continue
+            nm = name_map.get(hn) or ""
+            try:
+                fs = float(x.get("front_score") or 0.0)
+            except Exception:
+                fs = 0.0
+            leaders_disp.append(f"{hn}{(' ' + nm) if nm else ''}({fs:.2f})")
+
+        w = None
+        if rday and str(getattr(race, "venue", "") or "").strip():
+            w = (
+                session.query(RaceDayWeather)
+                .filter(RaceDayWeather.race_date_day == rday)
+                .filter(RaceDayWeather.venue == str(getattr(race, "venue", "") or "").strip())
+                .first()
+            )
+
+        temp_s = _as_hk(getattr(w, "temperature_c", None) if w else None, "°C")
+        moist_s = _as_hk(getattr(w, "soil_moisture_pct", None) if w else None, "%")
+        rain10_s = _as_hk(getattr(w, "rain_10min_mm", None) if w else None, "mm")
+        raint_s = _as_hk(getattr(w, "rain_total_mm", None) if w else None, "mm")
+
+        p1, p2, p3, p4 = st.columns(4)
+        p1.metric("步速預測", f"{pace_label}（{conf_zh}）" if pace_label != "—" else "—")
+        p2.metric("氣溫", temp_s)
+        p3.metric("土壤濕度", moist_s)
+        p4.metric("雨量(10分鐘)", rain10_s)
+
+        extra = []
+        if raint_s != "—":
+            extra.append(f"雨量(累計)={raint_s}")
+        gc2 = str(getattr(tc, "going_code", "") or "").strip() if tc else ""
+        pr = _penetrometer_range_for_going(gc2) if gc2 else None
+        if pr:
+            extra.append(f"度地儀範圍={pr}")
+        if leaders_disp:
+            extra.append(f"可能放頭/前速={', '.join(leaders_disp)}")
+        if pace_label != "—":
+            extra.append(f"前速馬={front_count}｜放頭傾向={leader_count}｜前速強度Σ={front_sum:.2f}")
+        if extra:
+            st.caption("｜".join(extra))
+    except Exception:
+        pass
+
     with st.expander("🤖 AI 賽事前瞻分析", expanded=False):
         date_key = ""
         try:
