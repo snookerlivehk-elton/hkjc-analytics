@@ -53,6 +53,34 @@ class LocalResultsScraper:
                         race_date_page = f"{yyyy}/{mm}/{dd}"
                 except Exception:
                     race_date_page = ""
+        if not race_date_page:
+            try:
+                for tag in soup.find_all(["input", "select"]):
+                    key = f"{str(tag.get('name') or '')} {str(tag.get('id') or '')}".lower()
+                    if "racedate" not in key:
+                        continue
+                    cand = ""
+                    if tag.name == "input":
+                        cand = str(tag.get("value") or "").strip()
+                    elif tag.name == "select":
+                        opt = tag.find("option", selected=True) or tag.find("option")
+                        if opt is not None:
+                            cand = str(opt.get("value") or opt.get_text(" ", strip=True) or "").strip()
+                    if not cand:
+                        continue
+                    m2 = re.search(r"(\d{4}[/-]\d{2}[/-]\d{2}|\d{2}[/-]\d{2}[/-]\d{4})", cand)
+                    if not m2:
+                        continue
+                    s2 = str(m2.group(1) or "").strip().replace("-", "/")
+                    if re.match(r"^\d{4}/\d{2}/\d{2}$", s2):
+                        race_date_page = s2
+                        break
+                    if re.match(r"^\d{2}/\d{2}/\d{4}$", s2):
+                        dd, mm, yyyy = s2.split("/")
+                        race_date_page = f"{yyyy}/{mm}/{dd}"
+                        break
+            except Exception:
+                pass
 
         going = ""
         m = re.search(r"場地狀況\s*:\s*([^\s]+)", text)

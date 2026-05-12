@@ -2,6 +2,7 @@ import os
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 # 加入專案根目錄到路徑，避免在部署環境找不到 database 模組
 root_path = str(Path(__file__).resolve().parent.parent)
@@ -83,15 +84,38 @@ def main():
 
     scraper = LocalResultsScraper()
     corunning = CoRunningScraper()
+    hk_tz = ZoneInfo("Asia/Hong_Kong")
     ok = 0
     for race in races:
         racecourse = venue_to_racecourse(race.venue)
         print(f"抓取賽果/派彩：{target_date} {racecourse} 第{race.race_no}場")
+        try:
+            rday = race.race_date.date() if getattr(race, "race_date", None) else None
+        except Exception:
+            rday = None
+        if rday:
+            if rday > datetime.now(hk_tz).date():
+                print(f"[略過] 賽事日子尚未到：{target_date} {racecourse} R{int(race.race_no or 0)}")
+                continue
+            pt = str(getattr(race, "post_time_hk", "") or "").strip()
+            if pt and ":" in pt and rday == datetime.now(hk_tz).date():
+                try:
+                    hh, mm = pt.split(":", 1)
+                    start_dt = datetime.combine(rday, datetime.strptime(f"{int(hh):02d}:{int(mm):02d}", "%H:%M").time()).replace(tzinfo=hk_tz)
+                    if datetime.now(hk_tz) < start_dt:
+                        print(f"[略過] 尚未開跑：post_time_hk={pt} {target_date} {racecourse} R{int(race.race_no or 0)}")
+                        continue
+                except Exception:
+                    pass
+
         payload = scraper.scrape_single_race(target_date, racecourse, race.race_no)
         meta = payload.get("meta") or {}
         page_date = str(meta.get("race_date_page") or "").strip().replace("-", "/")
         if page_date and page_date != str(target_date):
             print(f"[略過] 賽果頁日期不符：expect={target_date} got={page_date}（通常表示該日未有賽果/網站回傳其他賽日）")
+            continue
+        if (not page_date) and rday and rday >= datetime.now(hk_tz).date():
+            print(f"[略過] 無法確認賽果頁日期（保守略過）：{target_date} {racecourse} R{int(race.race_no or 0)}")
             continue
         page_venue = str(meta.get("venue") or "").strip().upper()
         if page_venue and page_venue != str(racecourse).strip().upper():
@@ -103,6 +127,33 @@ def main():
             page_rn = None
         if page_rn and int(page_rn) != int(race.race_no or 0):
             print(f"[略過] 賽果頁場次不符：expect={int(race.race_no or 0)} got={int(page_rn)}")
+            continue
+
+        results = payload.get("results") or []
+        has_valid_time = False
+        try:
+            for r in results:
+                if not isinstance(r, dict):
+                    continue
+                ft = str(r.get("finish_time") or "").strip()
+                if parse_finish_time_to_seconds(ft) is not None:
+                    has_valid_time = True
+                    break
+        except Exception:
+            has_valid_time = False
+        if results and (not has_valid_time):
+            print(f"[略過] 尚未有賽果（無有效完成時間）：{target_date} {racecourse} R{int(race.race_no or 0)}")
+            continue
+        try:
+            dist_page = int(meta.get("distance") or 0)
+        except Exception:
+            dist_page = 0
+        try:
+            dist_race = int(getattr(race, "distance", 0) or 0)
+        except Exception:
+            dist_race = 0
+        if dist_page and dist_race and dist_page != dist_race:
+            print(f"[略過] 賽果頁路程不符：expect={dist_race} got={dist_page} {target_date} {racecourse} R{int(race.race_no or 0)}")
             continue
 
         div = session.query(RaceDividend).filter_by(race_id=race.id).first()
@@ -124,20 +175,6 @@ def main():
             tc.track_raw = track_raw or None
             tc.updated_at = datetime.now()
 
-        results = payload.get("results") or []
-        has_any_time = False
-        try:
-            for r in results:
-                if not isinstance(r, dict):
-                    continue
-                if str(r.get("finish_time") or "").strip():
-                    has_any_time = True
-                    break
-        except Exception:
-            has_any_time = False
-        if results and (not has_any_time):
-            print(f"[略過] 尚未有賽果（無完成時間）：{target_date} {racecourse} R{int(race.race_no or 0)}")
-            continue
         runpos_by_horse_no = {}
         for r in results:
             horse_no = r.get("horse_no") or 0

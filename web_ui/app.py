@@ -1041,6 +1041,28 @@ def main():
 
     # 主面板：賽事資訊
     race = session.get(Race, selected_race_id)
+    race_started = True
+    try:
+        from datetime import datetime as _dt2, time as _time2
+        from zoneinfo import ZoneInfo as _ZoneInfo2
+
+        _hk_tz2 = _ZoneInfo2("Asia/Hong_Kong")
+        _now_hk2 = _dt2.now(_hk_tz2)
+        _rday2 = race.race_date.date() if race and getattr(race, "race_date", None) else None
+        if _rday2 and _rday2 > _now_hk2.date():
+            race_started = False
+        else:
+            _pt2 = str(getattr(race, "post_time_hk", "") or "").strip()
+            if _rday2 and _pt2 and ":" in _pt2:
+                try:
+                    _hh2, _mm2 = _pt2.split(":", 1)
+                    _start2 = _dt2.combine(_rday2, _time2(int(_hh2), int(_mm2))).replace(tzinfo=_hk_tz2)
+                    if _now_hk2 < _start2:
+                        race_started = False
+                except Exception:
+                    pass
+    except Exception:
+        pass
     st.subheader(f"📊 賽事詳情: {selected_date_str} | 第 {race.race_no} 場")
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("跑道資訊", race.track_type if race.track_type else race.venue)
@@ -2649,15 +2671,17 @@ def main():
 
             df["建議"] = df.apply(get_recommendation, axis=1)
 
-            res_rows = (
-                session.query(RaceEntry.horse_no, RaceResult.rank)
-                .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
-                .filter(RaceEntry.race_id == selected_race_id)
-                .filter(RaceResult.rank != None)
-                .filter(RaceResult.finish_time_sec != None)
-                .all()
-            )
-            rank_map = {int(h): int(r) for h, r in res_rows if h is not None and r is not None}
+            rank_map = {}
+            if race_started:
+                res_rows = (
+                    session.query(RaceEntry.horse_no, RaceResult.rank)
+                    .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
+                    .filter(RaceEntry.race_id == selected_race_id)
+                    .filter(RaceResult.rank != None)
+                    .filter(RaceResult.finish_time_sec != None)
+                    .all()
+                )
+                rank_map = {int(h): int(r) for h, r in res_rows if h is not None and r is not None}
             df_display = df[display_cols + ["騎師", "練馬師", "檔位", "負磅", "評分"]].copy()
             df_display.insert(0, "賽果", df_display["馬號"].apply(lambda x: rank_map.get(int(x), "")))
             st.dataframe(
@@ -2712,7 +2736,7 @@ def main():
 
         div = session.query(RaceDividend).filter_by(race_id=selected_race_id).first()
         has_div = bool(div and isinstance(div.dividends, list) and div.dividends)
-        if rank_map or has_div:
+        if race_started and (rank_map or has_div):
             with st.expander("🏁 賽果與派彩", expanded=False):
                 if rank_map:
                     top4 = sorted(rank_map.items(), key=lambda kv: kv[1])[:4]

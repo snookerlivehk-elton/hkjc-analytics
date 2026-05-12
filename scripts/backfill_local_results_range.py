@@ -152,17 +152,18 @@ def _upsert_results(session, race: Race, payload: Dict[str, Any]) -> bool:
     results = payload.get("results") or []
     if not isinstance(results, list) or not results:
         return False
-    has_any_time = False
+    has_valid_time = False
     try:
         for r in results:
             if not isinstance(r, dict):
                 continue
-            if str(r.get("finish_time") or "").strip():
-                has_any_time = True
+            ft = str(r.get("finish_time") or "").strip()
+            if parse_finish_time_to_seconds(ft) is not None:
+                has_valid_time = True
                 break
     except Exception:
-        has_any_time = False
-    if not has_any_time:
+        has_valid_time = False
+    if not has_valid_time:
         return False
 
     runpos_by_horse_no: Dict[str, str] = {}
@@ -244,17 +245,18 @@ def _try_scrape(scraper: LocalResultsScraper, date_str: str, racecourse: str, ra
         return None
     results = payload.get("results") if isinstance(payload.get("results"), list) else []
     divs = payload.get("dividends") if isinstance(payload.get("dividends"), list) else []
-    has_any_time = False
+    has_valid_time = False
     try:
         for r in results:
             if not isinstance(r, dict):
                 continue
-            if str(r.get("finish_time") or "").strip():
-                has_any_time = True
+            ft = str(r.get("finish_time") or "").strip()
+            if parse_finish_time_to_seconds(ft) is not None:
+                has_valid_time = True
                 break
     except Exception:
-        has_any_time = False
-    if (not divs) and (not has_any_time):
+        has_valid_time = False
+    if (not divs) and (not has_valid_time):
         return None
     return payload
 
