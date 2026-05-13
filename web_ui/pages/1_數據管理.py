@@ -668,6 +668,7 @@ with tab_monitor:
                 rid = int(getattr(r, "id") or 0)
                 rn = int(getattr(r, "race_no") or 0)
                 has_entries = rid in entries_race_ids
+                exp_cnt = int(entry_cnt_by_race_id.get(rid) or 0)
                 has_scores = rid in scores_race_ids
                 has_factors = rid in factors_race_ids
                 has_results = rid in results_race_ids
@@ -693,7 +694,6 @@ with tab_monitor:
                 ref_key = f"ai_race_reflection:{date_str}:{rn}"
                 has_reflection = ref_key in syscfg_key_set
 
-                exp_cnt = int(entry_cnt_by_race_id.get(rid) or 0)
                 rep_st = reportext_by_race_id.get(rid) if isinstance(reportext_by_race_id, dict) else None
                 rep_items = int(rep_st.get("items") or 0) if isinstance(rep_st, dict) else 0
                 rep_disp = "—"
