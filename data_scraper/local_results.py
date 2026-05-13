@@ -2,6 +2,7 @@ import re
 import requests
 from bs4 import BeautifulSoup
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse, parse_qs
 
 from scoring_engine.normalization import normalize_course_type, surface_code, venue_code
 
@@ -13,11 +14,16 @@ class LocalResultsScraper:
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept-Language": "zh-HK,zh;q=0.9,en-US;q=0.8,en;q=0.7",
         }
+        self.last_url = ""
 
     def fetch(self, race_date: str, racecourse: str, race_no: int) -> str:
         url = f"{self.base_url}?racedate={race_date}&Racecourse={racecourse}&RaceNo={race_no}"
         resp = requests.get(url, headers=self.headers, timeout=20)
         resp.raise_for_status()
+        try:
+            self.last_url = str(getattr(resp, "url", "") or "")
+        except Exception:
+            self.last_url = ""
         return resp.text
 
     def scrape_single_race(self, race_date: str, racecourse: str, race_no: int) -> Dict[str, Any]:
@@ -25,6 +31,8 @@ class LocalResultsScraper:
         soup = BeautifulSoup(html, "lxml")
 
         meta = self._parse_meta(soup)
+        if isinstance(meta, dict) and self.last_url:
+            meta["final_url"] = str(self.last_url)
         results = self._parse_results_table(soup)
         dividends = self._parse_dividends(soup)
 
@@ -36,6 +44,24 @@ class LocalResultsScraper:
             "results": results,
             "dividends": dividends,
         }
+
+    def _url_params(self) -> Dict[str, str]:
+        u = str(self.last_url or "").strip()
+        if not u:
+            return {}
+        try:
+            q = parse_qs(urlparse(u).query)
+        except Exception:
+            return {}
+        out: Dict[str, str] = {}
+        for k, v in (q or {}).items():
+            kk = str(k or "").strip().lower()
+            if not kk:
+                continue
+            if not isinstance(v, list) or not v:
+                continue
+            out[kk] = str(v[0] or "").strip()
+        return out
 
     def _parse_meta(self, soup: BeautifulSoup) -> Dict[str, Any]:
         text = soup.get_text(separator=" ", strip=True)
@@ -81,6 +107,18 @@ class LocalResultsScraper:
                         break
             except Exception:
                 pass
+        if not race_date_page:
+            qp = self._url_params()
+            s3 = str(qp.get("racedate") or "").strip().replace("-", "/")
+            if s3:
+                try:
+                    if re.match(r"^\d{4}/\d{2}/\d{2}$", s3):
+                        race_date_page = s3
+                    elif re.match(r"^\d{2}/\d{2}/\d{4}$", s3):
+                        dd, mm, yyyy = s3.split("/")
+                        race_date_page = f"{yyyy}/{mm}/{dd}"
+                except Exception:
+                    pass
 
         going = ""
         m = re.search(r"場地狀況\s*:\s*([^\s]+)", text)
@@ -97,6 +135,14 @@ class LocalResultsScraper:
                 race_no_page = int(m.group(1))
             except Exception:
                 race_no_page = None
+        if not race_no_page:
+            qp = self._url_params()
+            rn = str(qp.get("raceno") or "").strip()
+            if rn:
+                try:
+                    race_no_page = int(rn)
+                except Exception:
+                    race_no_page = None
 
         distance = 0
         m = re.search(r"(\d{3,4})\s*米", text)

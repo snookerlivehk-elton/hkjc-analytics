@@ -3,6 +3,7 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
+from urllib.parse import urlparse, parse_qs
 
 # 加入專案根目錄到路徑，避免在部署環境找不到 database 模組
 root_path = str(Path(__file__).resolve().parent.parent)
@@ -110,6 +111,29 @@ def main():
 
         payload = scraper.scrape_single_race(target_date, racecourse, race.race_no)
         meta = payload.get("meta") or {}
+        final_url = str(meta.get("final_url") or "").strip()
+        if final_url:
+            try:
+                q = parse_qs(urlparse(final_url).query)
+                got_date = str((q.get("racedate") or [""])[0] or "").strip().replace("-", "/")
+                got_course = str((q.get("Racecourse") or q.get("racecourse") or [""])[0] or "").strip().upper()
+                got_rn = str((q.get("RaceNo") or q.get("raceno") or [""])[0] or "").strip()
+                ok_url = True
+                if got_date and got_date != str(target_date):
+                    ok_url = False
+                if got_course and got_course != str(racecourse).strip().upper():
+                    ok_url = False
+                if got_rn:
+                    try:
+                        if int(got_rn) != int(race.race_no or 0):
+                            ok_url = False
+                    except Exception:
+                        ok_url = False
+                if not ok_url:
+                    print(f"[略過] 賽果頁參數不符（可能 redirect/回傳其他場次）：expect={target_date} {racecourse} R{int(race.race_no or 0)} got_url={final_url}")
+                    continue
+            except Exception:
+                pass
         page_date = str(meta.get("race_date_page") or "").strip().replace("-", "/")
         if page_date and page_date != str(target_date):
             print(f"[略過] 賽果頁日期不符：expect={target_date} got={page_date}（通常表示該日未有賽果/網站回傳其他賽日）")

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
+from urllib.parse import urlparse, parse_qs
 
 root_path = str(Path(__file__).resolve().parent.parent)
 if root_path not in sys.path:
@@ -243,6 +244,29 @@ def _try_scrape(scraper: LocalResultsScraper, date_str: str, racecourse: str, ra
         return None
     if not isinstance(payload, dict):
         return None
+    meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+    final_url = str((meta or {}).get("final_url") or "").strip()
+    if final_url:
+        try:
+            q = parse_qs(urlparse(final_url).query)
+            got_date = str((q.get("racedate") or [""])[0] or "").strip().replace("-", "/")
+            got_course = str((q.get("Racecourse") or q.get("racecourse") or [""])[0] or "").strip().upper()
+            got_rn = str((q.get("RaceNo") or q.get("raceno") or [""])[0] or "").strip()
+            ok_url = True
+            if got_date and got_date != str(date_str):
+                ok_url = False
+            if got_course and got_course != str(racecourse).strip().upper():
+                ok_url = False
+            if got_rn:
+                try:
+                    if int(got_rn) != int(race_no or 0):
+                        ok_url = False
+                except Exception:
+                    ok_url = False
+            if not ok_url:
+                return None
+        except Exception:
+            pass
     results = payload.get("results") if isinstance(payload.get("results"), list) else []
     divs = payload.get("dividends") if isinstance(payload.get("dividends"), list) else []
     has_valid_time = False
