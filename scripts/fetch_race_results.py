@@ -13,6 +13,7 @@ if root_path not in sys.path:
 from database.connection import init_db, get_session
 from database.models import Race, RaceEntry, RaceResult, RaceDividend, RaceTrackCondition, SystemConfig
 from data_scraper.local_results import LocalResultsScraper
+from data_scraper.race_report_full import RaceReportFullScraper
 from scoring_engine.member_stats import update_all_members_preset_stats_for_race_date
 from scoring_engine.prediction_snapshots import finalize_prediction_top5_hits_for_race_date
 from scoring_engine.entry_facts import build_entry_facts_for_race_date
@@ -83,6 +84,7 @@ def main():
         return
 
     scraper = LocalResultsScraper()
+    rr_scraper = RaceReportFullScraper()
     hk_tz = ZoneInfo("Asia/Hong_Kong")
     ok = 0
     for race in races:
@@ -169,6 +171,15 @@ def main():
         if results and (not has_valid_time):
             print(f"[略過] 尚未有賽果（無有效完成時間）：{target_date} {racecourse} R{int(race.race_no or 0)}")
             continue
+
+        if not event_report:
+            try:
+                rr_payload = rr_scraper.scrape_single_race(race_date=target_date, racecourse=racecourse, race_no=int(race.race_no or 0))
+                rr_items = rr_payload.get("items") if isinstance(rr_payload, dict) else None
+                if isinstance(rr_items, list):
+                    event_report = rr_items
+            except Exception:
+                pass
         try:
             dist_page = int(meta.get("distance") or 0)
         except Exception:
@@ -256,9 +267,9 @@ def main():
                 "items": [x for x in event_report if isinstance(x, dict)],
             }
             m2 = build_meta(
-                source="HKJC_LOCALRESULTS",
+                source="HKJC_RACEREPORTFULL",
                 fetched_at=datetime.utcnow().isoformat(),
-                url=f"https://racing.hkjc.com/zh-hk/local/information/localresults?racedate={target_date}&Racecourse={racecourse}&RaceNo={int(race.race_no)}",
+                url=f"https://racing.hkjc.com/zh-hk/local/information/racereportfull?racedate={target_date}&Racecourse={racecourse}&RaceNo={int(race.race_no)}",
                 schema="race_event_report:v1",
             )
             cfg2.value = wrap_value(payload_er, m2)
