@@ -5,6 +5,9 @@ import sys
 from pathlib import Path
 from sqlalchemy.orm import Session
 from sqlalchemy import func
+import re
+import requests
+from bs4 import BeautifulSoup
 
 # 加入專案路徑
 root_path = str(Path(__file__).resolve().parent.parent)
@@ -289,6 +292,35 @@ def _cached_races_on_date(date_iso: str):
         return out
     finally:
         s.close()
+
+
+@st.cache_data(ttl=300)
+def _cached_hkjc_race_nos_on_date(date_iso: str):
+    try:
+        d0 = datetime.strptime(str(date_iso), "%Y-%m-%d").date()
+    except Exception:
+        return []
+    date_str = d0.strftime("%Y/%m/%d")
+    url = f"https://racing.hkjc.com/zh-hk/local/information/racecard?racedate={date_str}&RaceNo=1"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        "Accept-Language": "zh-HK,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Referer": "https://racing.hkjc.com/",
+    }
+    try:
+        resp = requests.get(url, headers=headers, timeout=12)
+        soup = BeautifulSoup(resp.text, "lxml")
+        race_nos = set()
+        for a in soup.select("a[href*='RaceNo=']"):
+            m = re.search(r"RaceNo=(\d+)", a.get("href", "") or "", re.IGNORECASE)
+            if m:
+                try:
+                    race_nos.add(int(m.group(1)))
+                except Exception:
+                    pass
+        return sorted([n for n in race_nos if int(n) > 0])
+    except Exception:
+        return []
 
 
 @st.cache_data(ttl=60)
@@ -831,6 +863,19 @@ def main():
     if not race_no_options:
         st.sidebar.warning("該日期尚未有可用排位資料。")
         return
+
+    hkjc_race_nos = _cached_hkjc_race_nos_on_date(selected_date_str)
+    if hkjc_race_nos:
+        hkjc_set = set(int(x) for x in hkjc_race_nos if int(x) > 0)
+        if hkjc_set:
+            before = set(race_no_to_id.keys())
+            filtered = {rn: rid for rn, rid in race_no_to_id.items() if int(rn) in hkjc_set}
+            after = set(filtered.keys())
+            if after:
+                if before != after:
+                    st.sidebar.caption(f"已按 HKJC 當日場次過濾：{len(after)} 場")
+                race_no_to_id = filtered
+                race_no_options = sorted(list(after))
 
     if "selected_race_no" not in st.session_state or int(st.session_state.selected_race_no) not in race_no_options:
         st.session_state.selected_race_no = race_no_options[0]
