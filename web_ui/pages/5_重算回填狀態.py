@@ -10,7 +10,7 @@ if root_path not in sys.path:
     sys.path.insert(0, root_path)
 
 from database.connection import get_session, init_db
-from database.models import Race, RaceCoRunning, SystemConfig
+from database.models import Race, SystemConfig
 from scoring_engine.config_value import unwrap_value
 from scoring_engine.normalization import bucket_parts, venue_label
 from scoring_engine.track_profile import compute_track_profiles
@@ -92,7 +92,6 @@ try:
 
     rows = []
     ok_runpos = 0
-    ok_cor = 0
     ok_prof = 0
 
     for r in races:
@@ -105,12 +104,6 @@ try:
         has_runpos = bool(runpos)
         if has_runpos:
             ok_runpos += 1
-
-        cor = session.query(RaceCoRunning).filter_by(race_id=int(r.id)).first()
-        items = cor.items if (cor and isinstance(cor.items, dict)) else {}
-        has_cor = bool(items)
-        if has_cor:
-            ok_cor += 1
 
         parts = bucket_parts(session, r)
         trk_key = ""
@@ -137,20 +130,17 @@ try:
                 "地點": venue_label(getattr(r, "venue", ""), track_type=getattr(r, "track_type", None)),
                 "runpos": "✅" if has_runpos else "—",
                 "runpos筆數": int(len(runpos)) if isinstance(runpos, dict) else 0,
-                "corunning": "✅" if has_cor else "—",
-                "corunning筆數": int(len(items)) if isinstance(items, dict) else 0,
                 "trkprof_key": trk_key,
                 "trkprof": "✅" if has_prof else "—",
                 "style_samples": style_samples,
                 "runpos_meta": str(run_meta.get("fetched_at") or run_meta.get("saved_at") or "").strip(),
-                "corunning_fetched_at": (cor.fetched_at.isoformat() if (cor and getattr(cor, "fetched_at", None)) else ""),
             }
         )
 
     c1, c2, c3 = st.columns(3)
     c1.metric("runpos 完整", f"{ok_runpos}/{len(races)}")
-    c2.metric("corunning 完整", f"{ok_cor}/{len(races)}")
-    c3.metric("trkprof key 命中", f"{ok_prof}/{len(races)}")
+    c2.metric("trkprof key 命中", f"{ok_prof}/{len(races)}")
+    c3.empty()
 
     df = pd.DataFrame(rows)
     st.dataframe(df, use_container_width=True, hide_index=True)
@@ -163,6 +153,6 @@ try:
         st.success("已觸發 trkprof 重算（請稍後重新整理查看）。")
         st.rerun()
 
-    c2.info("runpos 與 corunning 來源係「抓取賽果與派彩」。如缺失，先確保該日已成功抓取賽果。")
+    c2.info("runpos 來源係「抓取賽果與派彩」。如缺失，先確保該日已成功抓取賽果。")
 finally:
     session.close()

@@ -35,6 +35,7 @@ class LocalResultsScraper:
             meta["final_url"] = str(self.last_url)
         results = self._parse_results_table(soup)
         dividends = self._parse_dividends(soup)
+        event_report = self._parse_event_report(soup)
 
         return {
             "race_date": race_date,
@@ -43,6 +44,7 @@ class LocalResultsScraper:
             "meta": meta,
             "results": results,
             "dividends": dividends,
+            "event_report": event_report,
         }
 
     def _url_params(self) -> Dict[str, str]:
@@ -355,6 +357,62 @@ class LocalResultsScraper:
             )
 
         return items
+
+    def _parse_event_report(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:
+        target = None
+        for tag in soup.find_all(["h1", "h2", "h3", "h4", "div", "span", "p"]):
+            s = tag.get_text(" ", strip=True)
+            if not s:
+                continue
+            if "競賽事件報告" in s:
+                t2 = tag.find_next("table")
+                if t2 is not None:
+                    target = t2
+                    break
+
+        if target is None:
+            for table in soup.find_all("table"):
+                first_tr = table.find("tr")
+                if not first_tr:
+                    continue
+                headers = [c.get_text(" ", strip=True) for c in first_tr.find_all(["th", "td"])]
+                header_norm = "".join(headers).replace(" ", "")
+                if ("馬號" in header_norm) and ("描述" in header_norm or "事件" in header_norm):
+                    target = table
+                    break
+
+        if target is None:
+            return []
+
+        out: List[Dict[str, Any]] = []
+        for tr in target.find_all("tr"):
+            cells = tr.find_all(["td", "th"])
+            if not cells:
+                continue
+            cols = [c.get_text(" ", strip=True) for c in cells]
+            if len(cols) < 2:
+                continue
+            c0 = str(cols[0] or "").strip()
+            if not re.match(r"^\d+$", c0):
+                continue
+            try:
+                horse_no = int(c0)
+            except Exception:
+                continue
+            if horse_no <= 0:
+                continue
+            horse_name = ""
+            desc = ""
+            if len(cols) >= 3:
+                horse_name = str(cols[1] or "").strip()
+                desc = str(cols[-1] or "").strip()
+            else:
+                desc = str(cols[1] or "").strip()
+            if not desc:
+                continue
+            out.append({"horse_no": int(horse_no), "horse_name": horse_name, "desc": desc})
+        out.sort(key=lambda x: int(x.get("horse_no") or 0))
+        return out
 
     def _to_int(self, s: str) -> int:
         try:

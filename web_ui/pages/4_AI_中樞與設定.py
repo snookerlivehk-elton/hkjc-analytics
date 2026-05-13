@@ -679,6 +679,7 @@ try:
             generate_race_reflection,
             list_reflection_candidates,
             batch_reflect_worst,
+            batch_reflect_day,
         )
         
         items = get_learned_rule_items(session)
@@ -766,6 +767,32 @@ try:
                     st.rerun()
 
         st.markdown("---")
+        st.markdown("### 📚 批次反思（全場／或只反思失準）")
+        st.caption("全場策略：為該賽日所有可反思場次生成反思文字；提煉法則只會套用在失準場次（Top4 未全中或錯殺）。")
+        if available_dates:
+            sel_date2 = st.selectbox("選擇賽日（全場反思）", options=available_dates, index=0, key="batch_reflect_day_date")
+            mode2 = st.selectbox(
+                "反思模式",
+                options=["all", "miss_only"],
+                format_func=lambda x: ("全場（都生成反思）" if x == "all" else "只反思失準場次（推薦慳成本）"),
+                index=0,
+                key="batch_reflect_day_mode",
+            )
+            cand2 = list_reflection_candidates(session, date_str=str(sel_date2), only_unreflected=True, limit=200)
+            picked2 = cand2
+            if str(mode2) != "all":
+                picked2 = [x for x in cand2 if (int(x.get("hits_in_top4") or 0) < 4) or (int(x.get("false_elim") or 0) > 0)]
+            st.caption(f"可反思場次：{len(picked2)}/{len(cand2)}（需同時具備：AI 報告 + 已有賽果 Top4 + 未反思）")
+            c1, c2 = st.columns([2, 3])
+            ok_run2 = _confirm_run(c1, "batch_reflect_day_run", label="輸入 RUN 以批次反思")
+            if c2.button("🧠 批次生成反思（排隊執行）", use_container_width=True, disabled=not ok_run2, key="batch_reflect_day_btn"):
+                from scoring_engine.job_queue import enqueue_job
+                job = enqueue_job(session, "ai_batch_reflect_day", {"date": str(sel_date2), "mode": str(mode2)})
+                st.success(f"✅ 已排隊：job={str(job.get('id'))[:10]}…（可到「批次任務狀態」查看進度）")
+                st.session_state["last_ai_batch_job_id"] = str(job.get("id") or "")
+                st.rerun()
+
+        st.markdown("---")
         st.markdown("### 📄 反思報告（文字檢視）")
         from database.models import SystemConfig
 
@@ -806,8 +833,6 @@ try:
             actual = str(val.get("actual_results") or "").strip()
             reflection = str(val.get("reflection") or "").strip()
             rules = val.get("learned_rules") if isinstance(val.get("learned_rules"), list) else []
-            used = bool(val.get("corunning_used"))
-            excerpt = str(val.get("corunning_excerpt") or "").strip()
 
             if actual:
                 st.markdown("#### 實際賽果 Top4")
@@ -824,10 +849,6 @@ try:
                     rr = str(r or "").strip()
                     if rr:
                         st.info(rr)
-
-            if used and excerpt:
-                with st.expander("📝 沿途走勢評述摘要（賽後）", expanded=False):
-                    st.text(excerpt)
 
         st.markdown("### 🔄 執行賽後反思")
         st.write("請選擇已經有賽果（且已有賽前 AI 報告）的賽事，讓 AI 對比預測與實際結果，提煉新法則（字數已控制在 200-400 字）。")

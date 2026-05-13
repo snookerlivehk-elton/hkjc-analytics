@@ -232,18 +232,6 @@ class RaceDividend(Base):
     meta = Column(JSON)
     scraped_at = Column(DateTime, default=datetime.now)
 
-class RaceCoRunning(Base):
-    __tablename__ = "race_corunning"
-    id = Column(Integer, primary_key=True)
-    race_id = Column(Integer, ForeignKey("races.id"), unique=True, index=True, nullable=False)
-    race_date = Column(DateTime, index=True, nullable=False)
-    race_no = Column(Integer, index=True, nullable=False)
-    source = Column(String(50), default="HKJC")
-    items = Column(JSON, nullable=False)  # {horse_no: {horse_name, commentary}}
-    meta = Column(JSON)
-    fetched_at = Column(DateTime, default=datetime.now, index=True)
-    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
-
 class RawSnapshot(Base):
     __tablename__ = "raw_snapshots"
     id = Column(Integer, primary_key=True)
@@ -263,7 +251,7 @@ class RawSnapshot(Base):
 class SearchDocument(Base):
     __tablename__ = "search_documents"
     id = Column(Integer, primary_key=True)
-    doc_type = Column(String(30), nullable=False, index=True)  # race_entry | ai_report | corunning | runpos | ...
+    doc_type = Column(String(30), nullable=False, index=True)  # race_entry | ai_report | runpos | ...
     ref_key = Column(String(120), nullable=False, index=True)  # stable identifier (e.g. race_key:horse_no, SystemConfig.key)
     entity_type = Column(String(30), nullable=False, index=True)
     entity_key = Column(String(80), nullable=False, index=True)

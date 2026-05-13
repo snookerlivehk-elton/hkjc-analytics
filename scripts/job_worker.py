@@ -15,6 +15,7 @@ if root_path not in sys.path:
 from database.connection import init_db, get_session
 from database.models import Race, SystemConfig
 from scoring_engine.ai_advisor import run_ai_race_summary
+from scoring_engine.ai_reflection import generate_race_reflection, list_reflection_candidates
 from scoring_engine.job_queue import append_job_log, claim_next_job, update_job
 from scoring_engine.search_index import index_system_config_doc
 from scoring_engine.core import ScoringEngine
@@ -177,6 +178,63 @@ def _handle_ai_batch_generate(session, job):
             "finished_at": datetime.utcnow().isoformat(),
             "progress": {"total": total, "done": total, "current": ""},
             "result": {"ok": ok, "skipped": skipped, "failed": failed, "total": total},
+        },
+    )
+
+def _handle_ai_batch_reflect_day(session, job):
+    payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
+    date_str = str(payload.get("date") or "").strip()
+    mode = str(payload.get("mode") or "all").strip().lower() or "all"
+    if not date_str:
+        raise ValueError("missing date")
+
+    cand = list_reflection_candidates(session, date_str=str(date_str), only_unreflected=True, limit=500)
+    if mode in {"miss_only", "miss", "unhit"}:
+        cand = [x for x in cand if (int(x.get("hits_in_top4") or 0) < 4) or (int(x.get("false_elim") or 0) > 0)]
+
+    total = len(cand)
+    update_job(session, job["id"], {"progress": {"total": total, "done": 0, "current": ""}})
+    append_job_log(session, job["id"], f"ai_batch_reflect_day date={date_str} mode={mode} races={total}")
+
+    ok = 0
+    already = 0
+    skipped = 0
+    failed = 0
+    for i, c in enumerate(cand, 1):
+        rn = int(c.get("race_no") or 0)
+        update_job(session, job["id"], {"progress": {"total": total, "done": i - 1, "current": f"R{rn}"}})
+        rid = int(c.get("race_id") or 0)
+        if rid <= 0:
+            skipped += 1
+            continue
+        save_rules = (int(c.get("hits_in_top4") or 0) < 4) or (int(c.get("false_elim") or 0) > 0)
+        res = generate_race_reflection(session, rid, save_rules=bool(save_rules))
+        if isinstance(res, dict) and res.get("ok") is True:
+            if str(res.get("reason") or "") == "already_reflected":
+                already += 1
+            else:
+                ok += 1
+        else:
+            reason = str(res.get("reason") if isinstance(res, dict) else "").strip()
+            if reason in {"no_results", "no_pre_race_report", "missing_api_key", "race_not_found"}:
+                skipped += 1
+            else:
+                failed += 1
+        append_job_log(
+            session,
+            job["id"],
+            f"R{rn} ok={bool(isinstance(res, dict) and res.get('ok') is True)} reason={str(res.get('reason') if isinstance(res, dict) else '')} save_rules={bool(save_rules)}",
+            max_lines=400,
+        )
+
+    update_job(
+        session,
+        job["id"],
+        {
+            "status": "done",
+            "finished_at": datetime.utcnow().isoformat(),
+            "progress": {"total": total, "done": total, "current": ""},
+            "result": {"ok": ok, "already": already, "skipped": skipped, "failed": failed, "total": total, "mode": mode},
         },
     )
 
@@ -392,6 +450,7 @@ def _handle_speedpro_fetch(session, job):
 
 JOB_HANDLERS = {
     "ai_batch_generate": _handle_ai_batch_generate,
+    "ai_batch_reflect_day": _handle_ai_batch_reflect_day,
     "search_backfill": _handle_search_backfill,
     "rescore_race_date": _handle_rescore_race_date,
     "daily_update_pipeline": _handle_daily_update_pipeline,

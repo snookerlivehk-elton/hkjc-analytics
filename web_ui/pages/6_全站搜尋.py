@@ -92,7 +92,6 @@ def main():
                 "race_reportext",
                 "windtracker",
                 "runpos",
-                "corunning",
                 "ai_report",
                 "ai_reflection",
                 "ai_learned_rules",

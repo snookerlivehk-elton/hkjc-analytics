@@ -214,12 +214,12 @@ with tab_monitor:
     st.caption("用途：一眼檢查各資料域最後更新時間、缺口與重算狀態；並集中提供常用更新按鈕（分層：主流程／進階修復／維護工具）。")
 
     from datetime import date, datetime, time as dtime, timedelta
+    from zoneinfo import ZoneInfo
     from database.models import (
         HorseHistory,
         OddsHistory,
         PredictionTop5,
         Race,
-        RaceCoRunning,
         RaceDayWeather,
         RaceDividend,
         RaceEntry,
@@ -256,6 +256,24 @@ with tab_monitor:
         start = datetime.combine(d, dtime.min)
         end = start + timedelta(days=1)
         return start, end
+
+    HK_TZ = ZoneInfo("Asia/Hong_Kong")
+
+    def _parse_hhmm(s: str):
+        t = str(s or "").strip()
+        if not t or ":" not in t:
+            return None
+        parts = t.split(":")
+        if len(parts) != 2:
+            return None
+        try:
+            hh = int(parts[0])
+            mm = int(parts[1])
+        except Exception:
+            return None
+        if hh < 0 or hh > 23 or mm < 0 or mm > 59:
+            return None
+        return dtime(hh, mm)
 
     def _max_dt(session, model, col_name: str):
         try:
@@ -468,9 +486,6 @@ with tab_monitor:
             top5_race_ids = set(
                 rid for (rid,) in session_m.query(PredictionTop5.race_id).filter(PredictionTop5.race_id.in_(race_ids)).distinct().all()
             )
-            cor_race_ids = set(
-                rid for (rid,) in session_m.query(RaceCoRunning.race_id).filter(RaceCoRunning.race_id.in_(race_ids)).distinct().all()
-            )
             reportext_by_race_id = {}
             try:
                 rep_rows = (
@@ -594,10 +609,59 @@ with tab_monitor:
 
             runpos_keys = [f"race_runpos:{date_str}:{int(race_no_by_id.get(rid) or 0)}" for rid in race_ids if int(race_no_by_id.get(rid) or 0) > 0]
             ai_keys = [f"ai_race_report:{date_str}:{int(race_no_by_id.get(rid) or 0)}" for rid in race_ids if int(race_no_by_id.get(rid) or 0) > 0]
-            syscfg_keys = list(dict.fromkeys([k for k in (runpos_keys + ai_keys) if str(k).strip()]))
+            event_keys = [f"race_event_report:{date_str}:{int(race_no_by_id.get(rid) or 0)}" for rid in race_ids if int(race_no_by_id.get(rid) or 0) > 0]
+            reflect_keys = [f"ai_race_reflection:{date_str}:{int(race_no_by_id.get(rid) or 0)}" for rid in race_ids if int(race_no_by_id.get(rid) or 0) > 0]
+            syscfg_keys = list(dict.fromkeys([k for k in (runpos_keys + ai_keys + event_keys + reflect_keys) if str(k).strip()]))
             syscfg_key_set = set()
+            event_cnt_by_race_no = {}
             if syscfg_keys:
-                syscfg_key_set = set(k for (k,) in session_m.query(SystemConfig.key).filter(SystemConfig.key.in_(syscfg_keys)).all())
+                rows_cfg = session_m.query(SystemConfig.key, SystemConfig.value).filter(SystemConfig.key.in_(syscfg_keys)).all()
+                for k, v in rows_cfg:
+                    kk = str(k or "").strip()
+                    if not kk:
+                        continue
+                    syscfg_key_set.add(kk)
+                    if kk.startswith("race_event_report:"):
+                        parts = kk.split(":")
+                        if len(parts) >= 3:
+                            try:
+                                rn = int(parts[2])
+                            except Exception:
+                                rn = 0
+                            if rn > 0:
+                                payload, _ = unwrap_value(v)
+                                payload = payload if isinstance(payload, dict) else {}
+                                items = payload.get("items")
+                                if not isinstance(items, list):
+                                    items = []
+                                horses = set()
+                                for it in items:
+                                    if not isinstance(it, dict):
+                                        continue
+                                    try:
+                                        hn = int(it.get("horse_no") or 0)
+                                    except Exception:
+                                        hn = 0
+                                    if hn > 0:
+                                        horses.add(hn)
+                                event_cnt_by_race_no[int(rn)] = int(len(horses))
+
+            now_hk = datetime.now(HK_TZ)
+            today_hk = now_hk.date()
+            day0 = start_dt.date()
+            day_is_past = day0 < today_hk
+            day_is_future = day0 > today_hk
+            milestone_by_type = {"PRE_30M": 30, "PRE_15M": 15, "PRE_10M": 10, "PRE_5M": 5}
+            tol_min_s = str(os.environ.get("ODDS_MILESTONE_TOL_MINUTES") or "").strip()
+            try:
+                tol_min = int(tol_min_s) if tol_min_s else 3
+            except Exception:
+                tol_min = 3
+            after_min_s = str(os.environ.get("ODDS_WATCH_AFTER_MINUTES") or "").strip()
+            try:
+                after_min = int(after_min_s) if after_min_s else 10
+            except Exception:
+                after_min = 10
 
             rows = []
             for r in races:
@@ -614,10 +678,20 @@ with tab_monitor:
 
                 runpos_key = f"race_runpos:{date_str}:{rn}"
                 has_runpos = runpos_key in syscfg_key_set
-                has_cor = rid in cor_race_ids
 
                 rep_key = f"ai_race_report:{date_str}:{rn}"
                 has_ai = rep_key in syscfg_key_set
+
+                ev_key = f"race_event_report:{date_str}:{rn}"
+                ev_cnt = int(event_cnt_by_race_no.get(int(rn)) or 0)
+                ev_disp = "—"
+                if exp_cnt > 0 and ev_cnt > 0:
+                    ev_disp = f"{ev_cnt}/{exp_cnt}"
+                elif ev_cnt > 0:
+                    ev_disp = str(ev_cnt)
+
+                ref_key = f"ai_race_reflection:{date_str}:{rn}"
+                has_reflection = ref_key in syscfg_key_set
 
                 exp_cnt = int(entry_cnt_by_race_id.get(rid) or 0)
                 rep_st = reportext_by_race_id.get(rid) if isinstance(reportext_by_race_id, dict) else None
@@ -650,6 +724,14 @@ with tab_monitor:
                     if cnt_fg > 0:
                         fg_disp = f"{cnt_fg}/{exp_cnt}"
 
+                post_dt = None
+                try:
+                    tt = _parse_hhmm(str(getattr(r, "post_time_hk", "") or ""))
+                    if tt is not None:
+                        post_dt = datetime.combine(day0, tt).replace(tzinfo=HK_TZ)
+                except Exception:
+                    post_dt = None
+
                 odds_pre24h = "—"
                 odds_30m = "—"
                 odds_15m = "—"
@@ -668,7 +750,21 @@ with tab_monitor:
                         if c > 0:
                             val = f"{c}/{exp_cnt}" + (" 💰" if has_pool else "")
                         else:
-                            val = ("—" + (" 💰" if has_pool else ""))
+                            suffix = ""
+                            mm = milestone_by_type.get(str(ot))
+                            if mm is not None:
+                                if day_is_past:
+                                    suffix = " ❌"
+                                elif day_is_future:
+                                    suffix = " ⏳"
+                                elif post_dt is not None:
+                                    if now_hk < (post_dt - timedelta(minutes=int(mm) + int(tol_min))):
+                                        suffix = " ⏳"
+                                    elif now_hk > (post_dt + timedelta(minutes=int(after_min))):
+                                        suffix = " ❌"
+                                    else:
+                                        suffix = " ⚠️"
+                            val = ("—" + (" 💰" if has_pool else "") + suffix)
                         if var == "odds_pre24h":
                             odds_pre24h = val
                         elif var == "odds_30m":
@@ -723,8 +819,9 @@ with tab_monitor:
                         "步速（每場）": pace_disp,
                         "事件摘要（馬號＋描述）": rep_disp,
                         "沿途走位（runpos）": "✅" if has_runpos else "—",
-                        "賽後評述（corunning）": "✅" if has_cor else "—",
                         "AI 報告": "✅" if has_ai else "—",
+                        "競賽事件報告（賽後）": ev_disp,
+                        "AI 反思": "✅" if has_reflection else "—",
                     }
                 )
 
@@ -750,40 +847,42 @@ with tab_monitor:
                         st.caption("｜".join([f"{k}={str(meta.get(k) or '').strip()}" for k in ["source", "schema", "fetched_at", "saved_at"] if str(meta.get(k) or "").strip()]))
                     st.json(payload if isinstance(payload, dict) else {})
 
-            with v2.expander("corunning（賽後走勢評述）", expanded=False):
-                row = session_m.query(RaceCoRunning).filter_by(race_id=int(sel_rid)).first()
-                if not row or not isinstance(row.items, dict) or not row.items:
-                    st.info("未找到 corunning 資料。")
+            with v1.expander("競賽事件報告（賽後）", expanded=False):
+                key = f"race_event_report:{date_str}:{int(sel_rn)}"
+                cfg = session_m.query(SystemConfig).filter_by(key=key).first()
+                payload, meta = unwrap_value(cfg.value) if cfg else (None, {})
+                if not cfg:
+                    st.info("未找到 競賽事件報告 快照。")
                 else:
-                    cap = f"race_id={sel_rid}"
-                    try:
-                        if getattr(row, "fetched_at", None):
-                            cap += f"｜fetched_at={row.fetched_at.isoformat()}"
-                    except Exception:
-                        pass
-                    if str(getattr(row, "source", "") or "").strip():
-                        cap += f"｜source={str(getattr(row,'source','') or '').strip()}"
-                    meta = row.meta if isinstance(row.meta, dict) else {}
-                    if str(meta.get("schema") or "").strip():
-                        cap += f"｜schema={str(meta.get('schema') or '').strip()}"
-                    st.caption(cap)
+                    st.caption(f"key={key}｜updated_at={getattr(cfg,'updated_at',None)}")
+                    if meta:
+                        st.caption("｜".join([f"{k}={str(meta.get(k) or '').strip()}" for k in ["source", "schema", "fetched_at", "saved_at"] if str(meta.get(k) or "").strip()]))
+                    val = payload if isinstance(payload, dict) else {}
+                    items = val.get("items")
+                    if not isinstance(items, list):
+                        items = []
                     tbl = []
-                    for k, v in row.items.items():
-                        if not isinstance(v, dict):
+                    for it in items:
+                        if not isinstance(it, dict):
                             continue
                         try:
-                            hn = int(k)
+                            hn = int(it.get("horse_no") or 0)
                         except Exception:
+                            hn = 0
+                        if hn <= 0:
                             continue
                         tbl.append(
                             {
                                 "馬號": hn,
-                                "馬名": str(v.get("horse_name") or v.get("name") or "").strip(),
-                                "走勢評述": str(v.get("commentary") or v.get("comment") or "").strip(),
+                                "馬名": str(it.get("horse_name") or "").strip(),
+                                "描述": str(it.get("desc") or "").strip(),
                             }
                         )
                     tbl.sort(key=lambda x: int(x.get("馬號") or 0))
-                    st.dataframe(tbl, use_container_width=True, hide_index=True)
+                    if tbl:
+                        st.dataframe(tbl, use_container_width=True, hide_index=True)
+                    else:
+                        st.json(val)
 
             with v2.expander("步速（每場）", expanded=False):
                 row = session_m.query(RacePaceSnapshot).filter_by(race_id=int(sel_rid)).first()
@@ -983,7 +1082,6 @@ with tab_monitor:
                     OddsHistory,
                     PredictionTop5,
                     Race,
-                    RaceCoRunning,
                     RaceDividend,
                     RaceEntry,
                     RacePaceForecastSnapshot,
@@ -1069,7 +1167,6 @@ with tab_monitor:
                 n_pool = session_m.query(RacePoolSnapshot).filter(RacePoolSnapshot.race_id.in_(target_race_ids)).delete(synchronize_session=False)
                 n_pace = session_m.query(RacePaceSnapshot).filter(RacePaceSnapshot.race_id.in_(target_race_ids)).delete(synchronize_session=False)
                 n_pace_f = session_m.query(RacePaceForecastSnapshot).filter(RacePaceForecastSnapshot.race_id.in_(target_race_ids)).delete(synchronize_session=False)
-                n_cor = session_m.query(RaceCoRunning).filter(RaceCoRunning.race_id.in_(target_race_ids)).delete(synchronize_session=False)
                 n_pred = session_m.query(PredictionTop5).filter(PredictionTop5.race_id.in_(target_race_ids)).delete(synchronize_session=False)
                 n_raw = session_m.query(RawSnapshot).filter(RawSnapshot.race_id.in_(target_race_ids)).delete(synchronize_session=False)
                 n_sd = session_m.query(SearchDocument).filter(SearchDocument.race_id.in_(target_race_ids)).delete(synchronize_session=False)
@@ -1094,7 +1191,7 @@ with tab_monitor:
                     "✅ 已刪除假場次資料："
                     + f"Race={n_races} RaceEntry={n_entries} RaceResult={n_rr} OddsHistory={n_oh} ScoringFactor={n_sf} EntryFact={n_ef} "
                     + f"RaceDividend={n_div} RaceTrackCondition={n_tc} RacePoolSnapshot={n_pool} Pace={n_pace} PaceForecast={n_pace_f} "
-                    + f"RaceCoRunning={n_cor} PredictionTop5={n_pred} RawSnapshot={n_raw} "
+                    + f"PredictionTop5={n_pred} RawSnapshot={n_raw} "
                     + f"SearchDocument={n_sd} "
                     + f"SystemConfig(score_run)={n_score_cfg} runpos={n_runpos_cfg} ai_report={n_ai_cfg} top5={n_top5_cfg} elim={n_elim_cfg}"
                 )

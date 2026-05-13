@@ -11,9 +11,8 @@ if root_path not in sys.path:
     sys.path.insert(0, root_path)
 
 from database.connection import init_db, get_session
-from database.models import Race, RaceEntry, RaceResult, RaceDividend, RaceTrackCondition, SystemConfig, RaceCoRunning
+from database.models import Race, RaceEntry, RaceResult, RaceDividend, RaceTrackCondition, SystemConfig
 from data_scraper.local_results import LocalResultsScraper
-from data_scraper.corunning import CoRunningScraper
 from scoring_engine.member_stats import update_all_members_preset_stats_for_race_date
 from scoring_engine.prediction_snapshots import finalize_prediction_top5_hits_for_race_date
 from scoring_engine.entry_facts import build_entry_facts_for_race_date
@@ -84,7 +83,6 @@ def main():
         return
 
     scraper = LocalResultsScraper()
-    corunning = CoRunningScraper()
     hk_tz = ZoneInfo("Asia/Hong_Kong")
     ok = 0
     for race in races:
@@ -154,6 +152,9 @@ def main():
             continue
 
         results = payload.get("results") or []
+        event_report = payload.get("event_report") if isinstance(payload, dict) else None
+        if not isinstance(event_report, list):
+            event_report = []
         has_valid_time = False
         try:
             for r in results:
@@ -242,42 +243,38 @@ def main():
             )
             cfg.value = wrap_value(payload_runpos, m)
 
-        try:
-            date_yyyymmdd = race_date_dt.strftime("%Y%m%d")
-            force = str(os.environ.get("FORCE_CORUNNING") or "").strip().lower() in ("1", "true", "yes")
-            row2 = session.query(RaceCoRunning).filter_by(race_id=int(race.id)).first()
-            has_items = bool(row2 and isinstance(row2.items, dict) and row2.items)
-            if (not has_items) or force:
-                res2 = corunning.scrape_single_race(date_yyyymmdd=date_yyyymmdd, race_no=int(race.race_no))
-                items = res2.get("items") if isinstance(res2, dict) else None
-                if isinstance(items, list) and items:
-                    by_no = {str(int(x.get("horse_no"))): x for x in items if int(x.get("horse_no") or 0) > 0}
-                    if not row2:
-                        row2 = RaceCoRunning(
-                            race_id=int(race.id),
-                            race_date=race.race_date,
-                            race_no=int(race.race_no or 0),
-                            source="HKJC",
-                            items={},
-                        )
-                        session.add(row2)
-                    row2.items = by_no
-                    row2.meta = {
-                        "schema": "race_corunning:v1",
-                        "date_yyyymmdd": str(date_yyyymmdd),
-                        "url": f"https://racing.hkjc.com/zh-hk/local/information/corunning?date={date_yyyymmdd}&raceno={int(race.race_no)}",
-                        "fetched_at": datetime.utcnow().isoformat(),
-                    }
-                    row2.fetched_at = datetime.utcnow()
-        except Exception as e:
-            print(f"[警告] 走勢評述抓取失敗：R{int(race.race_no)} {e}")
+        if event_report:
+            key2 = f"race_event_report:{target_date}:{int(race.race_no)}"
+            cfg2 = session.query(SystemConfig).filter_by(key=key2).first()
+            if not cfg2:
+                cfg2 = SystemConfig(key=key2, description="競賽事件報告（賽後）快照")
+                session.add(cfg2)
+            payload_er = {
+                "race_id": int(race.id),
+                "race_date": target_date,
+                "race_no": int(race.race_no),
+                "items": [x for x in event_report if isinstance(x, dict)],
+            }
+            m2 = build_meta(
+                source="HKJC_LOCALRESULTS",
+                fetched_at=datetime.utcnow().isoformat(),
+                url=f"https://racing.hkjc.com/zh-hk/local/information/localresults?racedate={target_date}&Racecourse={racecourse}&RaceNo={int(race.race_no)}",
+                schema="race_event_report:v1",
+            )
+            cfg2.value = wrap_value(payload_er, m2)
 
         try:
-            from scoring_engine.search_index import index_corunning, index_race_entry_bundle, index_system_config_doc
+            from scoring_engine.search_index import index_race_entry_bundle, index_system_config_doc
 
             index_race_entry_bundle(session, int(race.id))
-            index_corunning(session, int(race.id))
             index_system_config_doc(session, f"race_runpos:{target_date}:{int(race.race_no)}", doc_type="runpos", title=f"{target_date} R{int(race.race_no)} runpos")
+            if event_report:
+                index_system_config_doc(
+                    session,
+                    f"race_event_report:{target_date}:{int(race.race_no)}",
+                    doc_type="race_event_report",
+                    title=f"{target_date} R{int(race.race_no)} 競賽事件報告",
+                )
         except Exception:
             pass
 

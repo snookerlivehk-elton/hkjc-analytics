@@ -2990,52 +2990,6 @@ def main():
                 else:
                     st.info("本場尚未有派彩資料。")
 
-                with st.expander("📝 沿途走勢評述（賽後）", expanded=False):
-                    from database.models import RaceCoRunning
-
-                    row = session.query(RaceCoRunning).filter_by(race_id=int(selected_race_id)).first()
-                    items = row.items if (row and isinstance(row.items, dict)) else None
-                    if not isinstance(items, dict) or not items:
-                        st.info("未找到走勢評述資料。請先在後台執行「抓取賽果與派彩」（賽後）。")
-                    else:
-                        try:
-                            n_items = len(items)
-                        except Exception:
-                            n_items = 0
-                        meta = row.meta if isinstance(row.meta, dict) else {}
-                        source = str(getattr(row, "source", "") or "").strip()
-                        fetched_at = ""
-                        try:
-                            fetched_at = row.fetched_at.isoformat() if getattr(row, "fetched_at", None) else ""
-                        except Exception:
-                            fetched_at = ""
-                        schema = str(meta.get("schema") or "").strip()
-                        cap = f"race_id={int(selected_race_id)}｜筆數={n_items}"
-                        if source:
-                            cap += f"｜source={source}"
-                        if schema:
-                            cap += f"｜schema={schema}"
-                        if fetched_at:
-                            cap += f"｜fetched_at={fetched_at}"
-                        st.caption(cap)
-
-                        rows = []
-                        for k, v in items.items():
-                            if not isinstance(v, dict):
-                                continue
-                            try:
-                                horse_no = int(k)
-                            except Exception:
-                                continue
-                            rows.append(
-                                {
-                                    "馬號": horse_no,
-                                    "馬名": str(v.get("horse_name") or v.get("name") or "").strip(),
-                                    "走勢評述": str(v.get("commentary") or v.get("comment") or "").strip(),
-                                }
-                            )
-                        rows.sort(key=lambda x: int(x.get("馬號") or 0))
-                        st.dataframe(rows, use_container_width=True, hide_index=True)
     session.close()
 
 

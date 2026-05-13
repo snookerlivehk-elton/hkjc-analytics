@@ -1,9 +1,9 @@
 import json
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional
 
-from database.models import Race, RaceEntry, SystemConfig, RaceCoRunning
+from database.models import Race, RaceEntry, SystemConfig
 from scoring_engine.ai_advisor import load_ai_settings, load_ai_api_key, call_chat_completions
 from scoring_engine.config_value import build_meta, unwrap_value, wrap_value
 
@@ -114,86 +114,50 @@ def _actual_top4(session: Session, race_id: int) -> List[int]:
 def _report_key(date_str: str, race_no: int) -> str:
     return f"ai_race_report:{str(date_str)}:{int(race_no)}"
 
-def _corunning_key(date_str: str, race_no: int) -> str:
-    return f"race_corunning:{str(date_str)}:{int(race_no)}"
+def _event_report_key(date_str: str, race_no: int) -> str:
+    return f"race_event_report:{str(date_str)}:{int(race_no)}"
 
-def _build_corunning_excerpt(
+def _build_event_report_excerpt(
     session: Session,
     date_str: str,
     race_no: int,
-    focus_horse_nos: Optional[List[int]] = None,
     max_items: int = 12,
-    max_comment_len: int = 180,
+    max_desc_len: int = 220,
 ) -> str:
-    items = None
-    try:
-        d0 = datetime.strptime(str(date_str), "%Y/%m/%d")
-        d1 = d0 + timedelta(days=1)
-        row = (
-            session.query(RaceCoRunning)
-            .filter(RaceCoRunning.race_date >= d0, RaceCoRunning.race_date < d1)
-            .filter(RaceCoRunning.race_no == int(race_no))
-            .first()
-        )
-        if row and isinstance(row.items, dict) and row.items:
-            items = row.items
-    except Exception:
-        items = None
-
-    if not isinstance(items, dict) or not items:
-        cfg = session.query(SystemConfig).filter_by(key=_corunning_key(date_str, int(race_no))).first()
-        if not cfg:
-            return ""
-        payload, _ = unwrap_value(cfg.value)
-        if not isinstance(payload, dict):
-            return ""
-        items = payload.get("items")
-        if not isinstance(items, dict) or not items:
-            return ""
-
-    picked: List[Tuple[int, Dict[str, Any]]] = []
-    if isinstance(focus_horse_nos, list) and focus_horse_nos:
-        for hn in focus_horse_nos:
-            k = str(int(hn))
-            v = items.get(k)
-            if isinstance(v, dict):
-                picked.append((int(hn), v))
-    else:
-        for k, v in items.items():
-            if not isinstance(v, dict):
-                continue
-            try:
-                hn = int(k)
-            except Exception:
-                continue
-            picked.append((hn, v))
-
-    if not picked:
+    cfg = session.query(SystemConfig).filter_by(key=_event_report_key(date_str, int(race_no))).first()
+    if not cfg:
         return ""
-
-    seen = set()
+    payload, _ = unwrap_value(cfg.value)
+    if not isinstance(payload, dict):
+        return ""
+    items = payload.get("items")
+    if not isinstance(items, list) or not items:
+        return ""
     out_lines = []
-    for hn, v in picked:
-        if hn in seen:
+    seen = set()
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        try:
+            hn = int(it.get("horse_no") or 0)
+        except Exception:
+            hn = 0
+        if hn <= 0 or hn in seen:
             continue
         seen.add(hn)
-        name = str(v.get("horse_name") or "").strip()
-        comment = str(v.get("commentary") or "").strip()
-        if not comment:
+        name = str(it.get("horse_name") or "").strip()
+        desc = str(it.get("desc") or "").strip()
+        if not desc:
             continue
-        if max_comment_len and len(comment) > int(max_comment_len):
-            comment = comment[: int(max_comment_len)].rstrip() + "..."
+        if max_desc_len and len(desc) > int(max_desc_len):
+            desc = desc[: int(max_desc_len)].rstrip() + "..."
         prefix = f"[{hn}]"
         if name:
             prefix = f"[{hn}] {name}"
-        out_lines.append(f"- {prefix}: {comment}")
+        out_lines.append(f"- {prefix}: {desc}")
         if max_items and len(out_lines) >= int(max_items):
             break
-
-    if not out_lines:
-        return ""
-    return "\n".join(out_lines)
-
+    return "\n".join(out_lines) if out_lines else ""
 
 def list_reflection_candidates(
     session: Session,
@@ -286,7 +250,40 @@ def batch_reflect_worst(
         results.append({"race_id": rid, "date": c.get("date"), "race_no": c.get("race_no"), "res": res, "score": c.get("score")})
     return {"ok": True, "picked": picked, "results": results}
 
-def generate_race_reflection(session: Session, race_id: int) -> Dict[str, Any]:
+def batch_reflect_day(
+    session: Session,
+    date_str: str,
+    mode: str = "all",
+    only_unreflected: bool = True,
+) -> Dict[str, Any]:
+    mode2 = str(mode or "").strip().lower() or "all"
+    cand = list_reflection_candidates(session, date_str=str(date_str), only_unreflected=bool(only_unreflected), limit=500)
+    picked = cand
+    if mode2 in {"miss_only", "miss", "unhit"}:
+        picked = [x for x in cand if (int(x.get("hits_in_top4") or 0) < 4) or (int(x.get("false_elim") or 0) > 0)]
+
+    results = []
+    for c in picked:
+        rid = int(c.get("race_id") or 0)
+        if not rid:
+            continue
+        save_rules = (int(c.get("hits_in_top4") or 0) < 4) or (int(c.get("false_elim") or 0) > 0)
+        res = generate_race_reflection(session, rid, save_rules=bool(save_rules))
+        results.append(
+            {
+                "race_id": rid,
+                "date": c.get("date"),
+                "race_no": c.get("race_no"),
+                "res": res,
+                "score": c.get("score"),
+                "hits_in_top4": c.get("hits_in_top4"),
+                "false_elim": c.get("false_elim"),
+            }
+        )
+    return {"ok": True, "mode": mode2, "picked": picked, "results": results}
+
+
+def generate_race_reflection(session: Session, race_id: int, save_rules: bool = True) -> Dict[str, Any]:
     race = session.query(Race).get(race_id)
     if not race:
         return {"ok": False, "reason": "race_not_found"}
@@ -324,28 +321,6 @@ def generate_race_reflection(session: Session, race_id: int) -> Dict[str, Any]:
     elim = report_val.get("eliminated_horse_nos")
     pred_top5 = pred_top5 if isinstance(pred_top5, list) else []
     elim = elim if isinstance(elim, list) else []
-    focus = []
-    try:
-        focus.extend([int(x) for x in pred_top5 if str(x).strip().isdigit()])
-    except Exception:
-        pass
-    try:
-        focus.extend([int(x) for x in elim if str(x).strip().isdigit()])
-    except Exception:
-        pass
-    try:
-        focus.extend([int(x.get("horse_no") or 0) for x in top_4 if int(x.get("horse_no") or 0) > 0])
-    except Exception:
-        pass
-    focus = [int(x) for x in focus if int(x or 0) > 0]
-    seen_focus = set()
-    focus2 = []
-    for x in focus:
-        if x in seen_focus:
-            continue
-        seen_focus.add(x)
-        focus2.append(x)
-    corunning_excerpt = _build_corunning_excerpt(session, date_str=date_str, race_no=int(race_no), focus_horse_nos=focus2)
     
     reflection_key = f"ai_race_reflection:{date_str}:{race_no}"
     ref_cfg = session.query(SystemConfig).filter_by(key=reflection_key).first()
@@ -363,7 +338,6 @@ def generate_race_reflection(session: Session, race_id: int) -> Dict[str, Any]:
         
     system_prompt = (
         "你是專業賽馬 AI 檢討專家。以下是你在賽前寫的分析報告，以及該場賽事最終的真實 Top 4 賽果。\n"
-        "如果提供了賽後『沿途走勢評述』，請優先用它來判斷賽事關鍵事件（例如出閘快慢、受阻、走外疊、步速形勢、留放策略），並反推你賽前分析有哪些盲點。\n"
         "請檢視你的預測與實際結果的落差。找出你可能漏看的盲點（例如：高估了某種走勢、低估了檔位或負磅的影響、忽視了特定意外紀錄等）。\n"
         "請將『檢討分析過程』的字數嚴格控制在 200 到 400 字以內，精簡扼要。\n"
         "請總結出 1-2 條簡潔、通用、可供未來參考的『賽事預測黃金法則』。\n\n"
@@ -376,8 +350,9 @@ def generate_race_reflection(session: Session, race_id: int) -> Dict[str, Any]:
     )
     
     user_text = f"【賽前分析報告】\n{pre_race_report}\n\n【實際賽果 Top 4】\n{actual_results_str}"
-    if corunning_excerpt:
-        user_text += f"\n\n【沿途走勢評述（賽後）】\n{corunning_excerpt}"
+    event_report_excerpt = _build_event_report_excerpt(session, date_str=date_str, race_no=int(race_no))
+    if event_report_excerpt:
+        user_text += f"\n\n【競賽事件報告（賽後）】\n{event_report_excerpt}"
     
     resp = call_chat_completions(
         endpoint=settings["endpoint"],
@@ -403,8 +378,8 @@ def generate_race_reflection(session: Session, race_id: int) -> Dict[str, Any]:
                 "actual_results": actual_results_str,
                 "reflection": parsed.get("reflection_analysis", ""),
                 "learned_rules": parsed.get("learned_rules", []),
-                "corunning_excerpt": corunning_excerpt or "",
-                "corunning_used": bool(corunning_excerpt),
+                "event_report_excerpt": event_report_excerpt or "",
+                "event_report_used": bool(event_report_excerpt),
                 "created_at": datetime.utcnow().isoformat()
             }
             meta = build_meta(
@@ -416,7 +391,7 @@ def generate_race_reflection(session: Session, race_id: int) -> Dict[str, Any]:
                     "date": str(date_str),
                     "race_no": int(race_no),
                     "sources": {
-                        "system_config_keys": [report_key, _corunning_key(date_str, int(race_no))],
+                        "system_config_keys": [report_key, _event_report_key(date_str, int(race_no))],
                         "model_id": str(settings.get("model_id") or ""),
                     },
                 },
@@ -430,11 +405,16 @@ def generate_race_reflection(session: Session, race_id: int) -> Dict[str, Any]:
                 pass
             
             new_rules = parsed.get("learned_rules", [])
-            if new_rules:
+            if save_rules and new_rules:
                 save_learned_rules(session, new_rules, source=f"{date_str}:R{race_no}")
                 
             session.commit()
-            return {"ok": True, "reflection": parsed.get("reflection_analysis"), "learned_rules": new_rules}
+            return {
+                "ok": True,
+                "reflection": parsed.get("reflection_analysis"),
+                "learned_rules": new_rules,
+                "event_report_used": bool(event_report_excerpt),
+            }
         except Exception as e:
             session.rollback()
             return {"ok": False, "reason": "json_parse_error", "error": str(e)}

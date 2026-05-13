@@ -97,7 +97,6 @@ def init_db():
             )
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_system_configs_updated_at ON system_configs (updated_at)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_system_configs_job_prefix_updated_at ON system_configs (key, updated_at DESC)"))
-            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_race_corunning_race_date_no ON race_corunning (race_date, race_no)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_raw_snapshots_entity ON raw_snapshots (entity_type, entity_key)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_search_documents_entity ON search_documents (entity_type, entity_key)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_search_documents_race_day ON search_documents (race_date_day, race_no)"))

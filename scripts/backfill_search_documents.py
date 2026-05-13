@@ -10,7 +10,7 @@ if root_path not in sys.path:
 from database.connection import init_db, get_session
 from database.models import Race, SystemConfig
 from scoring_engine.normalization import bucket_parts
-from scoring_engine.search_index import index_corunning, index_race_entry_bundle, index_system_config_doc
+from scoring_engine.search_index import index_race_entry_bundle, index_system_config_doc
 
 
 def _parse_ymd(s: str):
@@ -49,7 +49,6 @@ def main():
             if not rid:
                 continue
             index_race_entry_bundle(session, rid)
-            index_corunning(session, rid)
 
             ds = ""
             try:

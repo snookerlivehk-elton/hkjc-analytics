@@ -167,14 +167,20 @@ def main():
 
         tol_min_s = str(os.environ.get("ODDS_MILESTONE_TOL_MINUTES") or "").strip()
         rearm_s = str(os.environ.get("ODDS_MILESTONE_REARM_MINUTES") or "").strip()
+        catchup_s = str(os.environ.get("ODDS_MILESTONE_CATCHUP_MINUTES") or "").strip()
         try:
-            tol_min = int(tol_min_s) if tol_min_s else 2
+            tol_min = int(tol_min_s) if tol_min_s else 3
         except Exception:
-            tol_min = 2
+            tol_min = 3
         try:
             rearm_min = int(rearm_s) if rearm_s else 3
         except Exception:
             rearm_min = 3
+        try:
+            catchup_min = int(catchup_s) if catchup_s else 6
+        except Exception:
+            catchup_min = 6
+        catchup_min = max(0, int(catchup_min))
 
         races = (
             session.query(Race.id, Race.race_no, Race.venue, Race.post_time_hk)
@@ -294,7 +300,11 @@ def main():
                         break
             else:
                 for m in ms:
-                    if abs(delta_min - int(m)) <= int(tol_min):
+                    mm = int(m)
+                    if abs(delta_min - mm) <= int(tol_min):
+                        should_fetch = True
+                        break
+                    if (delta_min <= mm) and (delta_min >= (mm - int(catchup_min))):
                         should_fetch = True
                         break
 
@@ -348,8 +358,12 @@ def main():
                 trigger = False
                 if (prev_delta is not None) and (prev_delta > int(m)) and (delta_min <= int(m)):
                     trigger = True
-                elif prev_delta is None and abs(delta_min - int(m)) <= int(tol_min):
-                    trigger = True
+                elif prev_delta is None:
+                    mm = int(m)
+                    if abs(delta_min - mm) <= int(tol_min):
+                        trigger = True
+                    elif (delta_min <= mm) and (delta_min >= (mm - int(catchup_min))):
+                        trigger = True
                 if not trigger:
                     continue
 
