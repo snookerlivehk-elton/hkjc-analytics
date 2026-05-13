@@ -968,6 +968,134 @@ with tab_monitor:
                 session_m.commit()
                 st.success(f"✅ 已清除：RaceResult={n_rr} RaceDividend={n_div} RaceTrackCondition={n_tc} SystemConfig(runpos)={n_cfg}")
                 st.rerun()
+
+            st.divider()
+            c6, c7 = st.columns([1, 3])
+            ok = _confirm_run(c6, "monitor_purge_fake_races", label="輸入 RUN")
+            if c6.button("🧨 刪除該日假場次（按 HKJC 當日場次清單）", use_container_width=True, disabled=not ok, key="monitor_purge_fake_races_btn"):
+                from datetime import datetime as _dt, time as _dtime, timedelta as _td
+                from sqlalchemy import and_
+                import re
+                import requests
+                from bs4 import BeautifulSoup
+                from database.models import (
+                    EntryFact,
+                    OddsHistory,
+                    PredictionTop5,
+                    Race,
+                    RaceCoRunning,
+                    RaceDividend,
+                    RaceEntry,
+                    RacePaceForecastSnapshot,
+                    RacePaceSnapshot,
+                    RacePoolSnapshot,
+                    RaceResult,
+                    RaceTrackCondition,
+                    RawSnapshot,
+                    ScoringFactor,
+                    SystemConfig,
+                )
+
+                def _hkjc_race_nos(date_yyyymmdd_slash: str):
+                    s = str(date_yyyymmdd_slash or "").strip()
+                    if not s:
+                        return []
+                    url = f"https://racing.hkjc.com/zh-hk/local/information/racecard?racedate={s}&RaceNo=1"
+                    headers = {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+                        "Accept-Language": "zh-HK,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+                        "Referer": "https://racing.hkjc.com/",
+                    }
+                    resp = requests.get(url, headers=headers, timeout=12)
+                    soup = BeautifulSoup(resp.text, "lxml")
+                    race_nos = set()
+                    for a in soup.select("a[href*='RaceNo=']"):
+                        m = re.search(r"RaceNo=(\d+)", a.get("href", "") or "", re.IGNORECASE)
+                        if m:
+                            try:
+                                race_nos.add(int(m.group(1)))
+                            except Exception:
+                                pass
+                    return sorted([n for n in race_nos if int(n) > 0])
+
+                try:
+                    hkjc_race_nos = _hkjc_race_nos(str(date_str))
+                except Exception as e:
+                    st.error(f"❌ 無法讀取 HKJC 當日場次清單：{e}")
+                    st.stop()
+
+                if not hkjc_race_nos:
+                    st.error("❌ HKJC 當日場次清單為空（可能網絡/站點限制），為安全起見不會刪除任何資料。")
+                    st.stop()
+
+                keep_set = set(int(x) for x in hkjc_race_nos if int(x) > 0)
+                st.info(f"HKJC 當日場次：{sorted(list(keep_set))}")
+
+                d0 = _dt.strptime(str(date_str), "%Y/%m/%d").date()
+                start = _dt.combine(d0, _dtime.min)
+                end = start + _td(days=1)
+
+                races = (
+                    session_m.query(Race.id, Race.race_no, Race.venue)
+                    .filter(and_(Race.race_date >= start, Race.race_date < end))
+                    .order_by(Race.race_no.asc(), Race.id.asc())
+                    .all()
+                )
+                if not races:
+                    st.warning("找不到該日 races，無需刪除。")
+                    st.stop()
+
+                target = [(int(rid), int(rno or 0), str(v or "")) for rid, rno, v in races if int(rno or 0) > 0 and int(rno or 0) not in keep_set]
+                if not target:
+                    st.success("✅ 該日未偵測到假場次（DB 場次已與 HKJC 一致）。")
+                    st.stop()
+
+                target_race_ids = [rid for rid, _, _ in target]
+                target_race_nos = sorted({rno for _, rno, _ in target})
+                st.warning(f"即將刪除假場次：{[f'R{n}' for n in target_race_nos]}（共 {len(target_race_ids)} 場）")
+
+                entry_ids = [int(x[0]) for x in session_m.query(RaceEntry.id).filter(RaceEntry.race_id.in_(target_race_ids)).all()]
+
+                n_rr = 0
+                if entry_ids:
+                    n_rr = session_m.query(RaceResult).filter(RaceResult.entry_id.in_(entry_ids)).delete(synchronize_session=False)
+                n_oh = session_m.query(OddsHistory).filter(OddsHistory.entry_id.in_(entry_ids)).delete(synchronize_session=False) if entry_ids else 0
+                n_sf = session_m.query(ScoringFactor).filter(ScoringFactor.entry_id.in_(entry_ids)).delete(synchronize_session=False) if entry_ids else 0
+                n_ef = session_m.query(EntryFact).filter(EntryFact.race_id.in_(target_race_ids)).delete(synchronize_session=False)
+
+                n_div = session_m.query(RaceDividend).filter(RaceDividend.race_id.in_(target_race_ids)).delete(synchronize_session=False)
+                n_tc = session_m.query(RaceTrackCondition).filter(RaceTrackCondition.race_id.in_(target_race_ids)).delete(synchronize_session=False)
+                n_pool = session_m.query(RacePoolSnapshot).filter(RacePoolSnapshot.race_id.in_(target_race_ids)).delete(synchronize_session=False)
+                n_pace = session_m.query(RacePaceSnapshot).filter(RacePaceSnapshot.race_id.in_(target_race_ids)).delete(synchronize_session=False)
+                n_pace_f = session_m.query(RacePaceForecastSnapshot).filter(RacePaceForecastSnapshot.race_id.in_(target_race_ids)).delete(synchronize_session=False)
+                n_cor = session_m.query(RaceCoRunning).filter(RaceCoRunning.race_id.in_(target_race_ids)).delete(synchronize_session=False)
+                n_pred = session_m.query(PredictionTop5).filter(PredictionTop5.race_id.in_(target_race_ids)).delete(synchronize_session=False)
+                n_raw = session_m.query(RawSnapshot).filter(RawSnapshot.race_id.in_(target_race_ids)).delete(synchronize_session=False)
+
+                n_entries = session_m.query(RaceEntry).filter(RaceEntry.race_id.in_(target_race_ids)).delete(synchronize_session=False)
+
+                score_keys = [f"race_score_run:{int(rid)}" for rid in target_race_ids]
+                n_score_cfg = session_m.query(SystemConfig).filter(SystemConfig.key.in_(score_keys)).delete(synchronize_session=False)
+                runpos_keys = [f"race_runpos:{str(date_str)}:{int(rno)}" for _, rno, _ in target]
+                n_runpos_cfg = session_m.query(SystemConfig).filter(SystemConfig.key.in_(runpos_keys)).delete(synchronize_session=False)
+                ai_keys = [f"ai_race_report:{str(date_str)}:{int(rno)}" for rno in target_race_nos]
+                top5_keys = [f"top5_snapshot:{str(date_str)}:{int(rno)}" for rno in target_race_nos]
+                elim_keys = [f"elim_snapshot:{str(date_str)}:{int(rno)}" for rno in target_race_nos]
+                n_ai_cfg = session_m.query(SystemConfig).filter(SystemConfig.key.in_(ai_keys)).delete(synchronize_session=False)
+                n_top5_cfg = session_m.query(SystemConfig).filter(SystemConfig.key.in_(top5_keys)).delete(synchronize_session=False)
+                n_elim_cfg = session_m.query(SystemConfig).filter(SystemConfig.key.in_(elim_keys)).delete(synchronize_session=False)
+
+                n_races = session_m.query(Race).filter(Race.id.in_(target_race_ids)).delete(synchronize_session=False)
+
+                session_m.commit()
+                st.success(
+                    "✅ 已刪除假場次資料："
+                    + f"Race={n_races} RaceEntry={n_entries} RaceResult={n_rr} OddsHistory={n_oh} ScoringFactor={n_sf} EntryFact={n_ef} "
+                    + f"RaceDividend={n_div} RaceTrackCondition={n_tc} RacePoolSnapshot={n_pool} Pace={n_pace} PaceForecast={n_pace_f} "
+                    + f"RaceCoRunning={n_cor} PredictionTop5={n_pred} RawSnapshot={n_raw} "
+                    + f"SystemConfig(score_run)={n_score_cfg} runpos={n_runpos_cfg} ai_report={n_ai_cfg} top5={n_top5_cfg} elim={n_elim_cfg}"
+                )
+                st.rerun()
     finally:
         session_m.close()
 
