@@ -992,6 +992,7 @@ with tab_monitor:
                     RaceResult,
                     RaceTrackCondition,
                     RawSnapshot,
+                    SearchDocument,
                     ScoringFactor,
                     SystemConfig,
                 )
@@ -1071,6 +1072,7 @@ with tab_monitor:
                 n_cor = session_m.query(RaceCoRunning).filter(RaceCoRunning.race_id.in_(target_race_ids)).delete(synchronize_session=False)
                 n_pred = session_m.query(PredictionTop5).filter(PredictionTop5.race_id.in_(target_race_ids)).delete(synchronize_session=False)
                 n_raw = session_m.query(RawSnapshot).filter(RawSnapshot.race_id.in_(target_race_ids)).delete(synchronize_session=False)
+                n_sd = session_m.query(SearchDocument).filter(SearchDocument.race_id.in_(target_race_ids)).delete(synchronize_session=False)
 
                 n_entries = session_m.query(RaceEntry).filter(RaceEntry.race_id.in_(target_race_ids)).delete(synchronize_session=False)
 
@@ -1093,6 +1095,7 @@ with tab_monitor:
                     + f"Race={n_races} RaceEntry={n_entries} RaceResult={n_rr} OddsHistory={n_oh} ScoringFactor={n_sf} EntryFact={n_ef} "
                     + f"RaceDividend={n_div} RaceTrackCondition={n_tc} RacePoolSnapshot={n_pool} Pace={n_pace} PaceForecast={n_pace_f} "
                     + f"RaceCoRunning={n_cor} PredictionTop5={n_pred} RawSnapshot={n_raw} "
+                    + f"SearchDocument={n_sd} "
                     + f"SystemConfig(score_run)={n_score_cfg} runpos={n_runpos_cfg} ai_report={n_ai_cfg} top5={n_top5_cfg} elim={n_elim_cfg}"
                 )
                 st.rerun()
