@@ -1854,14 +1854,14 @@ def main():
 
                     with st.expander("🎯 會員組合命中率（可篩選）", expanded=False):
                         from sqlalchemy import and_, case, func
-                        from datetime import date, datetime as _dt, time, timedelta
+                        from datetime import date, datetime as _dt, time as _time, timedelta
                         from scoring_engine.member_stats import _calc_hits
                         from scoring_engine.track_conditions import going_code_label
                         from scoring_engine.top5_odds_stats import ODDS_BUCKETS, compute_top5_odds_stats
 
                         def _filtered_race_rows(d1: date, d2: date, venue_sel: str, surface_sel: str, course_sel: str, going_sel: str, min_results: int):
-                            start = _dt.combine(d1, time.min)
-                            end = _dt.combine(d2, time.min) + timedelta(days=1)
+                            start = _dt.combine(d1, _time.min)
+                            end = _dt.combine(d2, _time.min) + timedelta(days=1)
                             q_races = (
                                 session.query(Race.id, Race.race_date, Race.race_no)
                                 .join(RaceEntry, RaceEntry.race_id == Race.id)
