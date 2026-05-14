@@ -826,7 +826,46 @@ with tab_monitor:
                 )
 
             df = pd.DataFrame(rows).sort_values(["場次"])
-            st.dataframe(df, use_container_width=True, hide_index=True)
+
+            def _pick_cols(df0: pd.DataFrame, cols0):
+                return [c for c in cols0 if c in df0.columns]
+
+            base_cols = ["場次", "Race ID", "場地"]
+            pre_cols = base_cols + [
+                "排位表",
+                "馬匹往績",
+                "SpeedPRO（EA/SR）",
+                "賽績指引（FormGuide）",
+                "事件摘要（馬號＋描述）",
+                "賽前賠率（24H）",
+                "計分結果",
+                "因子明細",
+                "Top5 快照",
+                "AI 報告",
+            ]
+            live_cols = base_cols + [
+                "臨場賠率（-30）",
+                "臨場賠率（-15）",
+                "臨場賠率（-10）",
+                "臨場賠率（-5）",
+                "場地狀況",
+                "天氣/風向（WindTracker）",
+            ]
+            post_cols = base_cols + [
+                "賽果",
+                "派彩",
+                "沿途走位（runpos）",
+                "步速（每場）",
+                "競賽事件報告（賽後）",
+                "AI 反思",
+            ]
+
+            st.markdown("#### 🟦 賽前資料完整度")
+            st.dataframe(df[_pick_cols(df, pre_cols)], use_container_width=True, hide_index=True)
+            st.markdown("#### 🟨 臨場資料完整度")
+            st.dataframe(df[_pick_cols(df, live_cols)], use_container_width=True, hide_index=True)
+            st.markdown("#### 🟩 賽後資料完整度")
+            st.dataframe(df[_pick_cols(df, post_cols)], use_container_width=True, hide_index=True)
 
             st.markdown("#### 🔎 資料內容檢視")
             race_nos = [int(x) for x in df["場次"].tolist() if int(x or 0) > 0]
