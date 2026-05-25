@@ -816,6 +816,8 @@ with tab_monitor:
                 ev_disp = "—"
                 if exp_cnt > 0 and ev_cnt > 0:
                     ev_disp = f"{ev_cnt}/{exp_cnt}"
+                elif exp_cnt > 0 and ev_key in syscfg_key_set:
+                    ev_disp = f"0/{exp_cnt}"
                 elif ev_cnt > 0:
                     ev_disp = str(ev_cnt)
 

@@ -155,10 +155,9 @@ def main():
 
         results = payload.get("results") or []
         event_report = payload.get("event_report") if isinstance(payload, dict) else None
-        event_report_fetched = False
-        if isinstance(event_report, list):
-            event_report_fetched = bool(event_report)
-        else:
+        event_report_found = bool(payload.get("event_report_found")) if isinstance(payload, dict) else False
+        event_report_fetched = bool(event_report_found)
+        if not isinstance(event_report, list):
             event_report = []
         has_valid_time = False
         try:
@@ -175,7 +174,7 @@ def main():
             print(f"[略過] 尚未有賽果（無有效完成時間）：{target_date} {racecourse} R{int(race.race_no or 0)}")
             continue
 
-        if not event_report:
+        if (not event_report_found) and (not event_report):
             try:
                 rr_payload = rr_scraper.scrape_single_race(race_date=target_date, racecourse=racecourse, race_no=int(race.race_no or 0))
                 rr_items = rr_payload.get("items") if isinstance(rr_payload, dict) else None
@@ -269,6 +268,7 @@ def main():
                 "race_date": target_date,
                 "race_no": int(race.race_no),
                 "items": [x for x in event_report if isinstance(x, dict)],
+                "status": ("ok" if event_report else "no_special_report"),
             }
             m2 = build_meta(
                 source="HKJC_RACEREPORTFULL",
@@ -276,6 +276,9 @@ def main():
                 url=f"https://racing.hkjc.com/zh-hk/local/information/racereportfull?racedate={target_date}&Racecourse={racecourse}&RaceNo={int(race.race_no)}",
                 schema="race_event_report:v1",
             )
+            if event_report_found:
+                m2["source"] = "HKJC_LOCALRESULTS"
+                m2["url"] = f"https://racing.hkjc.com/zh-hk/local/information/localresults?racedate={target_date}&Racecourse={racecourse}&RaceNo={int(race.race_no)}"
             cfg2.value = wrap_value(payload_er, m2)
 
         try:

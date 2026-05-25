@@ -15,6 +15,7 @@ class LocalResultsScraper:
             "Accept-Language": "zh-HK,zh;q=0.9,en-US;q=0.8,en;q=0.7",
         }
         self.last_url = ""
+        self.last_event_report_found = False
 
     def fetch(self, race_date: str, racecourse: str, race_no: int) -> str:
         url = f"{self.base_url}?racedate={race_date}&Racecourse={racecourse}&RaceNo={race_no}"
@@ -45,6 +46,7 @@ class LocalResultsScraper:
             "results": results,
             "dividends": dividends,
             "event_report": event_report,
+            "event_report_found": bool(self.last_event_report_found),
         }
 
     def _url_params(self) -> Dict[str, str]:
@@ -359,6 +361,7 @@ class LocalResultsScraper:
         return items
 
     def _parse_event_report(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:
+        self.last_event_report_found = False
         target = None
         for tag in soup.find_all(["h1", "h2", "h3", "h4", "div", "span", "p"]):
             s = tag.get_text(" ", strip=True)
@@ -368,6 +371,7 @@ class LocalResultsScraper:
                 t2 = tag.find_next("table")
                 if t2 is not None:
                     target = t2
+                    self.last_event_report_found = True
                     break
 
         if target is None:
@@ -379,6 +383,7 @@ class LocalResultsScraper:
                 header_norm = "".join(headers).replace(" ", "")
                 if ("馬號" in header_norm) and ("描述" in header_norm or "事件" in header_norm):
                     target = table
+                    self.last_event_report_found = True
                     break
 
         if target is None:

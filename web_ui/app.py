@@ -1570,6 +1570,7 @@ def main():
                             "venue": str(v0 or ""),
                             "reflection": (ref_payload if isinstance(ref_payload, dict) else {}),
                             "reflection_meta": (ref_meta if isinstance(ref_meta, dict) else {}),
+                            "event_report_exists": bool(ev_cfg),
                             "event_report": (ev_payload if isinstance(ev_payload, dict) else {}),
                             "event_report_meta": (ev_meta if isinstance(ev_meta, dict) else {}),
                         }
@@ -1611,9 +1612,10 @@ def main():
                 ref_has = bool(str(ref_val.get("reflection") or "").strip())
                 ev_items = ev_val.get("items") if isinstance(ev_val.get("items"), list) else []
                 ev_has = bool(ev_items)
+                ev_exists = bool(rr.get("event_report_exists"))
                 status2 = []
                 status2.append("✅ 反思" if ref_has else "— 反思")
-                status2.append("✅ 事件" if ev_has else "— 事件")
+                status2.append("✅ 事件" if ev_exists else "— 事件")
                 head = f"{venue2} 第 {rn2} 場｜" + " ".join(status2)
 
                 with st.expander(head, expanded=False):
@@ -1650,7 +1652,7 @@ def main():
                         st.info("此場尚未有反思報告（ai_race_reflection:*）。")
 
                     st.markdown("#### 競賽事件報告（賽後）")
-                    if isinstance(ev_val, dict) and ev_items:
+                    if ev_exists and isinstance(ev_val, dict) and ev_items:
                         cap2 = []
                         for kk in ["source", "schema", "fetched_at", "saved_at"]:
                             vv = str(ev_meta.get(kk) or "").strip()
@@ -1677,8 +1679,10 @@ def main():
                             st.dataframe(df_ev, use_container_width=True, hide_index=True)
                         else:
                             st.info("此場沒有可顯示的競賽事件內容。")
+                    elif ev_exists:
+                        st.info("此場競賽事件報告為「無特別報告」。")
                     else:
-                        st.info("此場尚未抓到競賽事件報告（race_event_report:*），或顯示為無特別報告。")
+                        st.info("此場尚未抓到競賽事件報告（race_event_report:*）。")
 
     # 數據加載與顯示
     weight_map = st.session_state.get("active_weight_map", {})
