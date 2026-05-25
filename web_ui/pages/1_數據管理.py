@@ -421,6 +421,20 @@ with tab_monitor:
         cols[2].caption((latest_ai or {}).get("key") or "—")
         cols[2].caption(str((latest_ai or {}).get("updated_at") or ""))
 
+        st.markdown("#### 🤖 自動 AI 觸發狀態（提示）")
+        enabled_auto_preview = str(os.environ.get("ENABLE_AUTO_AI_PREVIEW") or "0").strip().lower() in ("1", "true", "yes")
+        enabled_auto_reflect = str(os.environ.get("ENABLE_AUTO_AI_REFLECTION") or "0").strip().lower() in ("1", "true", "yes")
+        pre_cfg = session_m.query(SystemConfig).filter_by(key=f"auto_ai_preview_enqueued:{date_str}").first()
+        post_cfg = session_m.query(SystemConfig).filter_by(key=f"auto_ai_reflect_enqueued:{date_str}").first()
+        has_ai_key = False
+        try:
+            from scoring_engine.ai_advisor import load_ai_api_key
+
+            kinfo = load_ai_api_key(session_m)
+            has_ai_key = bool(str(kinfo.get("env") or kinfo.get("stored") or "").strip())
+        except Exception:
+            has_ai_key = False
+
         st.markdown("#### 🧩 所選賽日：各場資料完整度")
         races = (
             session_m.query(Race)
@@ -646,6 +660,20 @@ with tab_monitor:
                                         horses.add(hn)
                                 event_cnt_by_race_no[int(rn)] = int(len(horses))
 
+            sp_top5_race_ids = set()
+            try:
+                sp_rows = (
+                    session_m.query(PredictionTop5.race_id)
+                    .filter(PredictionTop5.race_id.in_(race_ids))
+                    .filter(PredictionTop5.predictor_type == "factor")
+                    .filter(PredictionTop5.predictor_key == "speedpro_energy")
+                    .distinct()
+                    .all()
+                )
+                sp_top5_race_ids = set(int(rid or 0) for (rid,) in sp_rows if int(rid or 0) > 0)
+            except Exception:
+                sp_top5_race_ids = set()
+
             now_hk = datetime.now(HK_TZ)
             today_hk = now_hk.date()
             day0 = start_dt.date()
@@ -662,6 +690,94 @@ with tab_monitor:
                 after_min = int(after_min_s) if after_min_s else 10
             except Exception:
                 after_min = 10
+
+            min_cov_s = str(os.environ.get("SPEEDPRO_MIN_COVERAGE") or "").strip()
+            try:
+                min_cov_v = float(min_cov_s) if min_cov_s else 0.85
+            except Exception:
+                min_cov_v = 0.85
+            if min_cov_v > 1.0:
+                min_cov_v = min_cov_v / 100.0
+            if min_cov_v < 0.0:
+                min_cov_v = 0.0
+            if min_cov_v > 1.0:
+                min_cov_v = 1.0
+
+            missing_pre = {"speedpro": [], "formguide": [], "speedpro_top5": []}
+            missing_post = {"results": [], "dividends": [], "event_report": []}
+            for r in races:
+                rid = int(getattr(r, "id") or 0)
+                rn = int(getattr(r, "race_no") or 0)
+                exp_cnt = int(entry_cnt_by_race_id.get(rid) or 0)
+
+                sp_key = f"speedpro_energy:{date_str}:{rn}"
+                good = 0
+                if exp_cnt > 0 and sp_key in sp_key_set:
+                    v = sp_val_by_key.get(sp_key)
+                    if isinstance(v, dict):
+                        for _, vv in v.items():
+                            if not isinstance(vv, dict):
+                                continue
+                            if (vv.get("energy_assess") is not None) and (vv.get("status_rating") is not None):
+                                good += 1
+                cov = (good / float(exp_cnt)) if exp_cnt > 0 else 0.0
+                if exp_cnt <= 0 or cov < float(min_cov_v):
+                    missing_pre["speedpro"].append(rn)
+
+                fg_key = f"speedpro_formguide:{date_str}:{rn}"
+                fg_val = fg_val_by_key.get(fg_key)
+                if (fg_key not in fg_key_set) or (not isinstance(fg_val, dict)) or (not fg_val):
+                    missing_pre["formguide"].append(rn)
+
+                if rid <= 0 or rid not in sp_top5_race_ids:
+                    missing_pre["speedpro_top5"].append(rn)
+
+                if rid not in results_race_ids:
+                    missing_post["results"].append(rn)
+                if rid not in div_race_ids:
+                    missing_post["dividends"].append(rn)
+                ev_key = f"race_event_report:{date_str}:{rn}"
+                if ev_key not in syscfg_key_set:
+                    missing_post["event_report"].append(rn)
+
+            c_ai1, c_ai2 = st.columns(2)
+            pre_ok = (not missing_pre["speedpro"]) and (not missing_pre["formguide"]) and (not missing_pre["speedpro_top5"]) and has_ai_key
+            post_ok = (not missing_post["results"]) and (not missing_post["dividends"]) and (not missing_post["event_report"]) and has_ai_key
+
+            pre_title = "賽前：AI 前瞻（批次）"
+            post_title = "賽後：AI 反思（挑最失準）"
+            c_ai1.write(pre_title)
+            c_ai2.write(post_title)
+            c_ai1.caption(f"開關：{'開啟' if enabled_auto_preview else '關閉'}｜已排隊：{'✅' if pre_cfg else '—'}｜AI Key：{'✅' if has_ai_key else '—'}")
+            c_ai2.caption(f"開關：{'開啟' if enabled_auto_reflect else '關閉'}｜已排隊：{'✅' if post_cfg else '—'}｜AI Key：{'✅' if has_ai_key else '—'}")
+            if enabled_auto_preview and (not pre_cfg):
+                if pre_ok:
+                    c_ai1.success("就緒：資料已齊，等待 worker 排隊/執行。")
+                else:
+                    tips = []
+                    if missing_pre["speedpro"]:
+                        tips.append(f"SPEEDPRO 未達門檻：{missing_pre['speedpro']}")
+                    if missing_pre["formguide"]:
+                        tips.append(f"賽績指引未齊：{missing_pre['formguide']}")
+                    if missing_pre["speedpro_top5"]:
+                        tips.append(f"SPEEDPRO Top5 快照未齊：{missing_pre['speedpro_top5']}")
+                    if not has_ai_key:
+                        tips.append("AI API Key 未設定")
+                    c_ai1.warning("未就緒：" + "；".join(tips))
+            if enabled_auto_reflect and (not post_cfg):
+                if post_ok:
+                    c_ai2.success("就緒：賽後資料已齊，等待 worker 排隊/執行。")
+                else:
+                    tips = []
+                    if missing_post["results"]:
+                        tips.append(f"賽果未齊：{missing_post['results']}")
+                    if missing_post["dividends"]:
+                        tips.append(f"派彩未齊：{missing_post['dividends']}")
+                    if missing_post["event_report"]:
+                        tips.append(f"競賽事件報告未齊：{missing_post['event_report']}")
+                    if not has_ai_key:
+                        tips.append("AI API Key 未設定")
+                    c_ai2.warning("未就緒：" + "；".join(tips))
 
             rows = []
             for r in races:
