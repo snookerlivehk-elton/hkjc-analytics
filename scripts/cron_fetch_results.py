@@ -81,6 +81,29 @@ def _validate_date_fetched(session, race_date) -> bool:
     )
     return div_cnt >= len(race_ids) and res_cnt >= (len(race_ids) * 4)
 
+def _validate_event_report_fetched(session, race_date) -> bool:
+    races = (
+        session.query(Race.id, Race.race_no)
+        .filter(Race.race_date >= datetime.combine(race_date, datetime.min.time()))
+        .filter(Race.race_date < datetime.combine(race_date, datetime.min.time()) + timedelta(days=1))
+        .order_by(Race.race_no.asc(), Race.id.asc())
+        .all()
+    )
+    if not races:
+        return False
+    date_str = race_date.strftime("%Y/%m/%d")
+    expected = {f"race_event_report:{date_str}:{int(rn or 0)}" for _, rn in races if int(rn or 0) > 0}
+    if not expected:
+        return False
+    got = set(
+        k
+        for (k,) in session.query(SystemConfig.key)
+        .filter(SystemConfig.key.in_(list(expected)))
+        .all()
+        if str(k or "").strip()
+    )
+    return len(got) >= len(expected)
+
 
 def should_run(now_hk: datetime, race_date) -> bool:
     if not race_date:
@@ -128,6 +151,9 @@ def main():
             print(f"完成並已標記：{date_str}")
             enabled = str(os.environ.get("ENABLE_AUTO_AI_REFLECTION") or "0").strip().lower() in ("1", "true", "yes")
             if enabled and (not _already_reflect_enqueued(session2, date_str)):
+                if not _validate_event_report_fetched(session2, race_date):
+                    print(f"略過自動賽後反思：尚未齊「競賽事件報告（賽後）」 date={date_str}")
+                    return
                 top_n_s = str(os.environ.get("AUTO_AI_REFLECT_TOP_N") or "").strip()
                 try:
                     top_n = int(top_n_s) if top_n_s else 3

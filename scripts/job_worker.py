@@ -13,7 +13,7 @@ if root_path not in sys.path:
     sys.path.insert(0, root_path)
 
 from database.connection import init_db, get_session
-from database.models import Race, SystemConfig
+from database.models import Race, SystemConfig, PredictionTop5
 from scoring_engine.ai_advisor import load_ai_api_key, run_ai_race_summary
 from scoring_engine.ai_reflection import generate_race_reflection, list_reflection_candidates
 from scoring_engine.job_queue import append_job_log, claim_next_job, enqueue_job, update_job
@@ -393,16 +393,60 @@ def _handle_daily_update_pipeline(session, job):
         if not cfg0:
             kinfo = load_ai_api_key(session)
             api_key = str(kinfo.get("env") or kinfo.get("stored") or "").strip()
-            if api_key:
-                ajob = enqueue_job(session, "ai_batch_generate", {"date": date_str})
-                jid = str(ajob.get("id") or "")
-                cfg0 = SystemConfig(key=cfg_key, description=f"自動批次生成 AI 賽前報告已排隊（賽日 {date_str}）")
-                cfg0.value = {"job_id": jid, "enqueued_at": datetime.utcnow().isoformat()}
-                session.add(cfg0)
-                session.commit()
-                append_job_log(session, job["id"], f"auto_ai_preview_enqueued job_id={jid}")
-            else:
+            if not api_key:
                 append_job_log(session, job["id"], "auto_ai_preview_skipped reason=missing_api_key")
+            else:
+                min_cov = str(os.environ.get("SPEEDPRO_MIN_COVERAGE") or "").strip()
+                try:
+                    min_cov_v = float(min_cov) if min_cov else 0.85
+                except Exception:
+                    min_cov_v = 0.85
+                ready = get_speedpro_readiness(session, date_str=date_str, min_coverage=min_cov_v)
+                if not bool(ready.get("ok")):
+                    append_job_log(session, job["id"], f"auto_ai_preview_skipped reason=speedpro_not_ready min_coverage={ready.get('min_coverage')}")
+                    ready = None
+
+                start, end = _day_range(date_str)
+                races0 = (
+                    session.query(Race.id, Race.race_no)
+                    .filter(Race.race_date >= start)
+                    .filter(Race.race_date < end)
+                    .order_by(Race.race_no.asc(), Race.id.asc())
+                    .all()
+                )
+                formguide_ok = True
+                missing_fg = []
+                for _, rn in races0:
+                    rk = f"speedpro_formguide:{date_str}:{int(rn or 0)}"
+                    cfg_fg = session.query(SystemConfig).filter_by(key=rk).first()
+                    if not cfg_fg or not isinstance(cfg_fg.value, dict) or not cfg_fg.value:
+                        formguide_ok = False
+                        missing_fg.append(int(rn or 0))
+                if not formguide_ok:
+                    append_job_log(session, job["id"], f"auto_ai_preview_skipped reason=formguide_missing races={missing_fg}")
+
+                race_ids = [int(rid or 0) for rid, _ in races0 if int(rid or 0) > 0]
+                sp_top5_cnt = 0
+                if race_ids:
+                    sp_top5_cnt = int(
+                        session.query(PredictionTop5.id)
+                        .filter(PredictionTop5.race_id.in_(race_ids))
+                        .filter(PredictionTop5.predictor_type == "factor")
+                        .filter(PredictionTop5.predictor_key == "speedpro_energy")
+                        .count()
+                    )
+                sp_top5_ok = (len(race_ids) > 0) and (sp_top5_cnt >= len(race_ids))
+                if not sp_top5_ok:
+                    append_job_log(session, job["id"], f"auto_ai_preview_skipped reason=speedpro_top5_missing cnt={sp_top5_cnt} races={len(race_ids)}")
+
+                if (ready is not None) and formguide_ok and sp_top5_ok:
+                    ajob = enqueue_job(session, "ai_batch_generate", {"date": date_str})
+                    jid = str(ajob.get("id") or "")
+                    cfg0 = SystemConfig(key=cfg_key, description=f"自動批次生成 AI 賽前報告已排隊（賽日 {date_str}）")
+                    cfg0.value = {"job_id": jid, "enqueued_at": datetime.utcnow().isoformat()}
+                    session.add(cfg0)
+                    session.commit()
+                    append_job_log(session, job["id"], f"auto_ai_preview_enqueued job_id={jid}")
 
     update_job(
         session,

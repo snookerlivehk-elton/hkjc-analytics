@@ -155,7 +155,10 @@ def main():
 
         results = payload.get("results") or []
         event_report = payload.get("event_report") if isinstance(payload, dict) else None
-        if not isinstance(event_report, list):
+        event_report_fetched = False
+        if isinstance(event_report, list):
+            event_report_fetched = bool(event_report)
+        else:
             event_report = []
         has_valid_time = False
         try:
@@ -178,6 +181,7 @@ def main():
                 rr_items = rr_payload.get("items") if isinstance(rr_payload, dict) else None
                 if isinstance(rr_items, list):
                     event_report = rr_items
+                    event_report_fetched = True
             except Exception:
                 pass
         try:
@@ -254,7 +258,7 @@ def main():
             )
             cfg.value = wrap_value(payload_runpos, m)
 
-        if event_report:
+        if event_report_fetched:
             key2 = f"race_event_report:{target_date}:{int(race.race_no)}"
             cfg2 = session.query(SystemConfig).filter_by(key=key2).first()
             if not cfg2:
