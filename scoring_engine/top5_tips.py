@@ -233,6 +233,9 @@ def generate_top5_tips_for_race(
     if not positions:
         positions = [1, 2, 3, 4, 5]
 
+    stats_grouping = str(cfg0.get("stats_grouping") or "aggregate").strip().lower()
+    group_by_position = stats_grouping in {"by_position", "position", "pos"}
+
     odds_buckets = [str(x) for x in (cfg0.get("odds_buckets") or []) if str(x).strip()]
     if not odds_buckets:
         odds_buckets = [b.key for b in ODDS_BUCKETS]
@@ -254,16 +257,21 @@ def generate_top5_tips_for_race(
         place_k=3,
         top_k=5,
         odds_source=odds_source if odds_source != "pre_race_latest" else "pre_race_latest",
+        group_by_position=group_by_position,
+        positions=(positions if not group_by_position else None),
     )
-    stats_map: Dict[Tuple[str, str, str, int, str], Dict[str, Any]] = {}
+    stats_map: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
     if not df_stats.empty:
         for _, r in df_stats.iterrows():
             ptype = str(r.get("predictor_type") or "")
             pkey = str(r.get("predictor_key") or "")
             mem = str(r.get("member_email") or "").strip().lower() if ptype == "preset" else ""
-            pos = int(r.get("position") or 0)
             bucket = str(r.get("odds_bucket") or "")
-            stats_map[(ptype, pkey, mem, pos, bucket)] = dict(r)
+            if group_by_position:
+                pos = int(r.get("position") or 0)
+                stats_map[(ptype, pkey, mem, pos, bucket)] = dict(r)
+            else:
+                stats_map[(ptype, pkey, mem, bucket)] = dict(r)
 
     entry_info = _get_race_entry_map(session, int(race_id))
     odds_map = _get_race_odds_map(session, int(race_id), odds_source)
@@ -320,7 +328,10 @@ def generate_top5_tips_for_race(
             bucket = bucket_odds(odds_v)
             if bucket not in odds_buckets:
                 continue
-            st_row = stats_map.get((ptype, pkey, mem if ptype == "preset" else "", int(pos), bucket))
+            if group_by_position:
+                st_row = stats_map.get((ptype, pkey, mem if ptype == "preset" else "", int(pos), bucket))
+            else:
+                st_row = stats_map.get((ptype, pkey, mem if ptype == "preset" else "", bucket))
             if not st_row:
                 continue
             appear = int(st_row.get("appear") or 0)
@@ -344,6 +355,7 @@ def generate_top5_tips_for_race(
             if ptype == "ai":
                 key_label = "🤖 AI 推介"
 
+            grouping_label = "分 TOP 位置" if group_by_position else "不分 TOP 位置"
             base_tip = {
                 "race_date": ds,
                 "venue": venue,
@@ -364,6 +376,8 @@ def generate_top5_tips_for_race(
                 "predictor_key": pkey,
                 "predictor_key_label": key_label,
                 "member_email": (mem if ptype == "preset" else None),
+                "stats_grouping": ("by_position" if group_by_position else "aggregate"),
+                "stats_grouping_label": grouping_label,
                 "appear": appear,
                 "win": int(st_row.get("win") or 0),
                 "place": int(st_row.get("place") or 0),

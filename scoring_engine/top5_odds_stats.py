@@ -90,9 +90,23 @@ def compute_top5_odds_stats(
     place_k: int = 3,
     top_k: int = 5,
     odds_source: str = "result_win_odds",
+    group_by_position: bool = True,
+    positions: Optional[List[int]] = None,
 ) -> pd.DataFrame:
     from database.models import OddsHistory, PredictionTop5, Race, RaceEntry, RaceResult, ScoringWeight, SystemConfig
     from sqlalchemy import func
+
+    pos_filter: Optional[List[int]] = None
+    if positions:
+        pos_filter = []
+        for x in positions:
+            try:
+                xi = int(x)
+            except Exception:
+                continue
+            if 1 <= xi <= int(top_k or 5):
+                pos_filter.append(xi)
+        pos_filter = list(dict.fromkeys(pos_filter)) or None
 
     factor_labels: Dict[str, str] = {}
     try:
@@ -221,14 +235,24 @@ def compute_top5_odds_stats(
         for k, v in rows:
             ai_cfgs[str(k)] = v
 
-    acc: Dict[Tuple[str, str, str, int, str], Dict[str, int]] = {}
+    acc_pos: Dict[Tuple[str, str, str, int, str], Dict[str, int]] = {}
+    acc_agg: Dict[Tuple[str, str, str, str], Dict[str, int]] = {}
 
     def _add_row(ptype: str, pkey: str, mem: str, pos: int, bucket: str, rk: Any):
-        kk = (ptype, pkey, mem, pos, bucket)
-        row = acc.get(kk)
+        if pos_filter and int(pos or 0) not in pos_filter:
+            return
+        if group_by_position:
+            kk: Any = (ptype, pkey, mem, pos, bucket)
+            row = acc_pos.get(kk)
+        else:
+            kk = (ptype, pkey, mem, bucket)
+            row = acc_agg.get(kk)
         if not row:
             row = {"appear": 0, "win": 0, "place": 0}
-            acc[kk] = row
+            if group_by_position:
+                acc_pos[kk] = row
+            else:
+                acc_agg[kk] = row
         row["appear"] += 1
         try:
             rki = int(rk) if rk is not None else 0
@@ -284,33 +308,58 @@ def compute_top5_odds_stats(
                 _add_row("ai", "AI", "", i, bucket, ent.get("rank"))
 
     rows_out = []
-    for (ptype, pkey, mem, pos, bucket), v in acc.items():
-        appear = int(v.get("appear") or 0)
-        win = int(v.get("win") or 0)
-        place = int(v.get("place") or 0)
-        ptype_s = str(ptype)
-        pkey_s = str(pkey)
-        rows_out.append(
-            {
-                "predictor_type": ptype_s,
-                "predictor_type_label": str(type_labels.get(ptype_s) or ptype_s),
-                "predictor_key": pkey_s,
-                "predictor_key_label": _predictor_key_label(ptype_s, pkey_s),
-                "member_email": mem or None,
-                "position": int(pos),
-                "odds_bucket": bucket,
-                "odds_bucket_label": _bucket_label(bucket),
-                "appear": appear,
-                "win": win,
-                "place": place,
-                "win_rate": (win / appear) if appear else None,
-                "place_rate": (place / appear) if appear else None,
-            }
-        )
+    if group_by_position:
+        for (ptype, pkey, mem, pos, bucket), v in acc_pos.items():
+            appear = int(v.get("appear") or 0)
+            win = int(v.get("win") or 0)
+            place = int(v.get("place") or 0)
+            ptype_s = str(ptype)
+            pkey_s = str(pkey)
+            rows_out.append(
+                {
+                    "predictor_type": ptype_s,
+                    "predictor_type_label": str(type_labels.get(ptype_s) or ptype_s),
+                    "predictor_key": pkey_s,
+                    "predictor_key_label": _predictor_key_label(ptype_s, pkey_s),
+                    "member_email": mem or None,
+                    "position": int(pos),
+                    "odds_bucket": bucket,
+                    "odds_bucket_label": _bucket_label(bucket),
+                    "appear": appear,
+                    "win": win,
+                    "place": place,
+                    "win_rate": (win / appear) if appear else None,
+                    "place_rate": (place / appear) if appear else None,
+                }
+            )
+    else:
+        for (ptype, pkey, mem, bucket), v in acc_agg.items():
+            appear = int(v.get("appear") or 0)
+            win = int(v.get("win") or 0)
+            place = int(v.get("place") or 0)
+            ptype_s = str(ptype)
+            pkey_s = str(pkey)
+            rows_out.append(
+                {
+                    "predictor_type": ptype_s,
+                    "predictor_type_label": str(type_labels.get(ptype_s) or ptype_s),
+                    "predictor_key": pkey_s,
+                    "predictor_key_label": _predictor_key_label(ptype_s, pkey_s),
+                    "member_email": mem or None,
+                    "position": None,
+                    "odds_bucket": bucket,
+                    "odds_bucket_label": _bucket_label(bucket),
+                    "appear": appear,
+                    "win": win,
+                    "place": place,
+                    "win_rate": (win / appear) if appear else None,
+                    "place_rate": (place / appear) if appear else None,
+                }
+            )
     df = pd.DataFrame(rows_out)
     if not df.empty:
-        df = df.sort_values(
-            by=["predictor_type", "member_email", "predictor_key_label", "position", "odds_bucket"],
-            ascending=[True, True, True, True, True],
-        )
+        by_cols = ["predictor_type", "member_email", "predictor_key_label", "odds_bucket"]
+        if group_by_position:
+            by_cols.insert(3, "position")
+        df = df.sort_values(by=by_cols, ascending=[True] * len(by_cols))
     return df

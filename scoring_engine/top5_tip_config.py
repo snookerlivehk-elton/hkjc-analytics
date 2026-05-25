@@ -17,6 +17,7 @@ def default_tip_config() -> Dict[str, Any]:
         "min_samples": 10,
         "min_place_rate": 0.40,
         "min_win_rate": 0.20,
+        "stats_grouping": "aggregate",
         "positions": [1, 2, 3, 4, 5],
         "odds_buckets": ["LT7", "B7_10", "B10_15", "B15_20", "B20_35", "GE35", "UNKNOWN"],
         "predictor_types": ["preset", "factor", "ai"],
@@ -50,4 +51,3 @@ def save_tip_config(session: Session, config: Dict[str, Any]) -> None:
         session.add(cfg)
     cfg.value = wrap_value(dict(config or {}), {"source": "TIP_CONFIG"})
     session.commit()
-

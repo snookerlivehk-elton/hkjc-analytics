@@ -28,7 +28,9 @@ def main():
     finally:
         session.close()
 
-    st.caption("貼士觸發：每個『推介來源×順序TOPn×賠率區』，只要樣本數及命中率（入圍/勝出）達標就可生成多條推介。")
+    grouping_hint = str(cfg.get("stats_grouping") or "aggregate").strip().lower()
+    hint_label = "推介來源×賠率區（不分 TOP 位置）" if grouping_hint in {"aggregate", "agg"} else "推介來源×順序TOPn×賠率區"
+    st.caption(f"貼士觸發：每個『{hint_label}』，只要樣本數及命中率（入圍/勝出）達標就可生成多條推介。")
 
     with st.form("tip_cfg_form"):
         enabled = st.checkbox("啟用貼士", value=bool(cfg.get("enabled")))
@@ -38,6 +40,15 @@ def main():
         min_win_rate = st.number_input("勝出命中率門檻", min_value=0.0, max_value=1.0, value=float(cfg.get("min_win_rate") or 0.2), step=0.01, format="%.2f")
         max_tips = st.number_input("每場最多貼士數", min_value=1, max_value=200, value=int(cfg.get("max_tips") or 20))
 
+        grouping_opts = ["aggregate", "by_position"]
+        grouping_labels = {"aggregate": "不分 TOP 位置（按馬樣本）", "by_position": "分 TOP 位置（Top1-Top5 分開）"}
+        grouping_cur = str(cfg.get("stats_grouping") or "aggregate").strip().lower()
+        stats_grouping = st.selectbox(
+            "統計口徑",
+            options=grouping_opts,
+            index=(grouping_opts.index(grouping_cur) if grouping_cur in grouping_opts else 0),
+            format_func=lambda x: grouping_labels.get(str(x), str(x)),
+        )
         positions = st.multiselect("順序（TOPn）", options=[1, 2, 3, 4, 5], default=[int(x) for x in (cfg.get("positions") or [1, 2, 3, 4, 5])])
         bucket_opts = [b.key for b in ODDS_BUCKETS]
         bucket_default = [str(x) for x in (cfg.get("odds_buckets") or bucket_opts)]
@@ -60,6 +71,7 @@ def main():
                 "min_samples": int(min_samples or 10),
                 "min_place_rate": float(min_place_rate or 0.0),
                 "min_win_rate": float(min_win_rate or 0.0),
+                "stats_grouping": str(stats_grouping or "aggregate"),
                 "positions": [int(x) for x in (positions or [])],
                 "odds_buckets": [str(x) for x in (odds_buckets or [])],
                 "predictor_types": [str(x) for x in (predictor_types or [])],
