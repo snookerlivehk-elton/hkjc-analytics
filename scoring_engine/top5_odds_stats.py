@@ -127,6 +127,14 @@ def compute_top5_odds_stats(
         return pd.DataFrame()
 
     src = str(odds_source or "").strip()
+    mode = src
+    odds_type_filter = ""
+    if src.lower().startswith("history:"):
+        mode = "history_exact"
+        odds_type_filter = src.split(":", 1)[1].strip()
+    elif src.lower().startswith("odds_type:"):
+        mode = "history_exact"
+        odds_type_filter = src.split(":", 1)[1].strip()
     erows = (
         session.query(RaceEntry.race_id, RaceEntry.horse_no, RaceEntry.id, RaceResult.rank, RaceResult.win_odds)
         .outerjoin(RaceResult, RaceResult.entry_id == RaceEntry.id)
@@ -144,19 +152,19 @@ def compute_top5_odds_stats(
     entry_ids = list(dict.fromkeys(entry_ids))
 
     odds_map: Dict[int, float] = {}
-    if src in {"latest_history", "pre_race_latest"} and entry_ids:
-        sub = session.query(OddsHistory.entry_id.label("eid"), func.max(OddsHistory.captured_at).label("cap")).filter(
-            OddsHistory.entry_id.in_(entry_ids)
-        )
-        if src == "pre_race_latest":
+    if mode in {"latest_history", "pre_race_latest", "history_exact"} and entry_ids:
+        sub = session.query(OddsHistory.entry_id.label("eid"), func.max(OddsHistory.captured_at).label("cap")).filter(OddsHistory.entry_id.in_(entry_ids))
+        if mode == "pre_race_latest":
             sub = sub.filter(OddsHistory.odds_type.like("PRE%"))
+        if mode == "history_exact" and odds_type_filter:
+            sub = sub.filter(OddsHistory.odds_type == odds_type_filter)
         sub = sub.group_by(OddsHistory.entry_id).subquery()
 
-        orows = session.query(OddsHistory.entry_id, OddsHistory.win_odds).join(
-            sub, (sub.c.eid == OddsHistory.entry_id) & (sub.c.cap == OddsHistory.captured_at)
-        )
-        if src == "pre_race_latest":
+        orows = session.query(OddsHistory.entry_id, OddsHistory.win_odds).join(sub, (sub.c.eid == OddsHistory.entry_id) & (sub.c.cap == OddsHistory.captured_at))
+        if mode == "pre_race_latest":
             orows = orows.filter(OddsHistory.odds_type.like("PRE%"))
+        if mode == "history_exact" and odds_type_filter:
+            orows = orows.filter(OddsHistory.odds_type == odds_type_filter)
         for eid, wo in orows.all():
             try:
                 odds_map[int(eid)] = float(wo) if wo is not None else None
@@ -171,7 +179,7 @@ def compute_top5_odds_stats(
         if k in entry_by_race_hn:
             continue
         odds_v = None
-        if src in {"latest_history", "pre_race_latest"}:
+        if mode in {"latest_history", "pre_race_latest", "history_exact"}:
             try:
                 odds_v = odds_map.get(int(eid))
             except Exception:
