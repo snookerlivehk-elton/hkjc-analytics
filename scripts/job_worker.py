@@ -14,9 +14,9 @@ if root_path not in sys.path:
 
 from database.connection import init_db, get_session
 from database.models import Race, SystemConfig
-from scoring_engine.ai_advisor import run_ai_race_summary
+from scoring_engine.ai_advisor import load_ai_api_key, run_ai_race_summary
 from scoring_engine.ai_reflection import generate_race_reflection, list_reflection_candidates
-from scoring_engine.job_queue import append_job_log, claim_next_job, update_job
+from scoring_engine.job_queue import append_job_log, claim_next_job, enqueue_job, update_job
 from scoring_engine.search_index import index_system_config_doc
 from scoring_engine.core import ScoringEngine
 from scoring_engine.readiness import get_speedpro_readiness
@@ -185,16 +185,21 @@ def _handle_ai_batch_reflect_day(session, job):
     payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
     date_str = str(payload.get("date") or "").strip()
     mode = str(payload.get("mode") or "all").strip().lower() or "all"
+    top_n = int(payload.get("top_n") or 0)
     if not date_str:
         raise ValueError("missing date")
 
     cand = list_reflection_candidates(session, date_str=str(date_str), only_unreflected=True, limit=500)
     if mode in {"miss_only", "miss", "unhit"}:
         cand = [x for x in cand if (int(x.get("hits_in_top4") or 0) < 4) or (int(x.get("false_elim") or 0) > 0)]
+    if mode in {"worst", "top", "topn"} and top_n <= 0:
+        top_n = 3
+    if top_n > 0:
+        cand = cand[: int(top_n)]
 
     total = len(cand)
     update_job(session, job["id"], {"progress": {"total": total, "done": 0, "current": ""}})
-    append_job_log(session, job["id"], f"ai_batch_reflect_day date={date_str} mode={mode} races={total}")
+    append_job_log(session, job["id"], f"ai_batch_reflect_day date={date_str} mode={mode} top_n={int(top_n or 0)} races={total}")
 
     ok = 0
     already = 0
@@ -380,6 +385,24 @@ def _handle_daily_update_pipeline(session, job):
         else:
             raise ValueError(f"unknown_step:{step}")
         append_job_log(session, job["id"], f"step_done {step}")
+
+    enabled_auto_ai = str(os.environ.get("ENABLE_AUTO_AI_PREVIEW") or "0").strip().lower() in ("1", "true", "yes")
+    if enabled_auto_ai and ("snapshot" in steps):
+        cfg_key = f"auto_ai_preview_enqueued:{date_str}"
+        cfg0 = session.query(SystemConfig).filter_by(key=cfg_key).first()
+        if not cfg0:
+            kinfo = load_ai_api_key(session)
+            api_key = str(kinfo.get("env") or kinfo.get("stored") or "").strip()
+            if api_key:
+                ajob = enqueue_job(session, "ai_batch_generate", {"date": date_str})
+                jid = str(ajob.get("id") or "")
+                cfg0 = SystemConfig(key=cfg_key, description=f"自動批次生成 AI 賽前報告已排隊（賽日 {date_str}）")
+                cfg0.value = {"job_id": jid, "enqueued_at": datetime.utcnow().isoformat()}
+                session.add(cfg0)
+                session.commit()
+                append_job_log(session, job["id"], f"auto_ai_preview_enqueued job_id={jid}")
+            else:
+                append_job_log(session, job["id"], "auto_ai_preview_skipped reason=missing_api_key")
 
     update_job(
         session,

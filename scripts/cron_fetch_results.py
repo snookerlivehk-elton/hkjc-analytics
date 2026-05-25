@@ -11,6 +11,7 @@ if root_path not in sys.path:
 
 from database.connection import init_db, get_session
 from database.models import Race, RaceEntry, RaceResult, RaceDividend, SystemConfig
+from scoring_engine.job_queue import enqueue_job
 from scripts.fetch_race_results import main as fetch_results_main
 
 
@@ -36,6 +37,21 @@ def _mark_done(session, date_str: str):
     cfg.value = True
     cfg.updated_at = datetime.now()
     session.commit()
+
+def _mark_reflect_enqueued(session, date_str: str, job_id: str, top_n: int):
+    key = f"auto_ai_reflect_enqueued:{date_str}"
+    cfg = session.query(SystemConfig).filter_by(key=key).first()
+    if not cfg:
+        cfg = SystemConfig(key=key, description="賽後自動挑選最失準場次做批次反思：已排隊（避免重覆）")
+        session.add(cfg)
+    cfg.value = {"job_id": str(job_id or ""), "top_n": int(top_n or 0), "enqueued_at": datetime.utcnow().isoformat()}
+    cfg.updated_at = datetime.now()
+    session.commit()
+
+def _already_reflect_enqueued(session, date_str: str) -> bool:
+    key = f"auto_ai_reflect_enqueued:{date_str}"
+    cfg = session.query(SystemConfig).filter_by(key=key).first()
+    return bool(cfg and cfg.value)
 
 
 def _already_done(session, date_str: str) -> bool:
@@ -110,6 +126,21 @@ def main():
         if _validate_date_fetched(session2, race_date):
             _mark_done(session2, date_str)
             print(f"完成並已標記：{date_str}")
+            enabled = str(os.environ.get("ENABLE_AUTO_AI_REFLECTION") or "0").strip().lower() in ("1", "true", "yes")
+            if enabled and (not _already_reflect_enqueued(session2, date_str)):
+                top_n_s = str(os.environ.get("AUTO_AI_REFLECT_TOP_N") or "").strip()
+                try:
+                    top_n = int(top_n_s) if top_n_s else 3
+                except Exception:
+                    top_n = 3
+                if top_n < 1:
+                    top_n = 1
+                if top_n > 5:
+                    top_n = 5
+                job = enqueue_job(session2, "ai_batch_reflect_day", {"date": date_str, "mode": "worst", "top_n": int(top_n)})
+                jid = str(job.get("id") or "")
+                _mark_reflect_enqueued(session2, date_str, jid, int(top_n))
+                print(f"已排隊自動賽後反思：date={date_str} top_n={int(top_n)} job_id={jid}")
         else:
             print(f"抓取未達完成條件，保留重試：{date_str}")
     finally:
