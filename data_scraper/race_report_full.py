@@ -50,8 +50,12 @@ class RaceReportFullScraper:
             if ("馬號" in norm) and ("競賽事件" in norm):
                 tables.append(table)
         target = None
-        if 1 <= race_no <= len(tables):
+        if len(tables) == 1:
+            target = tables[0]
+        elif 1 <= race_no <= len(tables):
             target = tables[race_no - 1]
+        elif tables:
+            target = tables[0]
         if target is None:
             return []
 
