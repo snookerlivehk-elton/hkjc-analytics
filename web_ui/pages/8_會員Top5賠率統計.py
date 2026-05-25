@@ -73,7 +73,11 @@ def main():
     with c2:
         d1 = st.date_input("從 (from)", value=today - timedelta(days=90), key="mstats_d1")
     with c3:
-        odds_source = st.selectbox("odds 來源", options=["result_win_odds", "latest_history", "history:PRE_5M"], index=0)
+        odds_source = st.selectbox(
+            "odds 來源",
+            options=["result_win_odds", "latest_history", "history:PRE_24H", "history:PRE_0100", "history:PRE_5M"],
+            index=0,
+        )
     with c4:
         limit_hint = st.checkbox("只看 Top1", value=False)
 
