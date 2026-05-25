@@ -41,11 +41,19 @@ if "postgresql" in DATABASE_URL:
 elif "sqlite" in DATABASE_URL:
     connect_args = {"check_same_thread": False}
 
-engine = create_engine(
-    DATABASE_URL, 
-    echo=False,
-    connect_args=connect_args
-)
+engine_kwargs = {"echo": False, "connect_args": connect_args}
+if "postgresql" in DATABASE_URL:
+    engine_kwargs.update(
+        {
+            "pool_pre_ping": True,
+            "pool_recycle": int(os.getenv("DB_POOL_RECYCLE_SEC") or 300),
+            "pool_size": int(os.getenv("DB_POOL_SIZE") or 5),
+            "max_overflow": int(os.getenv("DB_POOL_MAX_OVERFLOW") or 5),
+            "pool_timeout": int(os.getenv("DB_POOL_TIMEOUT_SEC") or 30),
+        }
+    )
+
+engine = create_engine(DATABASE_URL, **engine_kwargs)
 
 # 建立 Session 工廠
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
