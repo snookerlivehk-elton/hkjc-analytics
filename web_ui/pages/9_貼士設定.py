@@ -48,7 +48,9 @@ def main():
             format_func=lambda x: next((b.label for b in ODDS_BUCKETS if b.key == x), str(x)),
         )
         predictor_types = st.multiselect("推介來源", options=["preset", "factor", "ai"], default=[str(x) for x in (cfg.get("predictor_types") or ["preset", "factor", "ai"])])
-        odds_source = st.selectbox("賠率來源", options=["pre_race_latest", "result_win_odds", "latest_history"], index=(0 if str(cfg.get("odds_source") or "") == "pre_race_latest" else 1))
+        odds_source_opts = ["pre_race_latest", "result_win_odds", "latest_history", "history:PRE_24H", "history:PRE_0100", "history:PRE_5M"]
+        odds_source_cur = str(cfg.get("odds_source") or "pre_race_latest").strip()
+        odds_source = st.selectbox("賠率來源", options=odds_source_opts, index=(odds_source_opts.index(odds_source_cur) if odds_source_cur in odds_source_opts else 0))
 
         submitted = st.form_submit_button("保存設定", type="primary")
         if submitted:
@@ -78,4 +80,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

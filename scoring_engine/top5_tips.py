@@ -37,6 +37,9 @@ def _odds_source_label(s: str) -> str:
         return "最新 OddsHistory"
     if k == "pre_race_latest":
         return "賽前賠率（PRE*）"
+    if k.lower().startswith("history:"):
+        ot = k.split(":", 1)[1].strip()
+        return f"OddsHistory（{ot}）" if ot else "OddsHistory（指定時段）"
     return k or "未知"
 
 
@@ -71,6 +74,14 @@ def _get_race_odds_map(session: Session, race_id: int, odds_source: str) -> Dict
     from database.models import OddsHistory, RaceEntry, RaceResult
 
     src = str(odds_source or "").strip()
+    mode = src
+    odds_type_filter = ""
+    if src.lower().startswith("history:"):
+        mode = "history_exact"
+        odds_type_filter = src.split(":", 1)[1].strip()
+    elif src.lower().startswith("odds_type:"):
+        mode = "history_exact"
+        odds_type_filter = src.split(":", 1)[1].strip()
     rows = (
         session.query(RaceEntry.horse_no, RaceEntry.id, RaceResult.win_odds)
         .outerjoin(RaceResult, RaceResult.entry_id == RaceEntry.id)
@@ -91,11 +102,13 @@ def _get_race_odds_map(session: Session, race_id: int, odds_source: str) -> Dict
             entry_ids.append(eid_i)
         base[hni] = {"entry_id": eid_i or None, "result_win_odds": wo}
 
-    if src in {"latest_history", "pre_race_latest"} and entry_ids:
+    if mode in {"latest_history", "pre_race_latest", "history_exact"} and entry_ids:
         q = session.query(OddsHistory.entry_id, OddsHistory.win_odds, OddsHistory.captured_at)
         q = q.filter(OddsHistory.entry_id.in_(entry_ids))
-        if src == "pre_race_latest":
+        if mode == "pre_race_latest":
             q = q.filter(OddsHistory.odds_type.like("PRE%"))
+        if mode == "history_exact" and odds_type_filter:
+            q = q.filter(OddsHistory.odds_type == odds_type_filter)
         q = q.order_by(OddsHistory.entry_id.asc(), OddsHistory.captured_at.desc())
         latest: Dict[int, Optional[float]] = {}
         for eid, wo, _cap in q.all():
@@ -368,3 +381,46 @@ def generate_top5_tips_for_race(
 
     tips.sort(key=lambda x: (-(float(x.get("hit_rate") or 0.0)), -int(x.get("appear") or 0), int(x.get("position") or 0)))
     return tips[:max_tips] if max_tips > 0 else tips
+
+
+def generate_top5_tips_for_race_date(
+    session: Session,
+    *,
+    race_date: date,
+    member_email: Optional[str] = None,
+    preset_name: Optional[str] = None,
+    override_config: Optional[Dict[str, Any]] = None,
+    max_total_tips: int = 0,
+) -> List[Dict[str, Any]]:
+    from database.models import Race
+
+    d0 = race_date if isinstance(race_date, date) and not isinstance(race_date, datetime) else datetime.utcnow().date()
+    races = session.query(Race.id).filter(Race.race_date == d0).order_by(Race.race_no.asc()).all()
+    out: List[Dict[str, Any]] = []
+    for (rid,) in races:
+        if rid is None:
+            continue
+        out.extend(
+            generate_top5_tips_for_race(
+                session,
+                race_id=int(rid),
+                member_email=member_email,
+                preset_name=preset_name,
+                override_config=override_config,
+            )
+        )
+        if max_total_tips and len(out) >= int(max_total_tips):
+            break
+    if max_total_tips and len(out) > int(max_total_tips):
+        out = out[: int(max_total_tips)]
+    out.sort(
+        key=lambda x: (
+            str(x.get("race_date") or ""),
+            str(x.get("venue") or ""),
+            int(x.get("race_no") or 0),
+            -(float(x.get("hit_rate") or 0.0)),
+            -int(x.get("appear") or 0),
+            int(x.get("position") or 0),
+        )
+    )
+    return out

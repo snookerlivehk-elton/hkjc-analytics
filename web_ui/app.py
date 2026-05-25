@@ -1569,6 +1569,82 @@ def main():
                     st.info("如需立即生效，請到「數據管理」或「獨立條件分析」按重算。")
         except Exception:
             pass
+        with st.expander("📌 全日貼士（符合貼士設定規則）", expanded=False):
+            from scoring_engine.top5_tip_config import load_tip_config
+            from scoring_engine.top5_tips import generate_top5_tips_for_race_date
+            import json
+            import pandas as pd
+
+            cfg_tip = load_tip_config(session)
+            if not bool(cfg_tip.get("enabled")):
+                st.info("貼士未啟用（可到後台「貼士設定」開啟）。")
+            else:
+                member_email_tip = st.session_state.get("member_email")
+                me_tip = str(member_email_tip).strip().lower() if member_email_tip else None
+                cfg_sig = json.dumps(cfg_tip, sort_keys=True, ensure_ascii=False)
+
+                @st.cache_data(ttl=120)
+                def _cached_day_tips(date_iso: str, me: str, cfg_json: str):
+                    s3 = get_session()
+                    try:
+                        from datetime import datetime
+
+                        d0 = datetime.strptime(str(date_iso), "%Y-%m-%d").date()
+                        cfg0 = json.loads(cfg_json) if cfg_json else {}
+                        return generate_top5_tips_for_race_date(
+                            s3,
+                            race_date=d0,
+                            member_email=(me or None),
+                            preset_name=None,
+                            override_config=cfg0,
+                            max_total_tips=0,
+                        )
+                    finally:
+                        s3.close()
+
+                run_day_tips = st.button("載入全日貼士（需要計算）", use_container_width=True, key=f"member_day_tips_calc_btn_{selected_date_str}")
+                sig_day = (str(selected_date_str or ""), str(me_tip or ""), cfg_sig)
+                if run_day_tips:
+                    st.session_state["member_day_tips_calc_sig"] = sig_day
+                    st.session_state["member_day_tips_calc_res"] = None
+
+                if st.session_state.get("member_day_tips_calc_sig") != sig_day:
+                    st.info("請按「載入全日貼士（需要計算）」開始統計。")
+                    day_tips = []
+                else:
+                    if st.session_state.get("member_day_tips_calc_res") is None:
+                        st.session_state["member_day_tips_calc_res"] = _cached_day_tips(str(selected_date_str or ""), str(me_tip or ""), cfg_sig)
+                    day_tips = st.session_state.get("member_day_tips_calc_res") or []
+
+                if me_tip:
+                    day_tips = [t for t in (day_tips or []) if (str(t.get("predictor_type") or "") != "preset") or (str(t.get("member_email") or "").strip().lower() == str(me_tip))]
+                else:
+                    day_tips = [t for t in (day_tips or []) if str(t.get("predictor_type") or "") != "preset"]
+
+                if not day_tips:
+                    st.caption("本日未有任何貼士達標（或缺少賠率資料）。")
+                else:
+                    st.caption(f"賠率來源：{str(day_tips[0].get('odds_source_label') or '')}")
+                    rows = []
+                    for t in day_tips:
+                        rows.append(
+                            {
+                                "場次": f"{t.get('venue')} R{int(t.get('race_no') or 0)}",
+                                "馬號": int(t.get("horse_no") or 0),
+                                "馬名": str(t.get("horse_name") or ""),
+                                "賠率": t.get("win_odds"),
+                                "賠率區": str(t.get("odds_bucket_label") or ""),
+                                "TOP": int(t.get("position") or 0),
+                                "推介來源": str(t.get("predictor_type_label") or ""),
+                                "來源名稱": str(t.get("predictor_key_label") or ""),
+                                "貼士類型": str(t.get("hit_label") or ""),
+                                "命中率%": round(float(t.get("hit_rate") or 0.0) * 100.0, 1),
+                                "樣本": int(t.get("appear") or 0),
+                            }
+                        )
+                    df_day = pd.DataFrame(rows)
+                    st.dataframe(df_day, use_container_width=True, hide_index=True)
+
         with st.expander("💡 貼士提示（按Top5×賠率區×順序統計）", expanded=False):
             from scoring_engine.top5_tip_config import load_tip_config
             from scoring_engine.top5_tips import generate_top5_tips_for_race
