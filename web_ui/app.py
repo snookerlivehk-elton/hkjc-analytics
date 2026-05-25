@@ -1266,6 +1266,66 @@ def main():
 
     try:
         from datetime import datetime as _dt
+        from zoneinfo import ZoneInfo
+
+        hk_tz = ZoneInfo("Asia/Hong_Kong")
+        racedate_str = ""
+        try:
+            if race and hasattr(race.race_date, "strftime"):
+                racedate_str = race.race_date.strftime("%Y/%m/%d")
+        except Exception:
+            racedate_str = ""
+        rn = int(getattr(race, "race_no", 0) or 0) if race else 0
+        snap_key = f"speedpro_energy:{racedate_str}:{rn}" if (racedate_str and rn) else ""
+        info_key = f"speedpro_energy_info:{racedate_str}:{rn}" if (racedate_str and rn) else ""
+        retry_key = f"speedpro_retry:{racedate_str}:{rn}" if (racedate_str and rn) else ""
+        is_maiden = bool(str(race.race_class or "").strip() and ("新馬" in str(race.race_class or "")))
+        if is_maiden:
+            st.caption("🛰️ 數據狀態｜SpeedPRO：不適用（新馬賽/賽績不足）")
+        elif snap_key:
+            snap_cfg = session.query(SystemConfig).filter_by(key=snap_key).first()
+            info_cfg = session.query(SystemConfig).filter_by(key=info_key).first()
+            retry_cfg = session.query(SystemConfig).filter_by(key=retry_key).first()
+            data_map = snap_cfg.value if (snap_cfg and isinstance(snap_cfg.value, dict)) else {}
+            info = info_cfg.value if (info_cfg and isinstance(info_cfg.value, dict)) else {}
+            retry = retry_cfg.value if (retry_cfg and isinstance(retry_cfg.value, dict)) else {}
+            total = len(data_map) if isinstance(data_map, dict) else 0
+            has_energy = 0
+            has_status = 0
+            both = 0
+            if total:
+                for v in data_map.values():
+                    if not isinstance(v, dict):
+                        continue
+                    ea = v.get("energy_assess")
+                    sr = v.get("status_rating")
+                    if ea is not None:
+                        has_energy += 1
+                    if sr is not None:
+                        has_status += 1
+                    if ea is not None and sr is not None:
+                        both += 1
+            ready = bool(total >= 6 and has_energy > 0 and has_status > 0 and (both / float(total)) >= 0.6)
+            cap = None
+            try:
+                dt = _dt.fromisoformat(str(info.get("captured_at") or ""))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=hk_tz)
+                cap = dt.astimezone(hk_tz).strftime("%m/%d %H:%M")
+            except Exception:
+                cap = None
+            status = "✅ 已齊全" if ready else ("⚠️ 未齊全" if total else "⏳ 未抓取")
+            cap_s = f"｜最後更新 {cap}" if cap else ""
+            if not ready:
+                last_err = str(retry.get("last_error") or "").strip() if isinstance(retry, dict) else ""
+                if last_err:
+                    cap_s += f"｜{last_err}"
+            st.caption(f"🛰️ 數據狀態｜SpeedPRO：{status}{cap_s}")
+    except Exception:
+        pass
+
+    try:
+        from datetime import datetime as _dt
         import math
         from typing import Optional
 
@@ -1449,92 +1509,6 @@ def main():
                         st.caption(f"updated_at={str(v.get('created_at') or '').strip()}")
                     st.markdown(rpt)
 
-    with st.expander("🛰️ 數據源更新狀態", expanded=False):
-        from datetime import datetime as _dt
-        from zoneinfo import ZoneInfo
-
-        racedate_str = ""
-        try:
-            if race and hasattr(race.race_date, "strftime"):
-                racedate_str = race.race_date.strftime("%Y/%m/%d")
-        except Exception:
-            racedate_str = ""
-
-        rn = int(getattr(race, "race_no", 0) or 0) if race else 0
-        hk_tz = ZoneInfo("Asia/Hong_Kong")
-
-        def _get_cfg(key: str):
-            return session.query(SystemConfig).filter_by(key=key).first()
-
-        def _iso_to_local(s: str):
-            try:
-                dt = _dt.fromisoformat(str(s))
-                if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=hk_tz)
-                return dt.astimezone(hk_tz).strftime("%m/%d %H:%M")
-            except Exception:
-                return None
-
-        st.markdown("#### ⚡ SpeedPRO 能量分")
-        is_maiden = bool(str(race.race_class or "").strip() and ("新馬" in str(race.race_class or "")))
-        snap_key = f"speedpro_energy:{racedate_str}:{rn}" if (racedate_str and rn) else ""
-        info_key = f"speedpro_energy_info:{racedate_str}:{rn}" if (racedate_str and rn) else ""
-        retry_key = f"speedpro_retry:{racedate_str}:{rn}" if (racedate_str and rn) else ""
-
-        if is_maiden:
-            st.info("此場屬新馬賽/無足夠賽績時，HKJC 可能不提供 SpeedPRO 指數；系統會視作不適用。")
-            if snap_key:
-                st.caption(f"key={snap_key}")
-        else:
-            snap_cfg = _get_cfg(snap_key) if snap_key else None
-            info_cfg = _get_cfg(info_key) if info_key else None
-            retry_cfg = _get_cfg(retry_key) if retry_key else None
-
-            data_map = snap_cfg.value if (snap_cfg and isinstance(snap_cfg.value, dict)) else {}
-            info = info_cfg.value if (info_cfg and isinstance(info_cfg.value, dict)) else {}
-            retry = retry_cfg.value if (retry_cfg and isinstance(retry_cfg.value, dict)) else {}
-
-            total = len(data_map) if isinstance(data_map, dict) else 0
-            has_energy = 0
-            has_status = 0
-            both = 0
-            if total:
-                for v in data_map.values():
-                    if not isinstance(v, dict):
-                        continue
-                    ea = v.get("energy_assess")
-                    sr = v.get("status_rating")
-                    if ea is not None:
-                        has_energy += 1
-                    if sr is not None:
-                        has_status += 1
-                    if ea is not None and sr is not None:
-                        both += 1
-
-            ready = bool(total >= 6 and has_energy > 0 and has_status > 0 and (both / float(total)) >= 0.6)
-            captured_at = _iso_to_local(info.get("captured_at")) if isinstance(info, dict) else None
-            last_err = str(retry.get("last_error") or "").strip() if isinstance(retry, dict) else ""
-            next_retry = _iso_to_local(retry.get("next_retry_at")) if isinstance(retry, dict) else None
-
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("狀態", "✅ 已齊全" if ready else ("⚠️ 未齊全" if total else "⏳ 未抓取"))
-            c2.metric("EA 覆蓋", f"{has_energy}/{total}" if total else "0/0")
-            c3.metric("SR 覆蓋", f"{has_status}/{total}" if total else "0/0")
-            c4.metric("同時覆蓋", f"{both}/{total}" if total else "0/0")
-
-            if captured_at:
-                st.caption(f"最後更新：{captured_at}（key={snap_key}）")
-            elif snap_key:
-                st.caption(f"key={snap_key}")
-
-            if not ready:
-                hint = "判定以「速勢能量評估(EA)」＋「狀態評級(SR)」是否已更新為準；未齊全時 SpeedPRO 因子會視作不可用（避免太早採納造成錯誤結果）。"
-                if last_err:
-                    hint += f" 目前狀態：{last_err}"
-                if next_retry:
-                    hint += f"（下次重試：{next_retry}）"
-                st.info(hint)
-
     # 數據加載與顯示
     weight_map = st.session_state.get("active_weight_map", {})
     df = load_scoring_data(session, selected_race_id, weight_map)
@@ -1645,87 +1619,6 @@ def main():
                     df_day = pd.DataFrame(rows)
                     st.dataframe(df_day, use_container_width=True, hide_index=True)
 
-        with st.expander("💡 貼士提示（按Top5×賠率區×順序統計）", expanded=False):
-            from scoring_engine.top5_tip_config import load_tip_config
-            from scoring_engine.top5_tips import generate_top5_tips_for_race
-            import json
-
-            cfg_tip = load_tip_config(session)
-            if not bool(cfg_tip.get("enabled")):
-                st.info("貼士未啟用（可到後台「貼士設定」開啟）。")
-            else:
-                member_email_tip = st.session_state.get("member_email")
-                me_tip = str(member_email_tip).strip().lower() if member_email_tip else None
-                cfg_sig = json.dumps(cfg_tip, sort_keys=True, ensure_ascii=False)
-                preset_name = st.session_state.get("selected_preset_name")
-                preset_name = str(preset_name or "").strip()
-                if preset_name in {"", "（手動調整）"}:
-                    preset_name = ""
-
-                @st.cache_data(ttl=120)
-                def _cached_tips(race_id: int, me: str, preset_name_in: str, cfg_json: str):
-                    s3 = get_session()
-                    try:
-                        cfg0 = json.loads(cfg_json) if cfg_json else {}
-                        return generate_top5_tips_for_race(
-                            s3,
-                            race_id=int(race_id),
-                            member_email=(me or None),
-                            preset_name=(str(preset_name_in or "").strip() or None),
-                            override_config=cfg0,
-                        )
-                    finally:
-                        s3.close()
-
-                run_tips = st.button("載入貼士（需要計算）", use_container_width=True, key=f"member_tips_calc_btn_{int(selected_race_id)}")
-                sig_tip = (int(selected_race_id), str(me_tip or ""), str(preset_name or ""), cfg_sig)
-                if run_tips:
-                    st.session_state["member_tips_calc_sig"] = sig_tip
-                    st.session_state["member_tips_calc_res"] = None
-
-                if st.session_state.get("member_tips_calc_sig") != sig_tip:
-                    st.info("請按「載入貼士（需要計算）」開始統計。")
-                    tips = []
-                else:
-                    if st.session_state.get("member_tips_calc_res") is None:
-                        st.session_state["member_tips_calc_res"] = _cached_tips(
-                            int(selected_race_id),
-                            str(me_tip or ""),
-                            str(preset_name or ""),
-                            cfg_sig,
-                        )
-                    tips = st.session_state.get("member_tips_calc_res") or []
-
-                if me_tip:
-                    tips = [t for t in (tips or []) if (str(t.get("predictor_type") or "") != "preset") or (str(t.get("member_email") or "").strip().lower() == str(me_tip))]
-                else:
-                    tips = [t for t in (tips or []) if str(t.get("predictor_type") or "") != "preset"]
-                if not tips:
-                    st.caption("本場未有任何貼士達標（或缺少賠率資料）。")
-                else:
-                    st.caption(f"賠率來源：{str(tips[0].get('odds_source_label') or '')}")
-                    for t in tips:
-                        head = (
-                            f"{t.get('race_date')} {t.get('venue')} R{t.get('race_no')} | "
-                            f"TOP{t.get('position')} | {t.get('odds_bucket_label')} | "
-                            f"{t.get('predictor_type_label')}：{t.get('predictor_key_label')} | "
-                            f"{t.get('hit_label')}達標"
-                        )
-                        with st.container():
-                            st.markdown(f"**{head}**")
-                            st.write(
-                                {
-                                    "馬號": int(t.get("horse_no") or 0),
-                                    "馬名": str(t.get("horse_name") or ""),
-                                    "騎師": str(t.get("jockey") or ""),
-                                    "練馬師": str(t.get("trainer") or ""),
-                                    "賠率": t.get("win_odds"),
-                                    "樣本": int(t.get("appear") or 0),
-                                    "命中率": round(float(t.get("hit_rate") or 0.0) * 100.0, 1),
-                                    "門檻": round(float(t.get("hit_threshold") or 0.0) * 100.0, 1),
-                                    "推介來源": str(t.get("predictor_type") or ""),
-                                }
-                            )
         member_email = st.session_state.get("member_email")
         if member_email:
             presets = _get_member_presets(session, member_email)
@@ -2490,215 +2383,6 @@ def main():
                                 c2.metric("淘汰總匹數", vp)
                                 c3.metric("淘汰準確率", f"{(vtn / vp):.1%}" if vp else "-")
                                 c4.metric("錯殺率", f"{(vfp / vp):.1%}" if vp else "-")
-
-                with st.expander("💰 位置Q（PQ(3)）派彩回報率", expanded=False):
-                    st.caption("以會員組合 Top5 快照的 Top3 作為 3 注位置Q（A-B/A-C/B-C），每注 $10（每場成本 $30）。")
-                    from sqlalchemy import func
-                    from datetime import date, timedelta
-                    from database.models import PredictionTop5
-                    from scoring_engine.settlements import get_plugins
-                    from scoring_engine.track_conditions import going_code_label
-
-                    plugin_key = "hkjc.place_quinella.pq3_v1"
-                    plugins = {str(getattr(p, "plugin_key", "")): p for p in (get_plugins() or [])}
-                    plugin = plugins.get(plugin_key)
-
-                    end_default = date.today()
-                    start_default = end_default - timedelta(days=30)
-                    d1, d2 = st.date_input("統計日期範圍", value=(start_default, end_default), key="member_pq3_range")
-                    if isinstance(d1, date) and isinstance(d2, date) and d1 > d2:
-                        d1, d2 = d2, d1
-
-                    active_name = st.session_state.get("selected_preset_name", "（手動調整）")
-                    preset_options = [p.get("name") for p in (presets or []) if isinstance(p, dict) and p.get("name")]
-                    if active_name != "（手動調整）" and active_name in preset_options:
-                        preset_default = active_name
-                    elif preset_options:
-                        preset_default = str(preset_options[0])
-                    else:
-                        preset_default = ""
-                    preset_sel = st.selectbox(
-                        "組合",
-                        preset_options,
-                        index=(preset_options.index(preset_default) if preset_default in preset_options else 0),
-                        key="member_pq3_preset",
-                    )
-
-                    c_f1, c_f2, c_f3, c_f4 = st.columns(4)
-                    venue_sel = c_f1.selectbox("地點", ["全部", "沙田", "跑馬地"], index=0, key="member_pq3_venue")
-                    surface_sel = c_f2.selectbox(
-                        "草/泥",
-                        ["全部", "草地", "泥地"],
-                        index=0,
-                        key="member_pq3_surface",
-                        format_func=lambda x: ("全天候" if str(x) == "泥地" else str(x)),
-                    )
-                    course_rows = (
-                        _cached_course_type_options()
-                    )
-                    course_opts = course_rows
-                    course_sel = c_f3.selectbox("跑道", course_opts, index=0, key="member_pq3_course")
-                    going_rows = (
-                        _cached_going_code_options()
-                    )
-                    going_opts = going_rows
-                    going_sel = c_f4.selectbox(
-                        "場地狀況（賽後）",
-                        going_opts,
-                        index=0,
-                        key="member_pq3_going",
-                        format_func=lambda x: ("全部" if str(x) == "全部" else going_code_label(str(x))),
-                    )
-
-                    if not preset_sel:
-                        st.info("未找到任何已儲存權重組合。")
-                    elif plugin is None:
-                        st.error("位置Q 結算插件未載入。")
-                    else:
-                        q = (
-                            session.query(
-                                PredictionTop5.race_id,
-                                PredictionTop5.race_date,
-                                PredictionTop5.race_no,
-                                PredictionTop5.top5,
-                                PredictionTop5.meta,
-                                Race.venue,
-                                Race.surface,
-                                Race.course_type,
-                                RaceTrackCondition.going_code,
-                                RaceTrackCondition.going_raw,
-                            )
-                            .join(Race, Race.id == PredictionTop5.race_id)
-                            .outerjoin(RaceTrackCondition, RaceTrackCondition.race_id == Race.id)
-                            .filter(PredictionTop5.predictor_type == "preset")
-                            .filter(PredictionTop5.member_email == str(member_email).strip().lower())
-                            .filter(PredictionTop5.predictor_key == str(preset_sel))
-                        )
-                        start_dt = datetime.combine(d1, time.min)
-                        end_dt = datetime.combine(d2, time.min) + timedelta(days=1)
-                        q = q.filter(PredictionTop5.race_date >= start_dt).filter(PredictionTop5.race_date < end_dt)
-                        if venue_sel != "全部":
-                            q = q.filter(Race.venue == ("HV" if venue_sel == "跑馬地" else "ST"))
-                        if surface_sel != "全部":
-                            q = q.filter(Race.surface == surface_sel)
-                        if course_sel != "全部":
-                            q = q.filter(Race.course_type == course_sel)
-                        if going_sel != "全部":
-                            q = q.filter(RaceTrackCondition.going_code == going_sel)
-
-                        snap_rows = q.order_by(PredictionTop5.race_date.asc(), PredictionTop5.race_no.asc()).all()
-                        if not snap_rows:
-                            st.info("此範圍內沒有找到可用的會員組合 Top5 快照（或不符合篩選條件）。")
-                        else:
-                            race_ids = [int(r[0]) for r in snap_rows]
-                            rr_rows = (
-                                session.query(RaceEntry.race_id, RaceEntry.horse_no, RaceResult.rank)
-                                .join(RaceResult, RaceResult.entry_id == RaceEntry.id)
-                                .filter(RaceEntry.race_id.in_(race_ids))
-                                .filter(RaceResult.rank != None)
-                                .order_by(RaceEntry.race_id.asc(), RaceResult.rank.asc())
-                                .all()
-                            )
-                            actual_by_race = {}
-                            for rid, hn, rk in rr_rows:
-                                a = actual_by_race.get(int(rid))
-                                if a is None:
-                                    a = []
-                                    actual_by_race[int(rid)] = a
-                                if len(a) < 5:
-                                    a.append(int(hn or 0))
-
-                            div_rows = session.query(RaceDividend.race_id, RaceDividend.dividends).filter(RaceDividend.race_id.in_(race_ids)).all()
-                            dividends_by_race = {int(rid): divs for rid, divs in div_rows if isinstance(divs, list)}
-
-                            out_rows = []
-                            tot_payout = 0.0
-                            tot_cost = 0.0
-                            tot_profit = 0.0
-                            tot_hits = 0
-                            hit_races = 0
-                            stake_per_bet = 10.0
-
-                            for rid, rdt, rno, top5, meta, v, surf, course, gcode, graw in snap_rows:
-                                pred_top5 = [int(x) for x in (top5 or []) if str(x).strip().isdigit()]
-                                meta0 = meta if isinstance(meta, dict) else {}
-                                act = meta0.get("actual_top5") if isinstance(meta0.get("actual_top5"), list) else actual_by_race.get(int(rid), [])
-                                divs = dividends_by_race.get(int(rid))
-
-                                stl = None
-                                stl_map = meta0.get("settlements") if isinstance(meta0.get("settlements"), dict) else {}
-                                if isinstance(stl_map.get(plugin_key), dict):
-                                    stl = stl_map.get(plugin_key)
-                                if stl is None:
-                                    stl = plugin.settle(race_id=int(rid), pred_top5=pred_top5, actual_top5=act, dividends=divs, settled_at=datetime.now().isoformat())
-
-                                if not isinstance(stl, dict):
-                                    continue
-
-                                payout = float(stl.get("payout") or 0.0)
-                                cost = float(stl.get("cost") or (stake_per_bet * 3.0))
-                                profit = float(stl.get("profit") or (payout - cost))
-                                roi = stl.get("roi")
-                                hit_count = int(stl.get("hit_count") or 0)
-                                bets = stl.get("bets") if isinstance(stl.get("bets"), list) else []
-                                hits_desc = []
-                                for b in bets:
-                                    if not isinstance(b, dict):
-                                        continue
-                                    pair = str(b.get("pair") or "")
-                                    dv = b.get("dividend")
-                                    hit = bool(b.get("hit") is True)
-                                    if hit:
-                                        hits_desc.append(f"{pair}={dv}")
-
-                                tot_payout += payout
-                                tot_cost += cost
-                                tot_profit += profit
-                                tot_hits += hit_count
-                                if hit_count > 0:
-                                    hit_races += 1
-
-                                out_rows.append(
-                                    {
-                                        "賽日": (rdt.date().isoformat() if hasattr(rdt, "date") else str(rdt)),
-                                        "場次": int(rno or 0),
-                                        "地點": ("跑馬地" if str(v or "").upper() == "HV" else "沙田"),
-                                        "草/泥": (("全天候" if str(surf or "") == "泥地" else str(surf or "")) or "-"),
-                                        "跑道": (str(course or "") or "-"),
-                                        "場地狀況": (str(graw or "") or going_code_label(str(gcode or "")) or "N/A"),
-                                        "預測Top3": ",".join(str(x) for x in (stl.get("pred_top3") or [])),
-                                        "實際三甲": ",".join(str(x) for x in (stl.get("actual_top3") or [])),
-                                        "命中注數": hit_count,
-                                        "命中派彩": "; ".join(hits_desc) if hits_desc else "",
-                                        "回報(HK$)": round(payout, 1),
-                                        "成本(HK$)": round(cost, 1),
-                                        "淨回報(HK$)": round(profit, 1),
-                                        "ROI": (round(float(roi), 4) if isinstance(roi, float) else None),
-                                    }
-                                )
-
-                            if not out_rows:
-                                st.info("此範圍內沒有可結算的 PQ(3) 資料（可能缺賽果/派彩）。")
-                            else:
-                                m1, m2, m3, m4, m5 = st.columns(5)
-                                m1.metric("樣本(場)", len(out_rows))
-                                m2.metric("命中場數", hit_races)
-                                m3.metric("命中注數", tot_hits)
-                                m4.metric("累計回報(HK$)", f"{tot_payout:.1f}")
-                                roi_total = (tot_profit / tot_cost) if tot_cost > 0 else None
-                                m5.metric("回報率(淨/成本)", f"{roi_total:.1%}" if roi_total is not None else "-")
-
-                                df_pq3 = pd.DataFrame(out_rows)
-                                df_pq3["ROI"] = df_pq3["ROI"].map(lambda x: f"{float(x):.1%}" if x is not None else "-")
-                                st.dataframe(df_pq3, use_container_width=True, hide_index=True)
-                                st.download_button(
-                                    "下載 CSV",
-                                    data=df_pq3.to_csv(index=False).encode("utf-8"),
-                                    file_name=f"pq3_roi_{str(member_email).strip().lower()}_{str(preset_sel)}_{d1.isoformat()}_{d2.isoformat()}.csv",
-                                    mime="text/csv",
-                                    width="content",
-                                    key="member_pq3_csv",
-                                )
 
                 with st.expander("🔖 本場各組合 Top5 預測", expanded=False):
                     pr = []
