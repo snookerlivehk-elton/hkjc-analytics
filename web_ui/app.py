@@ -1442,8 +1442,17 @@ def main():
         p2.metric("氣溫", temp_s)
         p3.metric("土壤濕度", moist_s)
         p4.metric("雨量(10分鐘)", rain10_s)
-        if not w and rday:
-            st.caption("🛰️ 天氣數據：未找到 WindTracker 快照（WindTracker 只提供即時/當日資料，若當日未成功抓取，之後通常無法補回）。")
+        if rday:
+            if not w:
+                st.caption("🛰️ 天氣數據：未找到 WindTracker 快照。")
+            else:
+                has_any = False
+                for kk in ["temperature_c", "humidity_pct", "rain_total_mm", "rain_10min_mm", "soil_moisture_pct", "wind_direction", "wind_speed_kmh_avg", "wind_speed_kmh_max"]:
+                    if getattr(w, kk, None) is not None:
+                        has_any = True
+                        break
+                if not has_any:
+                    st.caption("🛰️ 天氣數據：後台顯示有紀錄，但指標欄位為空（多數係當次抓取解析不到數值）。")
 
         extra = []
         if raint_s != "—":

@@ -42,22 +42,36 @@ class WindTrackerScraper:
             return html
 
     def scrape_latest(self) -> Dict[str, Any]:
+        def _parse(html0: str):
+            soup0 = BeautifulSoup(html0, "lxml")
+            text0 = soup0.get_text(separator=" ", strip=True)
+            ds0 = self._extract_date(text0)
+            venue0 = self._extract_venue(text0)
+            updated_at0 = self._extract_updated_at(text0)
+            metrics0 = self._extract_metrics(text0)
+            winds0 = self._extract_winds(text0)
+            return text0, ds0, venue0, updated_at0, metrics0, winds0
+
         html = self.fetch()
-        soup = BeautifulSoup(html, "lxml")
-        text = soup.get_text(separator=" ", strip=True)
+        text, ds, venue, updated_at, metrics, winds = _parse(html)
+
+        need_render = False
         if ("最後更新" not in text) or ("風向" not in text):
+            need_render = True
+        else:
             try:
-                html = asyncio.run(self._fetch_rendered_async())
-                soup = BeautifulSoup(html, "lxml")
-                text = soup.get_text(separator=" ", strip=True)
+                has_metric = any(v is not None for v in (metrics or {}).values())
+            except Exception:
+                has_metric = False
+            if not has_metric and not winds:
+                need_render = True
+
+        if need_render:
+            try:
+                html2 = asyncio.run(self._fetch_rendered_async())
+                text, ds, venue, updated_at, metrics, winds = _parse(html2)
             except Exception:
                 pass
-
-        ds = self._extract_date(text)
-        venue = self._extract_venue(text)
-        updated_at = self._extract_updated_at(text)
-        metrics = self._extract_metrics(text)
-        winds = self._extract_winds(text)
 
         return {
             "race_date": ds,

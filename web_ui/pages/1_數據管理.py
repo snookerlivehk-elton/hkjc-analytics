@@ -233,7 +233,7 @@ with tab_monitor:
     )
     from scoring_engine.config_value import unwrap_value
     from scoring_engine.normalization import venue_label
-    from sqlalchemy import func
+    from sqlalchemy import func, or_
 
     def _list_race_dates(session, need: int = 180):
         take_rows = max(200, int(need) * 20)
@@ -536,6 +536,18 @@ with tab_monitor:
                     session_m.query(RaceDayWeather.venue)
                     .filter(RaceDayWeather.race_date_day == start_dt.date())
                     .filter(RaceDayWeather.venue.in_(venues))
+                    .filter(
+                        or_(
+                            RaceDayWeather.temperature_c.isnot(None),
+                            RaceDayWeather.humidity_pct.isnot(None),
+                            RaceDayWeather.rain_total_mm.isnot(None),
+                            RaceDayWeather.rain_10min_mm.isnot(None),
+                            RaceDayWeather.soil_moisture_pct.isnot(None),
+                            RaceDayWeather.wind_direction.isnot(None),
+                            RaceDayWeather.wind_speed_kmh_avg.isnot(None),
+                            RaceDayWeather.wind_speed_kmh_max.isnot(None),
+                        )
+                    )
                     .all()
                 )
                 has_weather_by_venue = set(str(v or "").strip() for (v,) in w_rows if str(v or "").strip())
