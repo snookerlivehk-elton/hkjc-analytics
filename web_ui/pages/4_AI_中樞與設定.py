@@ -676,6 +676,7 @@ try:
             get_learned_rules,
             get_learned_rule_items,
             save_learned_rule_items,
+            curate_learned_rules,
             generate_race_reflection,
             list_reflection_candidates,
             batch_reflect_worst,
@@ -687,6 +688,7 @@ try:
             st.caption("可在下方管理法則（啟用/停用/刪除），系統只會把「啟用」的法則注入到下一次賽前預測。")
             changed = False
             updated_items = []
+            toggle_changed = 0
             for i, it in enumerate(items, 1):
                 rule_text = str(it.get("rule") or "").strip()
                 if not rule_text:
@@ -698,12 +700,18 @@ try:
                 updated_items.append(it2)
                 if bool(enabled) != enabled_default:
                     changed = True
+                    toggle_changed += 1
 
             del_opts = [str(x.get("rule") or "").strip() for x in updated_items if str(x.get("rule") or "").strip()]
             to_del = st.multiselect("刪除法則（可多選）", options=del_opts, default=[], key="rule_delete_sel")
+            del_changed = int(len([x for x in (to_del or []) if str(x).strip()]))
+            total_changes = int(toggle_changed) + int(del_changed)
+            max_manual_changes = 5
+            if total_changes > max_manual_changes:
+                st.error(f"本次變更已超過上限（{total_changes}/{max_manual_changes}）。請分幾次儲存，以保持線性改變。")
             c1, c2 = st.columns([2, 3])
             ok_save = _confirm_run(c1, "save_rules", label="輸入 RUN 以儲存法則變更")
-            if c2.button("💾 儲存法則設定", use_container_width=True, disabled=not ok_save):
+            if c2.button("💾 儲存法則設定", use_container_width=True, disabled=(not ok_save) or (total_changes > max_manual_changes)):
                 final_items = []
                 dels = set(str(x).strip() for x in (to_del or []) if str(x).strip())
                 for it in updated_items:
@@ -714,6 +722,21 @@ try:
                 save_learned_rule_items(session, final_items)
                 st.success("✅ 已儲存法則設定。")
                 st.rerun()
+
+            st.markdown("#### 🤖 AI 自動整理法則（線性更新）")
+            st.caption("用途：讓 AI 自動挑選保留/停用/刪除/新增法則；每次最多改動 5 條，避免一次大幅變動。")
+            c3, c4, c5 = st.columns([2, 2, 3])
+            max_changes = c3.slider("每次最多改動", min_value=1, max_value=5, value=5, step=1, key="rule_curate_maxchg")
+            ok_curate = _confirm_run(c4, "curate_rules", label="輸入 RUN 以執行 AI 整理")
+            if c5.button("🧹 讓 AI 整理法則", use_container_width=True, disabled=not ok_curate):
+                with st.spinner("AI 正在整理法則..."):
+                    res = curate_learned_rules(session, max_changes=int(max_changes), keep=30)
+                if res.get("ok"):
+                    a = res.get("applied") if isinstance(res.get("applied"), dict) else {}
+                    st.success(f"✅ 已更新法則：total={int(a.get('total') or 0)} enable={int(a.get('enable') or 0)} disable={int(a.get('disable') or 0)} delete={int(a.get('delete') or 0)} add={int(a.get('add') or 0)}（目前總數={int(res.get('count') or 0)}）")
+                    st.rerun()
+                else:
+                    st.error(f"❌ AI 整理失敗：{res.get('reason')} {res.get('error')}")
 
             enabled_rules = get_learned_rules(session)
             if enabled_rules:

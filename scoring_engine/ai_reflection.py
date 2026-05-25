@@ -93,6 +93,155 @@ def save_learned_rules(session: Session, new_rules: List[str], source: Optional[
         pass
     session.commit()
 
+def _apply_rule_actions(
+    items: List[Dict[str, Any]],
+    actions: Dict[str, Any],
+    *,
+    max_changes: int = 5,
+    source: Optional[str] = None,
+) -> Dict[str, Any]:
+    max_changes = int(max_changes or 0)
+    if max_changes <= 0:
+        return {"items": items, "applied": {"total": 0, "enable": 0, "disable": 0, "delete": 0, "add": 0}}
+
+    norm = _normalize_rule_items(items)
+    by_rule = {str(x.get("rule") or "").strip(): dict(x) for x in norm if str(x.get("rule") or "").strip()}
+    now = datetime.utcnow().isoformat()
+
+    def _norm_list(v: Any) -> List[str]:
+        if isinstance(v, list):
+            out = []
+            for x in v:
+                s = str(x or "").strip()
+                if s:
+                    out.append(s)
+            return out
+        if isinstance(v, str) and v.strip():
+            return [v.strip()]
+        return []
+
+    to_delete = _norm_list(actions.get("delete"))
+    to_disable = _norm_list(actions.get("disable"))
+    to_enable = _norm_list(actions.get("enable"))
+    to_add = _norm_list(actions.get("add"))
+
+    applied = {"total": 0, "enable": 0, "disable": 0, "delete": 0, "add": 0}
+
+    for r in to_delete:
+        if applied["total"] >= max_changes:
+            break
+        if r in by_rule:
+            del by_rule[r]
+            applied["delete"] += 1
+            applied["total"] += 1
+
+    for r in to_disable:
+        if applied["total"] >= max_changes:
+            break
+        it = by_rule.get(r)
+        if not it:
+            continue
+        if bool(it.get("enabled") is not False):
+            it["enabled"] = False
+            by_rule[r] = it
+            applied["disable"] += 1
+            applied["total"] += 1
+
+    for r in to_enable:
+        if applied["total"] >= max_changes:
+            break
+        it = by_rule.get(r)
+        if not it:
+            continue
+        if bool(it.get("enabled") is False):
+            it["enabled"] = True
+            by_rule[r] = it
+            applied["enable"] += 1
+            applied["total"] += 1
+
+    for r in to_add:
+        if applied["total"] >= max_changes:
+            break
+        if r in by_rule:
+            continue
+        by_rule[r] = {"rule": r, "enabled": True, "created_at": now, "source": str(source or "").strip() or None}
+        applied["add"] += 1
+        applied["total"] += 1
+
+    merged = _normalize_rule_items(list(by_rule.values()))
+    return {"items": merged, "applied": applied}
+
+
+def curate_learned_rules(
+    session: Session,
+    *,
+    max_changes: int = 5,
+    keep: int = 30,
+) -> Dict[str, Any]:
+    items = get_learned_rule_items(session)
+
+    settings = load_ai_settings(session)
+    api_key_info = load_ai_api_key(session)
+    api_key = api_key_info.get("env") or api_key_info.get("stored")
+    if not api_key:
+        return {"ok": False, "reason": "missing_api_key"}
+
+    max_changes = max(1, min(5, int(max_changes or 5)))
+    keep = max(5, min(60, int(keep or 30)))
+
+    enabled = [str(x.get("rule") or "").strip() for x in items if bool(x.get("enabled") is not False) and str(x.get("rule") or "").strip()]
+    disabled = [str(x.get("rule") or "").strip() for x in items if bool(x.get("enabled") is False) and str(x.get("rule") or "").strip()]
+
+    system_prompt = (
+        "你是賽馬 AI 的知識庫管理員。你要整理「賽後反思黃金法則」清單。\n"
+        "目標：保留最多 30 條法則；避免重複、過度細碎、過度特定、或互相矛盾的內容。\n"
+        f"你只能做最多 {int(max_changes)} 個改動（enable/disable/delete/add 的總和）。\n"
+        "請優先做「線性、漸進式」改動：不要一次大幅重寫。\n"
+        "輸出必須是純 JSON，格式：\n"
+        "{\n"
+        "  \"delete\": [\"法則全文\"],\n"
+        "  \"disable\": [\"法則全文\"],\n"
+        "  \"enable\": [\"法則全文\"],\n"
+        "  \"add\": [\"新增法則全文\"]\n"
+        "}\n"
+        "每個陣列都可以是空。不要輸出 markdown。\n"
+    )
+
+    user_text = (
+        f"【目前啟用法則（{len(enabled)}）】\n"
+        + "\n".join([f"- {x}" for x in enabled])
+        + f"\n\n【目前停用法則（{len(disabled)}）】\n"
+        + "\n".join([f"- {x}" for x in disabled])
+    )
+
+    resp = call_chat_completions(
+        endpoint=settings["endpoint"],
+        api_key=api_key,
+        model_id=settings["model_id"],
+        system_prompt=system_prompt,
+        user_text=user_text,
+        timeout_sec=60,
+    )
+
+    if not resp.get("ok"):
+        return {"ok": False, "reason": "api_error", "error": resp.get("error")}
+
+    try:
+        text = str(resp.get("text") or "").strip()
+        if text.startswith("```json"):
+            text = text[7:]
+        if text.endswith("```"):
+            text = text[:-3]
+        parsed = json.loads(text)
+    except Exception as e:
+        return {"ok": False, "reason": "json_parse_error", "error": str(e)}
+
+    parsed = parsed if isinstance(parsed, dict) else {}
+    res = _apply_rule_actions(items, parsed, max_changes=int(max_changes), source="AI_RULE_CURATOR")
+    final_items = _normalize_rule_items(res.get("items"))[-int(keep) :]
+    save_learned_rule_items(session, final_items)
+    return {"ok": True, "applied": res.get("applied"), "count": len(final_items)}
+
 
 def _actual_top4(session: Session, race_id: int) -> List[int]:
     entries = session.query(RaceEntry).filter_by(race_id=int(race_id)).all()
