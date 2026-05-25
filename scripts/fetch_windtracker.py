@@ -22,12 +22,19 @@ def main():
     try:
         scraper = WindTrackerScraper()
         payload = scraper.scrape_latest()
-        ds = str(payload.get("race_date") or "").strip()
-        v = str(payload.get("venue") or "").strip()
+        scraped_ds = str(payload.get("race_date") or "").strip()
+        scraped_v = str(payload.get("venue") or "").strip()
 
         env_ds = str(os.environ.get("TARGET_DATE") or "").strip()
-        if (not ds) and env_ds:
-            ds = env_ds
+        env_v = str(os.environ.get("TARGET_VENUE") or "").strip()
+
+        ds = env_ds or scraped_ds
+        v = env_v or scraped_v
+        if isinstance(payload, dict):
+            payload["target_date"] = env_ds or ""
+            payload["target_venue"] = env_v or ""
+            payload["scraped_date"] = scraped_ds or ""
+            payload["scraped_venue"] = scraped_v or ""
 
         race_date_day = None
         if ds:
@@ -36,9 +43,6 @@ def main():
             except Exception:
                 race_date_day = None
 
-        env_v = str(os.environ.get("TARGET_VENUE") or "").strip()
-        if (not v) and env_v:
-            v = env_v
         if (not v) and race_date_day:
             try:
                 start = datetime.combine(race_date_day, dtime.min)
@@ -60,7 +64,12 @@ def main():
 
         key = f"windtracker:{ds}:{v}" if (ds and v) else "windtracker:latest"
 
-        meta = build_meta(source="HKJC_WINDTRACKER", url=str(scraper.url), schema=key, extra={"race_date": ds, "venue": v})
+        meta = build_meta(
+            source="HKJC_WINDTRACKER",
+            url=str(scraper.url),
+            schema=key,
+            extra={"race_date": ds, "venue": v, "scraped_date": scraped_ds, "scraped_venue": scraped_v},
+        )
         wrapped = wrap_value(payload, meta)
 
         row = session.query(SystemConfig).filter_by(key=key).first()

@@ -1442,6 +1442,8 @@ def main():
         p2.metric("氣溫", temp_s)
         p3.metric("土壤濕度", moist_s)
         p4.metric("雨量(10分鐘)", rain10_s)
+        if not w and rday:
+            st.caption("🛰️ 天氣數據：未找到 WindTracker 快照（WindTracker 只提供即時/當日資料，若當日未成功抓取，之後通常無法補回）。")
 
         extra = []
         if raint_s != "—":
@@ -1508,6 +1510,166 @@ def main():
                     if str(v.get("created_at") or "").strip():
                         st.caption(f"updated_at={str(v.get('created_at') or '').strip()}")
                     st.markdown(rpt)
+
+    with st.expander("🧾 賽後報告（反思 / 競賽事件報告）", expanded=False):
+        from datetime import datetime as _dt3, timedelta as _td3
+        import pandas as pd
+
+        day_key = ""
+        try:
+            if race and getattr(race, "race_date", None) and hasattr(race.race_date, "strftime"):
+                day_key = race.race_date.strftime("%Y/%m/%d")
+        except Exception:
+            day_key = ""
+        if not day_key:
+            day_key = str(selected_date_str or "").strip().replace("-", "/")
+
+        @st.cache_data(ttl=120)
+        def _cached_day_post_reports(day_key_in: str):
+            s4 = get_session()
+            try:
+                from database.models import Race, SystemConfig
+                from scoring_engine.config_value import unwrap_value as _unwrap
+
+                start = _dt3.strptime(str(day_key_in), "%Y/%m/%d")
+                end = start + _td3(days=1)
+                races0 = (
+                    s4.query(Race.id, Race.race_no, Race.venue)
+                    .filter(Race.race_date >= start)
+                    .filter(Race.race_date < end)
+                    .order_by(Race.race_no.asc())
+                    .all()
+                )
+                out = []
+                for rid0, rn0, v0 in races0:
+                    try:
+                        rni = int(rn0 or 0)
+                    except Exception:
+                        rni = 0
+                    if rni <= 0:
+                        continue
+                    ref_key = f"ai_race_reflection:{day_key_in}:{rni}"
+                    ev_key = f"race_event_report:{day_key_in}:{rni}"
+                    ref_cfg = s4.query(SystemConfig).filter_by(key=ref_key).first()
+                    ev_cfg = s4.query(SystemConfig).filter_by(key=ev_key).first()
+                    ref_payload, ref_meta = _unwrap(ref_cfg.value) if ref_cfg else (None, {})
+                    ev_payload, ev_meta = _unwrap(ev_cfg.value) if ev_cfg else (None, {})
+                    out.append(
+                        {
+                            "race_id": int(rid0) if rid0 is not None else None,
+                            "race_no": rni,
+                            "venue": str(v0 or ""),
+                            "reflection": (ref_payload if isinstance(ref_payload, dict) else {}),
+                            "reflection_meta": (ref_meta if isinstance(ref_meta, dict) else {}),
+                            "event_report": (ev_payload if isinstance(ev_payload, dict) else {}),
+                            "event_report_meta": (ev_meta if isinstance(ev_meta, dict) else {}),
+                        }
+                    )
+                return out
+            except Exception:
+                return []
+            finally:
+                s4.close()
+
+        try:
+            day_rows = _cached_day_post_reports(str(day_key))
+        except Exception:
+            day_rows = []
+
+        if not day_rows:
+            st.info("本賽日未找到可顯示的賽後報告（可能未抓到賽果/事件報告，或未生成反思）。")
+        else:
+            race_no_opts = ["全部"] + [int(x.get("race_no") or 0) for x in day_rows if int(x.get("race_no") or 0) > 0]
+            race_no_sel = st.selectbox("選擇場次", options=race_no_opts, index=0, key=f"member_post_reports_rn_{day_key}")
+
+            rows2 = day_rows
+            if str(race_no_sel) != "全部":
+                try:
+                    rni2 = int(race_no_sel)
+                except Exception:
+                    rni2 = 0
+                if rni2 > 0:
+                    rows2 = [x for x in day_rows if int(x.get("race_no") or 0) == rni2]
+
+            for rr in rows2:
+                rn2 = int(rr.get("race_no") or 0)
+                venue2 = str(rr.get("venue") or "")
+                ref_val = rr.get("reflection") if isinstance(rr.get("reflection"), dict) else {}
+                ref_meta = rr.get("reflection_meta") if isinstance(rr.get("reflection_meta"), dict) else {}
+                ev_val = rr.get("event_report") if isinstance(rr.get("event_report"), dict) else {}
+                ev_meta = rr.get("event_report_meta") if isinstance(rr.get("event_report_meta"), dict) else {}
+
+                ref_has = bool(str(ref_val.get("reflection") or "").strip())
+                ev_items = ev_val.get("items") if isinstance(ev_val.get("items"), list) else []
+                ev_has = bool(ev_items)
+                status2 = []
+                status2.append("✅ 反思" if ref_has else "— 反思")
+                status2.append("✅ 事件" if ev_has else "— 事件")
+                head = f"{venue2} 第 {rn2} 場｜" + " ".join(status2)
+
+                with st.expander(head, expanded=False):
+                    st.markdown("#### 反思報告")
+                    if ref_val:
+                        cap = []
+                        if str(ref_val.get("created_at") or "").strip():
+                            cap.append(f"created_at={str(ref_val.get('created_at') or '').strip()}")
+                        for kk in ["source", "schema", "fetched_at", "saved_at"]:
+                            vv = str(ref_meta.get(kk) or "").strip()
+                            if vv:
+                                cap.append(f"{kk}={vv}")
+                        if cap:
+                            st.caption("｜".join(cap))
+
+                        actual = str(ref_val.get("actual_results") or "").strip()
+                        refl = str(ref_val.get("reflection") or "").strip()
+                        rules = ref_val.get("learned_rules") if isinstance(ref_val.get("learned_rules"), list) else []
+                        if actual:
+                            st.markdown("**實際賽果 Top4**")
+                            st.write(actual)
+                        if refl:
+                            st.markdown("**檢討內容**")
+                            st.write(refl)
+                        else:
+                            st.info("此場尚未有反思報告（ai_race_reflection:*）。")
+                        if rules:
+                            st.markdown("**提煉法則**")
+                            for r0 in rules:
+                                rr0 = str(r0 or "").strip()
+                                if rr0:
+                                    st.info(rr0)
+                    else:
+                        st.info("此場尚未有反思報告（ai_race_reflection:*）。")
+
+                    st.markdown("#### 競賽事件報告（賽後）")
+                    if isinstance(ev_val, dict) and ev_items:
+                        cap2 = []
+                        for kk in ["source", "schema", "fetched_at", "saved_at"]:
+                            vv = str(ev_meta.get(kk) or "").strip()
+                            if vv:
+                                cap2.append(f"{kk}={vv}")
+                        url2 = str(ev_meta.get("url") or "").strip()
+                        if cap2:
+                            st.caption("｜".join(cap2))
+                        if url2:
+                            st.write(url2)
+                        df_ev = pd.DataFrame(
+                            [
+                                {
+                                    "馬號": int(it.get("horse_no") or 0),
+                                    "馬名": str(it.get("horse_name") or ""),
+                                    "事件": str(it.get("desc") or ""),
+                                }
+                                for it in ev_items
+                                if isinstance(it, dict)
+                            ]
+                        )
+                        if not df_ev.empty:
+                            df_ev = df_ev.sort_values(by=["馬號"], ascending=[True])
+                            st.dataframe(df_ev, use_container_width=True, hide_index=True)
+                        else:
+                            st.info("此場沒有可顯示的競賽事件內容。")
+                    else:
+                        st.info("此場尚未抓到競賽事件報告（race_event_report:*），或顯示為無特別報告。")
 
     # 數據加載與顯示
     weight_map = st.session_state.get("active_weight_map", {})
