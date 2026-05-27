@@ -677,6 +677,8 @@ try:
             get_learned_rule_items,
             save_learned_rule_items,
             curate_learned_rules,
+            _format_rule_date_ymd,
+            _get_rules_limits_from_env,
             generate_race_reflection,
             list_reflection_candidates,
             batch_reflect_worst,
@@ -685,7 +687,9 @@ try:
         
         items = get_learned_rule_items(session)
         if items:
+            limits = _get_rules_limits_from_env()
             st.caption("可在下方管理法則（啟用/停用/刪除），系統只會把「啟用」的法則注入到下一次賽前預測。")
+            st.caption(f"法則倉庫上限：{int(limits.get('keep') or 0)}｜啟用上限：{int(limits.get('max_enabled') or 0)}（超出會自動停用最舊啟用法則）")
             changed = False
             updated_items = []
             toggle_changed = 0
@@ -693,8 +697,17 @@ try:
                 rule_text = str(it.get("rule") or "").strip()
                 if not rule_text:
                     continue
+                date_ymd = _format_rule_date_ymd(it.get("created_at"), it.get("source"))
+                try:
+                    used_cnt = int(it.get("used_count") or 0)
+                except Exception:
+                    used_cnt = 0
+                try:
+                    impact = float(it.get("impact_score") or 0.0)
+                except Exception:
+                    impact = 0.0
                 enabled_default = bool(it.get("enabled") is not False)
-                enabled = st.checkbox(f"啟用｜法則 {i}: {rule_text}", value=enabled_default, key=f"rule_enabled_{i}")
+                enabled = st.checkbox(f"啟用｜[{date_ymd}] used={used_cnt} impact={impact:.1f}｜法則 {i}: {rule_text}", value=enabled_default, key=f"rule_enabled_{i}")
                 it2 = dict(it)
                 it2["enabled"] = bool(enabled)
                 updated_items.append(it2)
@@ -730,7 +743,12 @@ try:
             ok_curate = _confirm_run(c4, "curate_rules", label="輸入 RUN 以執行 AI 整理")
             if c5.button("🧹 讓 AI 整理法則", use_container_width=True, disabled=not ok_curate):
                 with st.spinner("AI 正在整理法則..."):
-                    res = curate_learned_rules(session, max_changes=int(max_changes), keep=30)
+                    res = curate_learned_rules(
+                        session,
+                        max_changes=int(max_changes),
+                        keep=int(limits.get("keep") or 200),
+                        max_enabled=int(limits.get("max_enabled") or 30),
+                    )
                 if res.get("ok"):
                     a = res.get("applied") if isinstance(res.get("applied"), dict) else {}
                     st.success(f"✅ 已更新法則：total={int(a.get('total') or 0)} enable={int(a.get('enable') or 0)} disable={int(a.get('disable') or 0)} delete={int(a.get('delete') or 0)} add={int(a.get('add') or 0)}（目前總數={int(res.get('count') or 0)}）")
@@ -741,8 +759,12 @@ try:
             enabled_rules = get_learned_rules(session)
             if enabled_rules:
                 st.markdown("**目前啟用法則（會影響下一次預測）**")
+                items2 = get_learned_rule_items(session)
+                by_rule = {str(x.get("rule") or "").strip(): x for x in items2 if str(x.get("rule") or "").strip()}
                 for r in enabled_rules:
-                    st.info(r)
+                    it = by_rule.get(str(r).strip()) or {}
+                    d = _format_rule_date_ymd(it.get("created_at"), it.get("source"))
+                    st.info(f"[{d}] {r}")
         else:
             st.warning("目前尚未學習到任何法則。請先執行賽後反思。")
             

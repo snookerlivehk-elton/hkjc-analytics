@@ -1,3 +1,4 @@
+import os
 import json
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
@@ -6,6 +7,150 @@ from typing import Dict, Any, List, Optional
 from database.models import Race, RaceEntry, SystemConfig
 from scoring_engine.ai_advisor import load_ai_settings, load_ai_api_key, call_chat_completions
 from scoring_engine.config_value import build_meta, unwrap_value, wrap_value
+
+DEFAULT_RULES_WAREHOUSE_KEEP = 200
+DEFAULT_RULES_MAX_ENABLED = 30
+DEFAULT_RULES_AUTO_CURATE_MAX_CHANGES = 3
+DEFAULT_RULES_AUTO_CURATE_COOLDOWN_SEC = 600
+
+
+def _parse_dt_iso(v: Any) -> Optional[datetime]:
+    if not v:
+        return None
+    s = str(v).strip()
+    if not s:
+        return None
+    try:
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        return datetime.fromisoformat(s)
+    except Exception:
+        return None
+
+
+def _infer_created_at_from_source(source: Any) -> Optional[str]:
+    s = str(source or "").strip()
+    if not s:
+        return None
+    try:
+        if ":" in s:
+            s = s.split(":", 1)[0]
+        dt = datetime.strptime(s, "%Y/%m/%d")
+        return dt.strftime("%Y-%m-%dT00:00:00")
+    except Exception:
+        return None
+
+
+def _format_rule_date_ymd(created_at: Any, source: Any) -> str:
+    dt = _parse_dt_iso(created_at)
+    if not dt:
+        inferred = _infer_created_at_from_source(source)
+        dt = _parse_dt_iso(inferred)
+    return dt.strftime("%Y-%m-%d") if dt else "-"
+
+
+def _get_rules_limits_from_env() -> Dict[str, int]:
+    def _to_int(v: Any, default: int) -> int:
+        try:
+            n = int(str(v).strip())
+            return n
+        except Exception:
+            return default
+
+    keep = _to_int(os.environ.get("AI_RULES_WAREHOUSE_KEEP"), DEFAULT_RULES_WAREHOUSE_KEEP)
+    max_enabled = _to_int(os.environ.get("AI_RULES_MAX_ENABLED"), DEFAULT_RULES_MAX_ENABLED)
+    max_changes = _to_int(os.environ.get("AUTO_RULE_CURATE_MAX_CHANGES"), DEFAULT_RULES_AUTO_CURATE_MAX_CHANGES)
+    cooldown = _to_int(os.environ.get("AUTO_RULE_CURATE_COOLDOWN_SEC"), DEFAULT_RULES_AUTO_CURATE_COOLDOWN_SEC)
+    keep = max(30, min(500, keep))
+    max_enabled = max(5, min(100, max_enabled))
+    max_changes = max(1, min(5, max_changes))
+    cooldown = max(0, min(3600, cooldown))
+    return {"keep": keep, "max_enabled": max_enabled, "max_changes": max_changes, "cooldown": cooldown}
+
+
+def _enforce_rule_limits(items: List[Dict[str, Any]], *, keep: int, max_enabled: int) -> List[Dict[str, Any]]:
+    norm = _normalize_rule_items(items)
+
+    def _sort_key(it: Dict[str, Any]):
+        dt = _parse_dt_iso(it.get("created_at")) or _parse_dt_iso(_infer_created_at_from_source(it.get("source"))) or datetime.min
+        return dt
+
+    norm.sort(key=_sort_key)
+    if len(norm) > int(keep):
+        norm = norm[-int(keep) :]
+
+    enabled_items = [it for it in norm if bool(it.get("enabled") is not False)]
+    if len(enabled_items) > int(max_enabled):
+        enabled_items.sort(key=_sort_key)  # oldest first
+        disable_n = len(enabled_items) - int(max_enabled)
+        disable_set = set(str(it.get("rule") or "").strip() for it in enabled_items[:disable_n] if str(it.get("rule") or "").strip())
+        out2 = []
+        for it in norm:
+            rt = str(it.get("rule") or "").strip()
+            it2 = dict(it)
+            if rt and rt in disable_set:
+                it2["enabled"] = False
+            out2.append(it2)
+        norm = _normalize_rule_items(out2)
+
+    return norm
+
+
+def apply_rules_outcome(
+    session: Session,
+    *,
+    rules_used: List[str],
+    hits_in_top4: int,
+    false_elim: int,
+    source: Optional[str] = None,
+) -> Dict[str, Any]:
+    rules_used = [str(x or "").strip() for x in (rules_used or []) if str(x or "").strip()]
+    if not rules_used:
+        return {"ok": False, "reason": "no_rules_used"}
+
+    items = get_learned_rule_items(session)
+    by_rule = {str(x.get("rule") or "").strip(): dict(x) for x in items if str(x.get("rule") or "").strip()}
+
+    now = datetime.utcnow().isoformat()
+    hits_in_top4 = int(hits_in_top4 or 0)
+    false_elim = int(false_elim or 0)
+    delta = float(hits_in_top4 - (2 * false_elim))
+    good = (hits_in_top4 >= 3) and (false_elim <= 0)
+    bad = (hits_in_top4 <= 1) or (false_elim >= 1)
+
+    updated = 0
+    for r in rules_used:
+        it = by_rule.get(r)
+        if not it:
+            continue
+        try:
+            it["used_count"] = int(it.get("used_count") or 0) + 1
+        except Exception:
+            it["used_count"] = 1
+        it["last_used_at"] = now
+        try:
+            it["impact_score"] = float(it.get("impact_score") or 0.0) + float(delta)
+        except Exception:
+            it["impact_score"] = float(delta)
+        if good:
+            try:
+                it["good_count"] = int(it.get("good_count") or 0) + 1
+            except Exception:
+                it["good_count"] = 1
+        if bad:
+            try:
+                it["bad_count"] = int(it.get("bad_count") or 0) + 1
+            except Exception:
+                it["bad_count"] = 1
+        if source and (not it.get("source")):
+            it["source"] = str(source)
+        by_rule[r] = it
+        updated += 1
+
+    limits = _get_rules_limits_from_env()
+    final_items = _enforce_rule_limits(list(by_rule.values()), keep=int(limits["keep"]), max_enabled=int(limits["max_enabled"]))
+    save_learned_rule_items(session, final_items)
+    return {"ok": True, "updated": int(updated), "delta": float(delta), "good": bool(good), "bad": bool(bad)}
 
 def _normalize_rule_items(val: Any) -> List[Dict[str, Any]]:
     if not isinstance(val, list):
@@ -21,6 +166,11 @@ def _normalize_rule_items(val: Any) -> List[Dict[str, Any]]:
                     "enabled": bool(item.get("enabled") is not False),
                     "created_at": item.get("created_at"),
                     "source": item.get("source"),
+                    "used_count": item.get("used_count"),
+                    "last_used_at": item.get("last_used_at"),
+                    "impact_score": item.get("impact_score"),
+                    "good_count": item.get("good_count"),
+                    "bad_count": item.get("bad_count"),
                 }
             )
     seen = set()
@@ -30,6 +180,26 @@ def _normalize_rule_items(val: Any) -> List[Dict[str, Any]]:
         if not r or r in seen:
             continue
         seen.add(r)
+        if not it.get("created_at"):
+            inferred = _infer_created_at_from_source(it.get("source"))
+            if inferred:
+                it = dict(it)
+                it["created_at"] = inferred
+        try:
+            it2 = dict(it)
+            it2["used_count"] = int(it2.get("used_count") or 0)
+            it2["impact_score"] = float(it2.get("impact_score") or 0.0)
+            it2["good_count"] = int(it2.get("good_count") or 0)
+            it2["bad_count"] = int(it2.get("bad_count") or 0)
+            it2["last_used_at"] = it2.get("last_used_at") or None
+            it = it2
+        except Exception:
+            it = dict(it)
+            it["used_count"] = 0
+            it["impact_score"] = 0.0
+            it["good_count"] = 0
+            it["bad_count"] = 0
+            it["last_used_at"] = it.get("last_used_at") or None
         deduped.append(it)
     return deduped
 
@@ -48,12 +218,13 @@ def get_learned_rules(session: Session, include_disabled: bool = False) -> List[
 
 
 def save_learned_rule_items(session: Session, items: List[Dict[str, Any]]) -> None:
+    limits = _get_rules_limits_from_env()
     cfg = session.query(SystemConfig).filter_by(key="ai_learned_rules").first()
     if not cfg:
         cfg = SystemConfig(key="ai_learned_rules", description="AI 賽後反思學習到的法則")
         session.add(cfg)
-    norm = _normalize_rule_items(items)
-    cfg.value = wrap_value(norm[-30:], build_meta(source="AI_REFLECTION", fetched_at=datetime.utcnow().isoformat(), schema="ai_learned_rules:v1"))
+    norm = _enforce_rule_limits(items, keep=int(limits["keep"]), max_enabled=int(limits["max_enabled"]))
+    cfg.value = wrap_value(norm, build_meta(source="AI_REFLECTION", fetched_at=datetime.utcnow().isoformat(), schema="ai_learned_rules:v2"))
     try:
         from scoring_engine.search_index import index_system_config_doc
 
@@ -64,6 +235,7 @@ def save_learned_rule_items(session: Session, items: List[Dict[str, Any]]) -> No
 
 
 def save_learned_rules(session: Session, new_rules: List[str], source: Optional[str] = None):
+    limits = _get_rules_limits_from_env()
     cfg = session.query(SystemConfig).filter_by(key="ai_learned_rules").first()
     if not cfg:
         cfg = SystemConfig(key="ai_learned_rules", description="AI 賽後反思學習到的法則")
@@ -84,7 +256,8 @@ def save_learned_rules(session: Session, new_rules: List[str], source: Optional[
         by_rule[rr] = {"rule": rr, "enabled": True, "created_at": now, "source": str(source or "").strip() or None}
 
     merged = list(by_rule.values())
-    cfg.value = wrap_value(merged[-30:], build_meta(source="AI_REFLECTION", fetched_at=datetime.utcnow().isoformat(), schema="ai_learned_rules:v1"))
+    final_items = _enforce_rule_limits(merged, keep=int(limits["keep"]), max_enabled=int(limits["max_enabled"]))
+    cfg.value = wrap_value(final_items, build_meta(source="AI_REFLECTION", fetched_at=datetime.utcnow().isoformat(), schema="ai_learned_rules:v2"))
     try:
         from scoring_engine.search_index import index_system_config_doc
 
@@ -176,7 +349,8 @@ def curate_learned_rules(
     session: Session,
     *,
     max_changes: int = 5,
-    keep: int = 30,
+    keep: int = DEFAULT_RULES_WAREHOUSE_KEEP,
+    max_enabled: int = DEFAULT_RULES_MAX_ENABLED,
 ) -> Dict[str, Any]:
     items = get_learned_rule_items(session)
 
@@ -187,14 +361,38 @@ def curate_learned_rules(
         return {"ok": False, "reason": "missing_api_key"}
 
     max_changes = max(1, min(5, int(max_changes or 5)))
-    keep = max(5, min(60, int(keep or 30)))
+    keep = max(30, min(500, int(keep or DEFAULT_RULES_WAREHOUSE_KEEP)))
+    max_enabled = max(5, min(100, int(max_enabled or DEFAULT_RULES_MAX_ENABLED)))
 
-    enabled = [str(x.get("rule") or "").strip() for x in items if bool(x.get("enabled") is not False) and str(x.get("rule") or "").strip()]
-    disabled = [str(x.get("rule") or "").strip() for x in items if bool(x.get("enabled") is False) and str(x.get("rule") or "").strip()]
+    enabled_lines = []
+    disabled_lines = []
+    for x in items:
+        rule = str(x.get("rule") or "").strip()
+        if not rule:
+            continue
+        date_ymd = _format_rule_date_ymd(x.get("created_at"), x.get("source"))
+        src = str(x.get("source") or "").strip()
+        try:
+            used_cnt = int(x.get("used_count") or 0)
+        except Exception:
+            used_cnt = 0
+        try:
+            impact = float(x.get("impact_score") or 0.0)
+        except Exception:
+            impact = 0.0
+        prefix = f"[{date_ymd}]"
+        if src:
+            prefix += f" ({src})"
+        line = f"{prefix} used={used_cnt} impact={impact:.1f}｜{rule}"
+        if bool(x.get("enabled") is not False):
+            enabled_lines.append(line)
+        else:
+            disabled_lines.append(line)
 
     system_prompt = (
         "你是賽馬 AI 的知識庫管理員。你要整理「賽後反思黃金法則」清單。\n"
-        "目標：保留最多 30 條法則；避免重複、過度細碎、過度特定、或互相矛盾的內容。\n"
+        f"目標：法則倉庫最多保留 {int(keep)} 條；其中「啟用」最多 {int(max_enabled)} 條（啟用才會注入下一次賽前預測）。\n"
+        "你應盡量用 disable 代替 delete（除非明顯無用/重複/錯誤）。\n"
         f"你只能做最多 {int(max_changes)} 個改動（enable/disable/delete/add 的總和）。\n"
         "請優先做「線性、漸進式」改動：不要一次大幅重寫。\n"
         "輸出必須是純 JSON，格式：\n"
@@ -208,10 +406,10 @@ def curate_learned_rules(
     )
 
     user_text = (
-        f"【目前啟用法則（{len(enabled)}）】\n"
-        + "\n".join([f"- {x}" for x in enabled])
-        + f"\n\n【目前停用法則（{len(disabled)}）】\n"
-        + "\n".join([f"- {x}" for x in disabled])
+        f"【目前啟用法則（{len(enabled_lines)}）】\n"
+        + "\n".join([f"- {x}" for x in enabled_lines])
+        + f"\n\n【目前停用法則（{len(disabled_lines)}）】\n"
+        + "\n".join([f"- {x}" for x in disabled_lines])
     )
 
     resp = call_chat_completions(
@@ -238,9 +436,47 @@ def curate_learned_rules(
 
     parsed = parsed if isinstance(parsed, dict) else {}
     res = _apply_rule_actions(items, parsed, max_changes=int(max_changes), source="AI_RULE_CURATOR")
-    final_items = _normalize_rule_items(res.get("items"))[-int(keep) :]
+    final_items = _enforce_rule_limits(_normalize_rule_items(res.get("items")), keep=int(keep), max_enabled=int(max_enabled))
     save_learned_rule_items(session, final_items)
     return {"ok": True, "applied": res.get("applied"), "count": len(final_items)}
+
+
+def maybe_auto_curate_rules(session: Session, *, source: Optional[str] = None) -> Dict[str, Any]:
+    enabled = str(os.environ.get("ENABLE_AUTO_RULE_CURATION") or "0").strip().lower() in ("1", "true", "yes")
+    if not enabled:
+        return {"ok": False, "reason": "disabled"}
+
+    limits = _get_rules_limits_from_env()
+    cooldown = int(limits["cooldown"])
+    key = "auto_ai_rules_curated:last"
+    cfg = session.query(SystemConfig).filter_by(key=key).first()
+    if cfg and cfg.value:
+        try:
+            val, _ = unwrap_value(cfg.value)
+        except Exception:
+            val = cfg.value
+        if isinstance(val, dict):
+            last_at = _parse_dt_iso(val.get("at"))
+            if last_at and cooldown > 0:
+                if (datetime.utcnow() - last_at).total_seconds() < float(cooldown):
+                    return {"ok": False, "reason": "cooldown"}
+
+    res = curate_learned_rules(
+        session,
+        max_changes=int(limits["max_changes"]),
+        keep=int(limits["keep"]),
+        max_enabled=int(limits["max_enabled"]),
+    )
+    if res.get("ok"):
+        if not cfg:
+            cfg = SystemConfig(key=key, description="自動法則整理：最近一次執行紀錄（避免頻繁重覆）")
+            session.add(cfg)
+        cfg.value = wrap_value(
+            {"at": datetime.utcnow().isoformat(), "source": str(source or "").strip() or None, "result": res},
+            build_meta(source="AI_RULE_CURATOR", fetched_at=datetime.utcnow().isoformat(), schema="auto_ai_rules_curated:v1"),
+        )
+        session.commit()
+    return res
 
 
 def _actual_top4(session: Session, race_id: int) -> List[int]:
@@ -554,8 +790,36 @@ def generate_race_reflection(session: Session, race_id: int, save_rules: bool = 
                 pass
             
             new_rules = parsed.get("learned_rules", [])
+            try:
+                actual_hns = []
+                for x in top_4:
+                    try:
+                        actual_hns.append(int(x.get("horse_no") or 0))
+                    except Exception:
+                        pass
+                actual_hns = [x for x in actual_hns if int(x or 0) > 0]
+                pred_top5_hns = [int(x or 0) for x in (pred_top5 or []) if int(x or 0) > 0]
+                elim_hns = [int(x or 0) for x in (elim or []) if int(x or 0) > 0]
+                hits_in_top4 = len(set(actual_hns).intersection(set(pred_top5_hns)))
+                false_elim = len(set(actual_hns).intersection(set(elim_hns)))
+                rules_used = report_val.get("rules_used") if isinstance(report_val, dict) else None
+                if not (isinstance(rules_used, list) and rules_used):
+                    rules_used = get_learned_rules(session)
+                apply_rules_outcome(
+                    session,
+                    rules_used=list(rules_used or []),
+                    hits_in_top4=int(hits_in_top4),
+                    false_elim=int(false_elim),
+                    source=f"{date_str}:R{race_no}",
+                )
+            except Exception:
+                pass
             if save_rules and new_rules:
                 save_learned_rules(session, new_rules, source=f"{date_str}:R{race_no}")
+                try:
+                    maybe_auto_curate_rules(session, source=f"{date_str}:R{race_no}")
+                except Exception:
+                    pass
                 
             session.commit()
             return {

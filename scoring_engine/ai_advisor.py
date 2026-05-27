@@ -620,6 +620,7 @@ def run_ai_race_summary(
     # Inject learned rules
     from scoring_engine.ai_reflection import get_learned_rules
     learned_rules = get_learned_rules(session)
+    rules_used = list(learned_rules or [])
     rules_text = ""
     if learned_rules:
         rules_text = "\n### 【系統過往學習到的賽事法則】\n請在分析時，務必參考以下你過往自我檢討得出的法則（若適用於本場）：\n"
@@ -754,6 +755,7 @@ def run_ai_race_summary(
                 "top5_horse_nos_original": top5_original,
                 "top5_rerank_debug": top5_rerank_debug,
                 "eliminated_horse_nos": elim,
+                "rules_used": rules_used,
                 "created_at": datetime.utcnow().isoformat(),
                 "race_id": int(race_id),
                 "scenario": (str(scenario_tag or "").strip() or str(going_code_override or "").strip() or None),
@@ -773,6 +775,7 @@ def run_ai_race_summary(
                         "endpoint": str(settings.get("endpoint") or ""),
                         "save_as_scenario": bool(save_as_scenario),
                         "report_key": str(report_key),
+                        "rules_used_count": int(len(rules_used)),
                     },
                 ),
             )
