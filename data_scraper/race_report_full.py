@@ -40,13 +40,28 @@ class RaceReportFullScraper:
         return html
 
     def scrape_single_race(self, *, race_date: str, racecourse: str, race_no: int) -> Dict[str, Any]:
+        def _table_found(soup0: BeautifulSoup) -> bool:
+            try:
+                for table in soup0.find_all("table"):
+                    first_tr = table.find("tr")
+                    if not first_tr:
+                        continue
+                    headers = [c.get_text(" ", strip=True) for c in first_tr.find_all(["th", "td"])]
+                    norm = "".join(headers).replace(" ", "")
+                    if ("馬號" in norm) and ("競賽事件" in norm):
+                        return True
+            except Exception:
+                return False
+            return False
+
         url = self.build_url(race_date=race_date, racecourse=racecourse, race_no=race_no)
         html = self.fetch(race_date=race_date, racecourse=racecourse, race_no=race_no)
         soup = BeautifulSoup(html, "lxml")
+        table_found = _table_found(soup)
         items = self._parse_event_table_for_race(soup, race_no=int(race_no))
-        if not items:
+        if (not table_found) or (not items):
             low = (html or "").lower()
-            need_render = ("<!doctype html" in low) and ("競賽事件" not in html)
+            need_render = ("<!doctype html" in low) and (("競賽事件" not in html) or ("馬號" not in html))
             if need_render:
                 try:
                     from playwright.sync_api import sync_playwright
@@ -67,8 +82,10 @@ class RaceReportFullScraper:
                         browser.close()
                     if html2:
                         soup2 = BeautifulSoup(html2, "lxml")
+                        table_found2 = _table_found(soup2)
                         items2 = self._parse_event_table_for_race(soup2, race_no=int(race_no))
-                        if items2:
+                        if table_found2:
+                            table_found = True
                             items = items2
                 except Exception as e:
                     logger.warning(f"[RaceReportFullScraper] playwright fallback failed url={url} err={type(e).__name__}: {e}")
@@ -77,6 +94,7 @@ class RaceReportFullScraper:
             "racecourse": venue_code(racecourse),
             "race_no": int(race_no),
             "items": items,
+            "table_found": bool(table_found),
         }
 
     def _parse_event_table_for_race(self, soup: BeautifulSoup, *, race_no: int) -> List[Dict[str, Any]]:

@@ -168,6 +168,7 @@ def main():
         results = payload.get("results") or []
         event_report = payload.get("event_report") if isinstance(payload, dict) else None
         event_report_found = bool(payload.get("event_report_found")) if isinstance(payload, dict) else False
+        event_report_source = "HKJC_LOCALRESULTS" if event_report_found else ""
         event_report_fetched = bool(event_report_found)
         if not isinstance(event_report, list):
             event_report = []
@@ -186,15 +187,20 @@ def main():
             print(f"[略過] 尚未有賽果（無有效完成時間）：{target_date} {racecourse} R{int(race.race_no or 0)}")
             continue
 
-        if (not event_report_found) and (not event_report):
+        if not event_report:
             try:
                 rr_payload = rr_scraper.scrape_single_race(race_date=target_date, racecourse=racecourse, race_no=int(race.race_no or 0))
                 rr_items = rr_payload.get("items") if isinstance(rr_payload, dict) else None
-                if isinstance(rr_items, list):
+                rr_found = bool(rr_payload.get("table_found")) if isinstance(rr_payload, dict) else False
+                if rr_found and isinstance(rr_items, list):
                     event_report = rr_items
                     event_report_fetched = True
-            except Exception:
-                pass
+                    event_report_found = False
+                    event_report_source = "HKJC_RACEREPORTFULL"
+                else:
+                    print(f"[警告] 競賽事件報告未能解析（racereportfull table_not_found）：{target_date} {racecourse} R{int(race.race_no or 0)}")
+            except Exception as e:
+                print(f"[警告] 競賽事件報告抓取失敗：{target_date} {racecourse} R{int(race.race_no or 0)} err={type(e).__name__}: {e}")
         try:
             dist_page = int(meta.get("distance") or 0)
         except Exception:
@@ -283,13 +289,12 @@ def main():
                 "status": ("ok" if event_report else "no_special_report"),
             }
             m2 = build_meta(
-                source="HKJC_RACEREPORTFULL",
+                source=(event_report_source or "HKJC_RACEREPORTFULL"),
                 fetched_at=datetime.utcnow().isoformat(),
                 url=f"https://racing.hkjc.com/zh-hk/local/information/racereportfull?racedate={target_date}&Racecourse={racecourse}&RaceNo={int(race.race_no)}",
                 schema="race_event_report:v1",
             )
-            if event_report_found:
-                m2["source"] = "HKJC_LOCALRESULTS"
+            if str(event_report_source or "").strip() == "HKJC_LOCALRESULTS":
                 m2["url"] = f"https://racing.hkjc.com/zh-hk/local/information/localresults?racedate={target_date}&Racecourse={racecourse}&RaceNo={int(race.race_no)}"
             cfg2.value = wrap_value(payload_er, m2)
 
