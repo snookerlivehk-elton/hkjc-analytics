@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import re
+import time
 from typing import Any, Dict, List
 
 import requests
 from bs4 import BeautifulSoup
 
 from scoring_engine.normalization import venue_code
+from utils.logger import logger
 
 
 class RaceReportFullScraper:
@@ -23,14 +25,53 @@ class RaceReportFullScraper:
 
     def fetch(self, *, race_date: str, racecourse: str, race_no: int) -> str:
         url = self.build_url(race_date=race_date, racecourse=racecourse, race_no=race_no)
-        resp = requests.get(url, headers=self.headers, timeout=30)
-        resp.raise_for_status()
-        return resp.text
+        html = ""
+        for i in range(3):
+            try:
+                resp = requests.get(url, headers=self.headers, timeout=35)
+                resp.raise_for_status()
+                html = resp.text or ""
+                break
+            except Exception as e:
+                if i < 2:
+                    time.sleep(1.0 + i * 1.5)
+                    continue
+                raise
+        return html
 
     def scrape_single_race(self, *, race_date: str, racecourse: str, race_no: int) -> Dict[str, Any]:
+        url = self.build_url(race_date=race_date, racecourse=racecourse, race_no=race_no)
         html = self.fetch(race_date=race_date, racecourse=racecourse, race_no=race_no)
         soup = BeautifulSoup(html, "lxml")
         items = self._parse_event_table_for_race(soup, race_no=int(race_no))
+        if not items:
+            low = (html or "").lower()
+            need_render = ("<!doctype html" in low) and ("競賽事件" not in html)
+            if need_render:
+                try:
+                    from playwright.sync_api import sync_playwright
+
+                    with sync_playwright() as p:
+                        browser = p.chromium.launch(
+                            headless=True,
+                            args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+                        )
+                        context = browser.new_context(
+                            user_agent=str(self.headers.get("User-Agent") or ""),
+                            viewport={"width": 1920, "height": 1080},
+                        )
+                        page = context.new_page()
+                        page.goto(url, wait_until="networkidle", timeout=45000)
+                        page.wait_for_timeout(1200)
+                        html2 = page.content() or ""
+                        browser.close()
+                    if html2:
+                        soup2 = BeautifulSoup(html2, "lxml")
+                        items2 = self._parse_event_table_for_race(soup2, race_no=int(race_no))
+                        if items2:
+                            items = items2
+                except Exception as e:
+                    logger.warning(f"[RaceReportFullScraper] playwright fallback failed url={url} err={type(e).__name__}: {e}")
         return {
             "race_date": race_date,
             "racecourse": venue_code(racecourse),

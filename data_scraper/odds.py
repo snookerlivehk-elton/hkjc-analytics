@@ -1,4 +1,5 @@
 import re
+import time
 import requests
 from bs4 import BeautifulSoup
 from typing import List, Dict, Any, Optional, Tuple
@@ -17,11 +18,30 @@ class OddsScraper:
     def _fetch_wp_html(self, race_no: int, race_date: str = "", venue: str = "HV") -> Tuple[str, str]:
         date_str = race_date.replace("/", "-") if race_date else datetime.now().strftime("%Y-%m-%d")
         url = f"{self.base_url}/{date_str}/{venue}/{race_no}"
-        resp = requests.get(url, headers=self.headers, timeout=15)
-        resp.raise_for_status()
+        last_err = None
+        html = ""
+        for i in range(3):
+            try:
+                resp = requests.get(url, headers=self.headers, timeout=20)
+                resp.raise_for_status()
+                html = resp.text or ""
+                last_err = None
+                break
+            except Exception as e:
+                last_err = e
+                if i < 2:
+                    time.sleep(1.0 + i * 1.5)
+                else:
+                    raise
 
-        html = resp.text or ""
-        if ("<!doctype html" in html.lower()) and ("__NEXT_DATA__" not in html) and ("投注" not in html) and (len(html) < 20000):
+        low = html.lower()
+        need_render = False
+        if ("<!doctype html" in low) and ("__NEXT_DATA__" not in html) and ("投注" not in html):
+            need_render = True
+        if ("<!doctype html" in low) and (("馬號" not in html) or ("獨贏" not in html) or ("位置" not in html)):
+            need_render = True
+
+        if need_render:
             try:
                 from playwright.sync_api import sync_playwright
 
@@ -39,8 +59,8 @@ class OddsScraper:
                     page.wait_for_timeout(1200)
                     html = page.content() or html
                     browser.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"[OddsScraper] playwright fallback failed url={url} err={type(e).__name__}: {e}")
 
         return url, html
 
@@ -156,6 +176,10 @@ class OddsScraper:
                         continue
                     if ("獨贏" in k) or ("位置" in k) or ("連贏" in k) or ("位置Q" in k) or ("孖寶" in k) or ("此場總投注額" in k):
                         pools[k] = int(amt)
+
+            if not odds_list:
+                sig = " ".join((page_text or "").splitlines()[:6])[:300]
+                logger.warning(f"[OddsScraper] no runner odds parsed url={url} sig={sig}")
 
             return {
                 "url": url,

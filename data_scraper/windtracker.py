@@ -9,6 +9,7 @@ from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 
 from scoring_engine.normalization import venue_code
+from utils.logger import logger
 
 
 class WindTrackerScraper:
@@ -52,11 +53,14 @@ class WindTrackerScraper:
             winds0 = self._extract_winds(text0)
             return text0, ds0, venue0, updated_at0, metrics0, winds0
 
+        fetch_mode = "requests"
+        render_error = ""
+
         html = self.fetch()
         text, ds, venue, updated_at, metrics, winds = _parse(html)
 
         need_render = False
-        if ("最後更新" not in text) or ("風向" not in text):
+        if ("最後更新" not in text) or ("風向" not in text) or (not ds) or (not venue):
             need_render = True
         else:
             try:
@@ -70,16 +74,22 @@ class WindTrackerScraper:
             try:
                 html2 = asyncio.run(self._fetch_rendered_async())
                 text, ds, venue, updated_at, metrics, winds = _parse(html2)
-            except Exception:
-                pass
+                fetch_mode = "playwright"
+            except Exception as e:
+                render_error = f"{type(e).__name__}: {e}"
+                logger.warning(f"[WindTrackerScraper] rendered fetch failed err={render_error}")
 
-        return {
+        out = {
             "race_date": ds,
             "venue": venue,
             "updated_at": updated_at,
             "metrics": metrics,
             "winds": winds,
+            "_fetch_mode": fetch_mode,
         }
+        if render_error:
+            out["_render_error"] = render_error
+        return out
 
     def _extract_updated_at(self, text: str) -> str:
         m = re.search(r"最後更新\s*[:：]\s*([0-9/]+\s*[0-9:]+)", text)

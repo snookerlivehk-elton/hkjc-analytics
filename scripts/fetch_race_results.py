@@ -109,7 +109,19 @@ def main():
                 except Exception:
                     pass
 
-        payload = scraper.scrape_single_race(target_date, racecourse, race.race_no)
+        try:
+            payload = scraper.scrape_single_race(target_date, racecourse, race.race_no)
+        except Exception as e:
+            try:
+                rn = int(race.race_no or 0)
+            except Exception:
+                rn = 0
+            print(f"[錯誤] 抓取賽果頁失敗：{target_date} {racecourse} R{rn} err={type(e).__name__}: {e}")
+            try:
+                session.rollback()
+            except Exception:
+                pass
+            continue
         meta = payload.get("meta") or {}
         final_url = str(meta.get("final_url") or "").strip()
         if final_url:

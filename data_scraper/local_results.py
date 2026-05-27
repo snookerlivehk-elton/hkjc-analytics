@@ -1,10 +1,12 @@
 import re
+import time
 import requests
 from bs4 import BeautifulSoup
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse, parse_qs
 
 from scoring_engine.normalization import normalize_course_type, surface_code, venue_code
+from utils.logger import logger
 
 
 class LocalResultsScraper:
@@ -19,13 +21,58 @@ class LocalResultsScraper:
 
     def fetch(self, race_date: str, racecourse: str, race_no: int) -> str:
         url = f"{self.base_url}?racedate={race_date}&Racecourse={racecourse}&RaceNo={race_no}"
-        resp = requests.get(url, headers=self.headers, timeout=20)
-        resp.raise_for_status()
-        try:
-            self.last_url = str(getattr(resp, "url", "") or "")
-        except Exception:
-            self.last_url = ""
-        return resp.text
+        html = ""
+        for i in range(3):
+            try:
+                resp = requests.get(url, headers=self.headers, timeout=25)
+                resp.raise_for_status()
+                html = resp.text or ""
+                try:
+                    self.last_url = str(getattr(resp, "url", "") or "")
+                except Exception:
+                    self.last_url = ""
+                break
+            except Exception as e:
+                if i < 2:
+                    time.sleep(1.0 + i * 1.5)
+                    continue
+                raise
+
+        low = html.lower()
+        need_render = False
+        if ("<!doctype html" in low) and (("名次" not in html) or ("馬號" not in html)):
+            need_render = True
+        if ("enable javascript" in low) or ("access denied" in low):
+            need_render = True
+
+        if need_render:
+            try:
+                from playwright.sync_api import sync_playwright
+
+                with sync_playwright() as p:
+                    browser = p.chromium.launch(
+                        headless=True,
+                        args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+                    )
+                    context = browser.new_context(
+                        user_agent=str(self.headers.get("User-Agent") or ""),
+                        viewport={"width": 1920, "height": 1080},
+                    )
+                    page = context.new_page()
+                    page.goto(url, wait_until="networkidle", timeout=45000)
+                    page.wait_for_timeout(1200)
+                    html2 = page.content() or ""
+                    if html2:
+                        html = html2
+                    try:
+                        self.last_url = str(page.url or "")
+                    except Exception:
+                        pass
+                    browser.close()
+            except Exception as e:
+                logger.warning(f"[LocalResultsScraper] playwright fallback failed url={url} err={type(e).__name__}: {e}")
+
+        return html
 
     def scrape_single_race(self, race_date: str, racecourse: str, race_no: int) -> Dict[str, Any]:
         html = self.fetch(race_date=race_date, racecourse=racecourse, race_no=race_no)
