@@ -1,6 +1,8 @@
 import os
 import re
 import time
+import subprocess
+import sys
 import requests
 from bs4 import BeautifulSoup
 from typing import List, Dict, Any, Optional, Tuple
@@ -51,7 +53,7 @@ class OddsScraper:
             need_render = True
 
         if need_render:
-            try:
+            def _render_once() -> str:
                 from playwright.sync_api import sync_playwright
 
                 with sync_playwright() as p:
@@ -66,10 +68,35 @@ class OddsScraper:
                     page = context.new_page()
                     page.goto(url, wait_until="networkidle", timeout=45000)
                     page.wait_for_timeout(1200)
-                    html = page.content() or html
+                    out = page.content() or ""
                     browser.close()
+                    return out
+
+            try:
+                rendered = _render_once()
+                if rendered:
+                    html = rendered
             except Exception as e:
+                msg = f"{e}"
                 logger.warning(f"[OddsScraper] playwright fallback failed url={url} err={type(e).__name__}: {e}")
+                if ("Executable doesn't exist" in msg) or ("playwright install" in msg):
+                    try:
+                        out = subprocess.run(
+                            [sys.executable, "-m", "playwright", "install", "--only-shell"],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                            timeout=300,
+                            check=False,
+                            env=os.environ.copy(),
+                        ).stdout.decode("utf-8", errors="ignore")
+                        logger.warning(f"[OddsScraper] playwright install --only-shell output={out[-800:]}")
+                        rendered = _render_once()
+                        if rendered:
+                            html = rendered
+                    except Exception as e2:
+                        logger.warning(
+                            f"[OddsScraper] playwright self-heal failed url={url} err={type(e2).__name__}: {e2}"
+                        )
 
         return url, html
 
