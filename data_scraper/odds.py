@@ -1,3 +1,4 @@
+import os
 import re
 import time
 import requests
@@ -9,6 +10,14 @@ class OddsScraper:
     """穩定版賠率抓取器：使用 bet.hkjc.com 投注版路徑"""
 
     def __init__(self):
+        if not str(os.environ.get("PLAYWRIGHT_BROWSERS_PATH") or "").strip():
+            for p in ("/app/playwright_browsers", "/ms-playwright"):
+                try:
+                    if os.path.isdir(p):
+                        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = p
+                        break
+                except Exception:
+                    pass
         self.base_url = "https://bet.hkjc.com/ch/racing/wp"
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
