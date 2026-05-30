@@ -1522,7 +1522,6 @@ def main():
 
     with st.expander("🧾 賽後報告（反思 / 競賽事件報告）", expanded=False):
         from datetime import datetime as _dt3, timedelta as _td3
-        import pandas as pd
 
         day_key = ""
         try:
@@ -1722,7 +1721,6 @@ def main():
             from scoring_engine.top5_tip_config import load_tip_config
             from scoring_engine.top5_tips import generate_top5_tips_for_race_date
             import json
-            import pandas as pd
 
             cfg_tip = load_tip_config(session)
             if not bool(cfg_tip.get("enabled")):
