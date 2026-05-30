@@ -271,6 +271,24 @@ def main():
 
             post_time_hk_use = str(post_time_hk_db or "").strip()
             post_dt = _parse_hhmm_dt(date_str, post_time_hk_use)
+            snap_prefetch = None
+            if post_dt is None:
+                try:
+                    snap_prefetch = scraper.get_wp_snapshot(race_no=rno, race_date=date_str, venue=venue)
+                    post_time_hk_snap0 = str(snap_prefetch.get("post_time_hk") or "").strip()
+                    if post_time_hk_snap0:
+                        post_time_hk_use = post_time_hk_snap0
+                        post_dt = _parse_hhmm_dt(date_str, post_time_hk_use)
+                        if post_dt is not None:
+                            try:
+                                rr0 = session.query(Race).filter(Race.id == int(rid)).first()
+                                if rr0 and str(rr0.post_time_hk or "").strip() != post_time_hk_use:
+                                    rr0.post_time_hk = post_time_hk_use
+                                    session.commit()
+                            except Exception:
+                                pass
+                except Exception:
+                    snap_prefetch = None
             if post_dt is None:
                 continue
             delta_min = int(round((post_dt - now_hk).total_seconds() / 60.0))
@@ -320,7 +338,7 @@ def main():
                     pass
                 continue
 
-            snap = scraper.get_wp_snapshot(race_no=rno, race_date=date_str, venue=venue)
+            snap = snap_prefetch or scraper.get_wp_snapshot(race_no=rno, race_date=date_str, venue=venue)
             odds_map = _normalize_odds_rows(list(snap.get("odds") or []))
             pools = dict(snap.get("pools") or {})
             update_time_hk = snap.get("update_time_hk")

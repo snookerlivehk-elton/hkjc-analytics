@@ -153,16 +153,28 @@ def main():
         now_hk = datetime.now(HK_TZ)
         date_str = _target_racedate_str(session)
 
+        ignore_window = str(os.environ.get("IGNORE_WINDOW") or "").strip().lower() in ("1", "true", "yes")
+        force_write = str(os.environ.get("FORCE_PRE_24H") or "").strip().lower() in ("1", "true", "yes")
+        force_replace = str(os.environ.get("FORCE_REPLACE_PRE_24H") or "").strip().lower() in ("1", "true", "yes")
+        target_race_no_s = str(os.environ.get("RACE_NO") or "").strip()
+        try:
+            target_race_no = int(target_race_no_s) if target_race_no_s else 0
+        except Exception:
+            target_race_no = 0
+
         first_post, trigger_dt, anchor = _trigger_time_for_raceday(session, date_str)
         if not first_post or not trigger_dt:
-            print(f"skip date={date_str} reason=no_post_time_hk")
-            return
-        if not _is_within_trigger_window(now_hk, trigger_dt):
-            print(
-                f"not_due now_hk={now_hk.isoformat()} trigger={trigger_dt.isoformat()} first_post={first_post.isoformat()} anchor={anchor}"
-            )
-            return
-        print(f"due date={date_str} now_hk={now_hk.isoformat()} trigger={trigger_dt.isoformat()} first_post={first_post.isoformat()} anchor={anchor}")
+            if not (ignore_window or force_write):
+                print(f"skip date={date_str} reason=no_post_time_hk")
+                return
+            print(f"due_no_post_time date={date_str} now_hk={now_hk.isoformat()}")
+        else:
+            if not (ignore_window or _is_within_trigger_window(now_hk, trigger_dt)):
+                print(
+                    f"not_due now_hk={now_hk.isoformat()} trigger={trigger_dt.isoformat()} first_post={first_post.isoformat()} anchor={anchor}"
+                )
+                return
+            print(f"due date={date_str} now_hk={now_hk.isoformat()} trigger={trigger_dt.isoformat()} first_post={first_post.isoformat()} anchor={anchor}")
 
         start, end = _day_range(date_str)
         races = (
@@ -261,10 +273,12 @@ def main():
                 rno = 0
             if rno <= 0:
                 continue
+            if int(target_race_no) > 0 and int(rno) != int(target_race_no):
+                continue
             total_races += 1
 
             done_key = f"pre_odds_24h_done:{date_str}:{rno}"
-            if bool(_get_cfg_value(session, done_key) is True):
+            if (not force_write) and bool(_get_cfg_value(session, done_key) is True):
                 ok_races += 1
                 continue
 
@@ -293,10 +307,21 @@ def main():
                 .limit(1)
                 .all()
             )
-            if exists:
+            if exists and (not force_write):
                 _upsert_cfg(session, done_key, True, f"賽前賠率快照（24H）完成（{date_str} R{rno}）")
                 ok_races += 1
                 continue
+            if exists and force_replace:
+                try:
+                    session.query(OddsHistory).filter(OddsHistory.entry_id.in_(list(entry_by_hn.values()))).filter(
+                        OddsHistory.odds_type == "PRE_24H"
+                    ).delete(synchronize_session=False)
+                    session.commit()
+                except Exception:
+                    try:
+                        session.rollback()
+                    except Exception:
+                        pass
 
             venue = venue_code(str(v or "").strip())
             if venue not in {"HV", "ST"}:
