@@ -109,7 +109,16 @@ def _window(session, racedate_str: str) -> Tuple[Optional[datetime], Optional[da
 
     anchor = get_race_day_anchor_dt(session, racedate_str)
     start = anchor - timedelta(hours=60)
-    end = anchor - timedelta(hours=20)
+    end_h = str(os.environ.get("SPEEDPRO_WINDOW_END_HOURS") or "").strip()
+    try:
+        end_hours = int(end_h) if end_h else 12
+    except Exception:
+        end_hours = 12
+    if end_hours < -72:
+        end_hours = -72
+    if end_hours > 72:
+        end_hours = 72
+    end = anchor + timedelta(hours=end_hours)
     return start, end
 
 
@@ -363,7 +372,26 @@ def main():
             retry_cfg = _get_cfg(session, retry_key)
             retry_state = retry_cfg.value if retry_cfg and isinstance(retry_cfg.value, dict) else {}
             done = bool(retry_state.get("done") is True)
+            last_err = str(retry_state.get("last_error") or "").strip().lower()
+            if done and last_err == "expired":
+                if force or (window_end and now_hk <= window_end):
+                    st2 = dict(retry_state) if isinstance(retry_state, dict) else {}
+                    st2["done"] = False
+                    st2["next_retry_at"] = None
+                    _upsert_cfg(session, retry_key, st2, f"SpeedPRO 重試狀態（racedate={racedate_str} R{int(rn)}）")
+                    retry_state = st2
+                    done = False
             if done:
+                force_fg = str(os.environ.get("FORCE_FORMGUIDE") or "").strip().lower() in ("1", "true", "yes")
+                if force_fg:
+                    try:
+                        fg_data = fg_scraper.scrape(int(rn))
+                        if fg_data:
+                            normalized_fg = {str(int(k)): v for k, v in fg_data.items() if str(k).isdigit() and isinstance(v, dict)}
+                            _upsert_cfg(session, fg_snap_key, normalized_fg, f"SpeedPRO 賽績指引（racedate={racedate_str} R{int(rn)}）")
+                            print(f"ok {fg_snap_key} rows={len(normalized_fg)}")
+                    except Exception as e:
+                        print(f"error fetching formguide {fg_snap_key}: {e}")
                 continue
 
             next_retry_at = retry_state.get("next_retry_at")
