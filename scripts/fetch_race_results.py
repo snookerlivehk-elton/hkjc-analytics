@@ -83,6 +83,18 @@ def main():
         print(f"找不到 {target_date} 的賽事資料，請先抓取排位表")
         return
 
+    race_no_s = str(os.environ.get("RACE_NO") or "").strip()
+    if race_no_s:
+        try:
+            only_rn = int(race_no_s)
+        except Exception:
+            only_rn = 0
+        if only_rn > 0:
+            races = [r for r in races if int(getattr(r, "race_no") or 0) == only_rn]
+            if not races:
+                print(f"找不到 {target_date} R{only_rn} 的賽事資料")
+                return
+
     scraper = LocalResultsScraper()
     rr_scraper = RaceReportFullScraper()
     hk_tz = ZoneInfo("Asia/Hong_Kong")

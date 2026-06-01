@@ -177,7 +177,19 @@ class LocalResultsScraper:
             going = m.group(1).strip()
 
         venue = ""
-        venue = venue_code("HV" if (("跑馬地" in text) or ("Happy Valley" in text)) else ("ST" if (("沙田" in text) or ("Sha Tin" in text)) else ""))
+        qp = self._url_params()
+        rc = str(qp.get("racecourse") or "").strip().upper()
+        if rc in ("ST", "HV"):
+            venue = venue_code(rc)
+        else:
+            is_hv = ("跑馬地" in text) or ("Happy Valley" in text)
+            is_st = ("沙田" in text) or ("Sha Tin" in text)
+            if is_hv and (not is_st):
+                venue = venue_code("HV")
+            elif is_st and (not is_hv):
+                venue = venue_code("ST")
+            else:
+                venue = ""
 
         race_no_page = None
         m = re.search(r"第\s*(\d{1,2})\s*場", text)
