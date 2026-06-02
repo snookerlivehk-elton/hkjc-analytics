@@ -75,16 +75,17 @@ def main_cron():
         date_str = _target_date_str(session)
         now_hk = datetime.now(HK_TZ)
 
+        ignore_window = str(os.environ.get("WINDTRACKER_IGNORE_WINDOW") or "").strip().lower() in ("1", "true", "yes")
         before_h = str(os.environ.get("WINDTRACKER_WINDOW_BEFORE_HOURS") or "").strip()
         after_h = str(os.environ.get("WINDTRACKER_WINDOW_AFTER_HOURS") or "").strip()
         try:
-            before_h_v = float(before_h) if before_h else 2.0
+            before_h_v = float(before_h) if before_h else 12.0
         except Exception:
-            before_h_v = 2.0
+            before_h_v = 12.0
         try:
-            after_h_v = float(after_h) if after_h else 1.0
+            after_h_v = float(after_h) if after_h else 2.0
         except Exception:
-            after_h_v = 1.0
+            after_h_v = 2.0
 
         anchor = get_race_day_anchor_dt(session, date_str)
         race_times = _get_race_times_hk(session, date_str)
@@ -92,7 +93,7 @@ def main_cron():
         w_start = anchor - timedelta(hours=before_h_v)
         w_end = last_dt + timedelta(hours=after_h_v)
 
-        if not (w_start <= now_hk <= w_end):
+        if (not ignore_window) and (not (w_start <= now_hk <= w_end)):
             print(f"outside window date={date_str} now={now_hk.isoformat()} window={w_start.isoformat()}..{w_end.isoformat()}")
             return
 

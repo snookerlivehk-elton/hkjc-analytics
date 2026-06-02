@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 
 import requests
 from bs4 import BeautifulSoup
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from playwright.async_api import async_playwright
 
 from scoring_engine.normalization import venue_code
@@ -36,11 +37,26 @@ class WindTrackerScraper:
                 viewport={"width": 1920, "height": 1080},
             )
             page = await context.new_page()
-            await page.goto(self.url, wait_until="networkidle", timeout=45000)
-            await page.wait_for_timeout(1500)
-            html = await page.content()
-            await browser.close()
-            return html
+            try:
+                for i in range(2):
+                    try:
+                        await page.goto(self.url, wait_until="domcontentloaded", timeout=45000)
+                        try:
+                            await page.wait_for_function(
+                                "document.body && document.body.innerText && document.body.innerText.includes('最後更新')",
+                                timeout=15000,
+                            )
+                        except Exception:
+                            pass
+                        await page.wait_for_timeout(800)
+                        return await page.content()
+                    except PlaywrightTimeoutError as e:
+                        if i >= 1:
+                            raise e
+                        await page.wait_for_timeout(1200)
+                        continue
+            finally:
+                await browser.close()
 
     def scrape_latest(self) -> Dict[str, Any]:
         def _parse(html0: str):
@@ -96,19 +112,56 @@ class WindTrackerScraper:
         return str(m.group(1) or "").strip() if m else ""
 
     def _extract_date(self, text: str) -> str:
-        m = re.search(r"(\d{1,2})/(\d{1,2})/(\d{4})", text)
+        m = re.search(r"\b(\d{4})[/-](\d{1,2})[/-](\d{1,2})\b", text)
+        if m:
+            yyyy, mm, dd = m.group(1), m.group(2).zfill(2), m.group(3).zfill(2)
+            return f"{yyyy}/{mm}/{dd}"
+        m = re.search(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b", text)
         if not m:
             return ""
         dd, mm, yyyy = m.group(1).zfill(2), m.group(2).zfill(2), m.group(3)
         return f"{yyyy}/{mm}/{dd}"
 
     def _extract_venue(self, text: str) -> str:
+        m = re.search(r"(跑馬地|沙田)\s*(?:馬場)?\s*風(?:向|速)", text)
+        if m:
+            return venue_code("HV" if str(m.group(1) or "") == "跑馬地" else "ST")
         m = re.search(r",\s*(跑馬地|沙田)\s*,", text)
         if m:
             return venue_code("HV" if str(m.group(1) or "") == "跑馬地" else "ST")
-        if "跑馬地" in text and "沙田" not in text:
+        ds = self._extract_date(text)
+        if ds:
+            try:
+                i = text.find(ds.replace("/", "-"))
+                if i < 0:
+                    i = text.find(ds)
+                if i >= 0:
+                    seg = text[max(0, i - 80) : i + 160]
+                    has_hv = "跑馬地" in seg
+                    has_st = "沙田" in seg
+                    if has_hv and (not has_st):
+                        return venue_code("HV")
+                    if has_st and (not has_hv):
+                        return venue_code("ST")
+            except Exception:
+                pass
+        try:
+            iu = text.find("最後更新")
+            if iu >= 0:
+                seg = text[max(0, iu - 200) : iu + 200]
+                has_hv = "跑馬地" in seg
+                has_st = "沙田" in seg
+                if has_hv and (not has_st):
+                    return venue_code("HV")
+                if has_st and (not has_hv):
+                    return venue_code("ST")
+        except Exception:
+            pass
+        has_hv = "跑馬地" in text
+        has_st = "沙田" in text
+        if has_hv and (not has_st):
             return venue_code("HV")
-        if "沙田" in text and "跑馬地" not in text:
+        if has_st and (not has_hv):
             return venue_code("ST")
         return ""
 
@@ -132,15 +185,15 @@ class WindTrackerScraper:
                 return None
 
         return {
-            "temperature_c": f(r"氣溫\s*([0-9.]+)\s*(?:°C|℃|度)"),
-            "humidity_pct": f(r"(?:相對濕度|濕度)\s*([0-9.]+)\s*%"),
-            "rain_total_mm": mm(r"總雨量\s*([0-9.]+)\s*(?:毫米|mm|MM)"),
-            "rain_10min_mm": mm(r"(?:最近\s*10\s*分鐘雨量|10\s*分鐘雨量|最近10分鐘雨量)\s*([0-9.]+)\s*(?:毫米|mm|MM)"),
-            "soil_moisture_pct": f(r"土壤濕度\s*([0-9.]+)\s*%"),
+            "temperature_c": f(r"氣溫\s*[:：]?\s*([0-9.]+)\s*(?:°C|℃|度)"),
+            "humidity_pct": f(r"(?:相對濕度|濕度)\s*[:：]?\s*([0-9.]+)\s*%"),
+            "rain_total_mm": mm(r"總雨量\s*[:：]?\s*([0-9.]+)\s*(?:毫米|mm|MM)"),
+            "rain_10min_mm": mm(r"(?:最近\s*10\s*分鐘雨量|10\s*分鐘雨量|最近10分鐘雨量)\s*[:：]?\s*([0-9.]+)\s*(?:毫米|mm|MM)"),
+            "soil_moisture_pct": f(r"土壤濕度\s*[:：]?\s*([0-9.]+)\s*%"),
         }
 
     def _extract_winds(self, text: str) -> List[Dict[str, Any]]:
-        pairs = re.findall(r"([東西南北]{1,2}(?:偏[東西南北])?)\s*([0-9.]+)\s*公里/小時", text)
+        pairs = re.findall(r"([東西南北]{1,2}(?:偏[東西南北])?)\s*([0-9.]+)\s*(?:公里/小時|km/h|KM/H)", text)
         out: List[Dict[str, Any]] = []
         for i, (direction, speed) in enumerate(pairs, 1):
             try:

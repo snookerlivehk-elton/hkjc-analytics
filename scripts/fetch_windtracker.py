@@ -59,6 +59,22 @@ def main():
                 venues = list(dict.fromkeys(venues))
                 if len(venues) == 1:
                     v = venues[0]
+                elif len(venues) > 1:
+                    rows_c = (
+                        session.query(Race.venue, Race.id)
+                        .filter(Race.race_date >= start)
+                        .filter(Race.race_date < end)
+                        .filter(Race.venue != None)
+                        .all()
+                    )
+                    cnt = {}
+                    for vv, _ in rows_c:
+                        k = str(vv or "").strip()
+                        if not k:
+                            continue
+                        cnt[k] = int(cnt.get(k) or 0) + 1
+                    if cnt:
+                        v = sorted(cnt.items(), key=lambda kv: (-int(kv[1] or 0), str(kv[0])))[0][0]
             except Exception:
                 pass
 
@@ -82,6 +98,7 @@ def main():
         metrics = payload.get("metrics") if isinstance(payload, dict) else None
         winds = payload.get("winds") if isinstance(payload, dict) else None
         updated_at = str(payload.get("updated_at") or "").strip() if isinstance(payload, dict) else ""
+        fetch_mode = str(payload.get("_fetch_mode") or "").strip() if isinstance(payload, dict) else ""
         title = f"{ds} {v} WindTracker" if (ds and v) else "WindTracker"
         text = "\n".join(
             [
@@ -155,7 +172,17 @@ def main():
             row_w.raw = {"metrics": metrics0, "winds": winds0, "updated_at": updated_at, "source_key": key}
 
         session.commit()
-        logger.info(f"fetch_windtracker_ok key={key}")
+        try:
+            metrics0 = metrics if isinstance(metrics, dict) else {}
+            has_metric = any(vv is not None for vv in metrics0.values())
+        except Exception:
+            has_metric = False
+        try:
+            winds0 = winds if isinstance(winds, list) else []
+            winds_n = int(len(winds0))
+        except Exception:
+            winds_n = 0
+        logger.info(f"fetch_windtracker_ok key={key} mode={fetch_mode} ds={ds} v={v} has_metric={int(bool(has_metric))} winds={winds_n}")
     finally:
         session.close()
 

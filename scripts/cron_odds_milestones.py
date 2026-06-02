@@ -241,7 +241,8 @@ def main():
                 os.environ["TARGET_VENUE"] = str(venue)
                 _fetch_windtracker_main()
                 weather_done.add(sig)
-            except Exception:
+            except Exception as e:
+                print(f"weather_update_failed date={date_str} venue={venue} err={type(e).__name__}: {e}")
                 return
 
         for rid, rn, v, post_time_hk_db in races:
