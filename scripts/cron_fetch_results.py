@@ -20,6 +20,38 @@ RUN_AT = time(23, 55)
 CATCH_UP_UNTIL = time(3, 0)
 
 
+def _env_flag_default_true(name: str) -> bool:
+    v = os.environ.get(str(name))
+    if v is None:
+        return True
+    return str(v).strip().lower() in ("1", "true", "yes")
+
+
+def _last_post_dt(session, race_date):
+    if not race_date:
+        return None
+    start = datetime.combine(race_date, datetime.min.time())
+    end = start + timedelta(days=1)
+    rows = (
+        session.query(Race.race_no, Race.post_time_hk)
+        .filter(Race.race_date >= start)
+        .filter(Race.race_date < end)
+        .order_by(Race.race_no.desc(), Race.id.desc())
+        .all()
+    )
+    for _, s in rows:
+        if isinstance(s, str) and s.strip():
+            try:
+                hh, mm = s.strip().split(":")
+                hh_i = int(hh)
+                mm_i = int(mm)
+                if 0 <= hh_i <= 23 and 0 <= mm_i <= 59:
+                    return datetime.combine(race_date, time(hh_i, mm_i)).replace(tzinfo=HK_TZ)
+            except Exception:
+                continue
+    return None
+
+
 def _get_latest_race_date(session):
     race = session.query(Race).order_by(Race.race_date.desc(), Race.race_no.desc()).first()
     if not race:
@@ -110,8 +142,20 @@ def should_run(now_hk: datetime, race_date) -> bool:
         return False
 
     today = now_hk.date()
-    if today == race_date and now_hk.time() >= RUN_AT:
-        return True
+    if today == race_date:
+        try:
+            session = get_session()
+            try:
+                last_dt = _last_post_dt(session, race_date)
+            finally:
+                session.close()
+            if last_dt:
+                if now_hk >= (last_dt + timedelta(minutes=40)):
+                    return True
+        except Exception:
+            pass
+        if now_hk.time() >= RUN_AT:
+            return True
 
     if today == (race_date + timedelta(days=1)) and now_hk.time() <= CATCH_UP_UNTIL:
         return True
@@ -149,7 +193,7 @@ def main():
         if _validate_date_fetched(session2, race_date):
             _mark_done(session2, date_str)
             print(f"完成並已標記：{date_str}")
-            enabled = str(os.environ.get("ENABLE_AUTO_AI_REFLECTION") or "0").strip().lower() in ("1", "true", "yes")
+            enabled = _env_flag_default_true("ENABLE_AUTO_AI_REFLECTION")
             if enabled and (not _already_reflect_enqueued(session2, date_str)):
                 if not _validate_event_report_fetched(session2, race_date):
                     print(f"略過自動賽後反思：尚未齊「競賽事件報告（賽後）」 date={date_str}")

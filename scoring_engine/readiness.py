@@ -36,24 +36,24 @@ def _sha256_json(obj: Any) -> str:
 
 def get_race_day_anchor_dt(session: Session, date_str: str) -> datetime:
     start, end = _day_range(date_str)
-    r1 = (
-        session.query(Race.post_time_hk)
+    rows = (
+        session.query(Race.race_no, Race.post_time_hk)
         .filter(and_(Race.race_date >= start, Race.race_date < end))
-        .filter(Race.race_no == 1)
-        .order_by(Race.id.desc())
-        .first()
+        .order_by(Race.race_no.asc(), Race.id.asc())
+        .all()
     )
-    if r1 and isinstance(r1[0], str) and r1[0].strip():
-        s = r1[0].strip()
-        try:
-            hh, mm = s.split(":")
-            hh_i = int(hh)
-            mm_i = int(mm)
-            if 0 <= hh_i <= 23 and 0 <= mm_i <= 59:
-                d0 = datetime.strptime(str(date_str), "%Y/%m/%d").date()
-                return datetime.combine(d0, dtime(hh_i, mm_i)).replace(tzinfo=HK_TZ)
-        except Exception:
-            pass
+    for rn, pt in rows:
+        if pt and isinstance(pt, str) and pt.strip():
+            s = pt.strip()
+            try:
+                hh, mm = s.split(":")
+                hh_i = int(hh)
+                mm_i = int(mm)
+                if 0 <= hh_i <= 23 and 0 <= mm_i <= 59:
+                    d0 = datetime.strptime(str(date_str), "%Y/%m/%d").date()
+                    return datetime.combine(d0, dtime(hh_i, mm_i)).replace(tzinfo=HK_TZ)
+            except Exception:
+                continue
 
     v = _get_cfg_value(session, "race_day_anchor_time_hk")
     t = "12:00"

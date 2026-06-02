@@ -13,7 +13,7 @@ if root_path not in sys.path:
     sys.path.insert(0, root_path)
 
 from database.connection import init_db, get_session
-from database.models import Race, SystemConfig, PredictionTop5
+from database.models import Race, RaceDividend, RaceEntry, RaceResult, SystemConfig, PredictionTop5
 from scoring_engine.ai_advisor import load_ai_api_key, run_ai_race_summary
 from scoring_engine.ai_reflection import generate_race_reflection, list_reflection_candidates
 from scoring_engine.job_queue import append_job_log, claim_next_job, enqueue_job, update_job
@@ -67,6 +67,13 @@ def _parse_ymd(s: str):
             return datetime.strptime(str(s).strip(), "%Y-%m-%d").date()
         except Exception:
             return None
+
+
+def _env_flag_default_true(name: str) -> bool:
+    v = os.environ.get(str(name))
+    if v is None:
+        return True
+    return str(v).strip().lower() in ("1", "true", "yes")
 
 
 def _handle_search_backfill(session, job):
@@ -386,7 +393,9 @@ def _handle_daily_update_pipeline(session, job):
             raise ValueError(f"unknown_step:{step}")
         append_job_log(session, job["id"], f"step_done {step}")
 
-    enabled_auto_ai = str(os.environ.get("ENABLE_AUTO_AI_PREVIEW") or "0").strip().lower() in ("1", "true", "yes")
+    enabled_auto_ai = _env_flag_default_true("ENABLE_AUTO_AI_PREVIEW")
+    if (not enabled_auto_ai) and ("snapshot" in steps):
+        append_job_log(session, job["id"], "auto_ai_preview_skipped reason=disabled")
     if enabled_auto_ai and ("snapshot" in steps):
         cfg_key = f"auto_ai_preview_enqueued:{date_str}"
         cfg0 = session.query(SystemConfig).filter_by(key=cfg_key).first()
@@ -470,6 +479,70 @@ def _handle_fetch_race_results(session, job):
     env0 = os.environ.copy()
     env0["TARGET_DATE"] = date_str
     _run_script_and_stream_log(session, job["id"], "scripts/fetch_race_results.py", env0)
+
+    enabled_auto_reflect = _env_flag_default_true("ENABLE_AUTO_AI_REFLECTION")
+    if not enabled_auto_reflect:
+        append_job_log(session, job["id"], "auto_ai_reflect_skipped reason=disabled")
+    else:
+        cfg_key = f"auto_ai_reflect_enqueued:{date_str}"
+        cfg0 = session.query(SystemConfig).filter_by(key=cfg_key).first()
+        if not cfg0:
+            start, end = _day_range(date_str)
+            race_ids = (
+                session.query(Race.id)
+                .filter(Race.race_date >= start)
+                .filter(Race.race_date < end)
+                .all()
+            )
+            race_ids = [int(x[0] or 0) for x in race_ids if int(x[0] or 0) > 0]
+
+            ok_results = False
+            if race_ids:
+                div_cnt = int(session.query(RaceDividend.id).filter(RaceDividend.race_id.in_(race_ids)).count())
+                res_cnt = int(
+                    session.query(RaceResult.id)
+                    .join(RaceEntry, RaceEntry.id == RaceResult.entry_id)
+                    .filter(RaceEntry.race_id.in_(race_ids))
+                    .filter(RaceResult.rank != None)
+                    .count()
+                )
+                ok_results = div_cnt >= len(race_ids) and res_cnt >= (len(race_ids) * 4)
+
+            if not ok_results:
+                append_job_log(session, job["id"], "auto_ai_reflect_skipped reason=results_not_ready")
+            else:
+                races0 = (
+                    session.query(Race.race_no)
+                    .filter(Race.race_date >= start)
+                    .filter(Race.race_date < end)
+                    .order_by(Race.race_no.asc(), Race.id.asc())
+                    .all()
+                )
+                expected = {f"race_event_report:{date_str}:{int(rn or 0)}" for (rn,) in races0 if int(rn or 0) > 0}
+                got = set(
+                    k
+                    for (k,) in session.query(SystemConfig.key).filter(SystemConfig.key.in_(list(expected))).all()
+                    if str(k or "").strip()
+                )
+                if expected and (len(got) < len(expected)):
+                    append_job_log(session, job["id"], f"auto_ai_reflect_skipped reason=event_report_missing got={len(got)}/{len(expected)}")
+                else:
+                    top_n_s = str(os.environ.get("AUTO_AI_REFLECT_TOP_N") or "").strip()
+                    try:
+                        top_n = int(top_n_s) if top_n_s else 3
+                    except Exception:
+                        top_n = 3
+                    if top_n < 1:
+                        top_n = 1
+                    if top_n > 5:
+                        top_n = 5
+                    ajob = enqueue_job(session, "ai_batch_reflect_day", {"date": date_str, "mode": "worst", "top_n": int(top_n)})
+                    jid = str(ajob.get("id") or "")
+                    cfg0 = SystemConfig(key=cfg_key, description=f"賽後自動挑選最失準場次做批次反思：已排隊（賽日 {date_str}）")
+                    cfg0.value = {"job_id": jid, "top_n": int(top_n), "enqueued_at": datetime.utcnow().isoformat()}
+                    session.add(cfg0)
+                    session.commit()
+                    append_job_log(session, job["id"], f"auto_ai_reflect_enqueued job_id={jid} top_n={int(top_n)}")
     update_job(
         session,
         job["id"],
