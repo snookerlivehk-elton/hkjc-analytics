@@ -1244,22 +1244,27 @@ def main():
     col1.metric("跑道資訊", race.track_type if race.track_type else race.venue)
     col2.metric("班次", race.race_class or "N/A")
     col3.metric("路程", f"{race.distance}m" if race.distance else "N/A")
+    invalid_goings = {"草地", "泥地", "全天候", "全天候跑道", "TURF", "AWT", "ALL WEATHER"}
     going_display = None
     tc = session.query(RaceTrackCondition).filter_by(race_id=int(selected_race_id)).first()
     if tc and str(getattr(tc, "going_raw", "") or "").strip():
         going_display = str(getattr(tc, "going_raw", "") or "").strip()
+        if going_display.strip().upper() in invalid_goings:
+            going_display = None
     if not going_display and tc and str(getattr(tc, "going_code", "") or "").strip():
         try:
             from scoring_engine.track_conditions import going_code_label
             going_display = going_code_label(str(getattr(tc, "going_code", "") or "").strip())
         except Exception:
             going_display = str(getattr(tc, "going_code", "") or "").strip()
+        if going_display and going_display.strip().upper() in invalid_goings:
+            going_display = None
     if not going_display:
         div0 = session.query(RaceDividend).filter_by(race_id=int(selected_race_id)).first()
         meta0 = div0.meta if (div0 and isinstance(div0.meta, dict)) else {}
         g0 = str(meta0.get("going") or "").strip()
         if g0:
-            going_display = g0
+            going_display = None if g0.strip().upper() in invalid_goings else g0
     if not going_display:
         try:
             rday0 = race.race_date.date() if race and getattr(race, "race_date", None) else None
@@ -1279,7 +1284,7 @@ def main():
                 going_display = g1
     if not going_display:
         g2 = str(getattr(race, "going", "") or "").strip()
-        if g2 and g2 not in {"草地", "泥地", "全天候", "全天候跑道"}:
+        if g2 and g2.strip().upper() not in invalid_goings:
             going_display = g2
     col4.metric("場地狀況", going_display or "—")
 

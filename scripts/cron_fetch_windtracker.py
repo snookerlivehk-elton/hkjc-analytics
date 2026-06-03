@@ -69,7 +69,7 @@ def _get_race_times_hk(session, date_str: str) -> list[datetime]:
     return out
 
 
-def _has_any_weather_metrics(session, date_str: str) -> bool:
+def _needs_weather_refresh(session, date_str: str) -> bool:
     try:
         start, end = _day_range(date_str)
         venues = (
@@ -82,24 +82,47 @@ def _has_any_weather_metrics(session, date_str: str) -> bool:
         )
         venues0 = [str(v or "").strip() for (v,) in venues if str(v or "").strip()]
         venues0 = list(dict.fromkeys(venues0))
-        q = session.query(RaceDayWeather.id).filter(RaceDayWeather.race_date_day == start.date())
-        if venues0:
-            q = q.filter(RaceDayWeather.venue.in_(venues0))
-        q = q.filter(
-            or_(
-                RaceDayWeather.temperature_c.isnot(None),
-                RaceDayWeather.humidity_pct.isnot(None),
-                RaceDayWeather.rain_total_mm.isnot(None),
-                RaceDayWeather.rain_10min_mm.isnot(None),
-                RaceDayWeather.soil_moisture_pct.isnot(None),
-                RaceDayWeather.wind_direction.isnot(None),
-                RaceDayWeather.wind_speed_kmh_avg.isnot(None),
-                RaceDayWeather.wind_speed_kmh_max.isnot(None),
-            )
+        if not venues0:
+            return True
+
+        rows = (
+            session.query(RaceDayWeather)
+            .filter(RaceDayWeather.race_date_day == start.date())
+            .filter(RaceDayWeather.venue.in_(venues0))
+            .all()
         )
-        return bool(q.first())
-    except Exception:
+        if not rows:
+            return True
+
+        now_utc = datetime.utcnow()
+        for row in rows:
+            has_any = False
+            for kk in [
+                "temperature_c",
+                "humidity_pct",
+                "rain_total_mm",
+                "rain_10min_mm",
+                "soil_moisture_pct",
+                "wind_direction",
+                "wind_speed_kmh_avg",
+                "wind_speed_kmh_max",
+            ]:
+                if getattr(row, kk, None) is not None:
+                    has_any = True
+                    break
+            raw = getattr(row, "raw", None)
+            going = str((raw or {}).get("going") or "").strip() if isinstance(raw, dict) else ""
+            if (not has_any) or (not going):
+                return True
+            try:
+                dt0 = getattr(row, "updated_at", None)
+                if dt0 and (now_utc - dt0).total_seconds() > 1800:
+                    return True
+            except Exception:
+                pass
         return False
+    except Exception:
+        return True
 
 
 def main_cron():
@@ -140,10 +163,10 @@ def main_cron():
             if near_v > 0 and race_times:
                 ok = any(abs((now_hk - dt).total_seconds()) <= float(near_v) * 60.0 for dt in race_times)
                 if not ok:
-                    if _has_any_weather_metrics(session, date_str):
+                    if not _needs_weather_refresh(session, date_str):
                         print(f"skip not_near_race date={date_str} now={now_hk.isoformat()} near_minutes={near_v}")
                         return
-                    print(f"override_not_near_race date={date_str} now={now_hk.isoformat()} near_minutes={near_v} reason=no_weather_yet")
+                    print(f"override_not_near_race date={date_str} now={now_hk.isoformat()} near_minutes={near_v} reason=refresh_needed")
 
         os.environ["TARGET_DATE"] = date_str
         main()
