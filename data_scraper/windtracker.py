@@ -64,16 +64,17 @@ class WindTrackerScraper:
             text0 = soup0.get_text(separator=" ", strip=True)
             ds0 = self._extract_date(text0)
             venue0 = self._extract_venue(text0)
+            going0 = self._extract_going(text0)
             updated_at0 = self._extract_updated_at(text0)
             metrics0 = self._extract_metrics(text0)
             winds0 = self._extract_winds(text0)
-            return text0, ds0, venue0, updated_at0, metrics0, winds0
+            return text0, ds0, venue0, going0, updated_at0, metrics0, winds0
 
         fetch_mode = "requests"
         render_error = ""
 
         html = self.fetch()
-        text, ds, venue, updated_at, metrics, winds = _parse(html)
+        text, ds, venue, going, updated_at, metrics, winds = _parse(html)
 
         need_render = False
         if ("最後更新" not in text) or ("風向" not in text) or (not ds) or (not venue):
@@ -89,7 +90,7 @@ class WindTrackerScraper:
         if need_render:
             try:
                 html2 = asyncio.run(self._fetch_rendered_async())
-                text, ds, venue, updated_at, metrics, winds = _parse(html2)
+                text, ds, venue, going, updated_at, metrics, winds = _parse(html2)
                 fetch_mode = "playwright"
             except Exception as e:
                 render_error = f"{type(e).__name__}: {e}"
@@ -98,6 +99,7 @@ class WindTrackerScraper:
         out = {
             "race_date": ds,
             "venue": venue,
+            "going": going,
             "updated_at": updated_at,
             "metrics": metrics,
             "winds": winds,
@@ -163,6 +165,21 @@ class WindTrackerScraper:
             return venue_code("HV")
         if has_st and (not has_hv):
             return venue_code("ST")
+        return ""
+
+    def _extract_going(self, text: str) -> str:
+        pats = [
+            r"(好快地?|好至快地?|好地|快地|黏地|黏至軟地?|軟至黏地?|軟地|大爛地|濕快地?|濕慢地?)",
+            r"(FAST|GOOD(?:\s*TO\s*FAST)?|GOOD|YIELDING(?:\s*TO\s*SOFT)?|SOFT|HEAVY|SLOW)",
+        ]
+        for p0 in pats:
+            m = re.search(rf"(?:場地狀況|場地狀態|場地)\s*[:：]?\s*{p0}", text, re.IGNORECASE)
+            if m:
+                g = str(m.group(1) or "").strip()
+                return g.upper() if re.fullmatch(r"[A-Z\s]+", g) else g
+        m2 = re.search(r"(?:草地|泥地|全天候(?:跑道)?|AWT|A/W|ALL\s*WEATHER)\s*場地\s*[:：]?\s*(好快地?|好至快地?|好地|快地|黏地|黏至軟地?|軟至黏地?|軟地|大爛地|濕快地?|濕慢地?)", text, re.IGNORECASE)
+        if m2:
+            return str(m2.group(1) or "").strip()
         return ""
 
     def _extract_metrics(self, text: str) -> Dict[str, Any]:

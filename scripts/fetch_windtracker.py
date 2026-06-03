@@ -24,6 +24,7 @@ def main():
         payload = scraper.scrape_latest()
         scraped_ds = str(payload.get("race_date") or "").strip()
         scraped_v = str(payload.get("venue") or "").strip()
+        scraped_g = str(payload.get("going") or "").strip()
 
         env_ds = str(os.environ.get("TARGET_DATE") or "").strip()
         env_v = str(os.environ.get("TARGET_VENUE") or "").strip()
@@ -104,6 +105,7 @@ def main():
             [
                 title,
                 f"最後更新 {updated_at}",
+                f"場地狀況 {scraped_g}",
                 f"氣溫 {str((metrics or {}).get('temperature_c') or '')}C",
                 f"相對濕度 {str((metrics or {}).get('humidity_pct') or '')}%",
                 f"雨量(總) {str((metrics or {}).get('rain_total_mm') or '')}mm",
@@ -169,7 +171,7 @@ def main():
             row_w.wind_direction = wind_dir or None
             row_w.wind_speed_kmh_avg = wind_avg
             row_w.wind_speed_kmh_max = wind_max
-            row_w.raw = {"metrics": metrics0, "winds": winds0, "updated_at": updated_at, "source_key": key}
+            row_w.raw = {"metrics": metrics0, "winds": winds0, "updated_at": updated_at, "source_key": key, "going": scraped_g}
 
         session.commit()
         try:

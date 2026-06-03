@@ -15,7 +15,7 @@ if root_path not in sys.path:
     sys.path.insert(0, root_path)
 
 from database.connection import get_session, init_db
-from database.models import Race, RaceEntry, ScoringFactor, ScoringWeight, Horse, SystemConfig, RaceResult, RaceDividend, RaceTrackCondition, OddsHistory
+from database.models import Race, RaceDayWeather, RaceEntry, ScoringFactor, ScoringWeight, Horse, SystemConfig, RaceResult, RaceDividend, RaceTrackCondition, OddsHistory
 from scoring_engine.core import ScoringEngine
 from scoring_engine.constants import DISABLED_FACTORS
 from scoring_engine.utils import estimate_win_probability
@@ -1260,9 +1260,28 @@ def main():
         g0 = str(meta0.get("going") or "").strip()
         if g0:
             going_display = g0
-    if not going_display and str(getattr(race, "going", "") or "").strip():
-        going_display = str(getattr(race, "going", "") or "").strip()
-    col4.metric("場地狀況", going_display or "N/A")
+    if not going_display:
+        try:
+            rday0 = race.race_date.date() if race and getattr(race, "race_date", None) else None
+        except Exception:
+            rday0 = None
+        v0 = str(getattr(race, "venue", "") or "").strip() if race else ""
+        if rday0 and v0:
+            w0 = (
+                session.query(RaceDayWeather)
+                .filter(RaceDayWeather.race_date_day == rday0)
+                .filter(RaceDayWeather.venue == v0)
+                .first()
+            )
+            raw0 = getattr(w0, "raw", None) if w0 else None
+            g1 = str((raw0 or {}).get("going") or "").strip() if isinstance(raw0, dict) else ""
+            if g1:
+                going_display = g1
+    if not going_display:
+        g2 = str(getattr(race, "going", "") or "").strip()
+        if g2 and g2 not in {"草地", "泥地", "全天候", "全天候跑道"}:
+            going_display = g2
+    col4.metric("場地狀況", going_display or "—")
 
     try:
         from datetime import datetime as _dt
