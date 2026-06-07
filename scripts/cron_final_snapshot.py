@@ -57,11 +57,29 @@ def main():
         date_str = _target_date_str(session)
         now_hk = datetime.now(HK_TZ)
         anchor = get_race_day_anchor_dt(session, date_str)
-        w_start = anchor - timedelta(hours=7)
-        w_end = anchor - timedelta(hours=4)
+        ignore_window = str(os.environ.get("FINAL_SNAPSHOT_IGNORE_WINDOW") or "").strip().lower() in ("1", "true", "yes")
+        before_h = str(os.environ.get("FINAL_SNAPSHOT_WINDOW_BEFORE_HOURS") or "").strip()
+        after_h = str(os.environ.get("FINAL_SNAPSHOT_WINDOW_AFTER_HOURS") or "").strip()
+        try:
+            before_h_v = float(before_h) if before_h else 10.0
+        except Exception:
+            before_h_v = 10.0
+        try:
+            after_h_v = float(after_h) if after_h else 0.5
+        except Exception:
+            after_h_v = 0.5
+        before_h_v = max(0.5, min(48.0, float(before_h_v)))
+        after_h_v = max(0.0, min(12.0, float(after_h_v)))
 
-        if not (w_start <= now_hk <= w_end):
-            print(f"outside window date={date_str} now={now_hk.isoformat()} window={w_start.isoformat()}..{w_end.isoformat()}")
+        w_start = anchor - timedelta(hours=before_h_v)
+        w_end = anchor - timedelta(hours=after_h_v)
+
+        if (not ignore_window) and (not (w_start <= now_hk <= w_end)):
+            print(
+                f"outside window date={date_str} now={now_hk.isoformat()} "
+                f"window={w_start.isoformat()}..{w_end.isoformat()} "
+                f"before_hours={before_h_v} after_hours={after_h_v}"
+            )
             return
 
         min_cov = str(os.environ.get("SPEEDPRO_MIN_COVERAGE") or "").strip()
@@ -101,4 +119,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
