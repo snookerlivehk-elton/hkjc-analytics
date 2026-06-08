@@ -98,6 +98,14 @@ def _already_done(session, date_str: str) -> bool:
     cfg = session.query(SystemConfig).filter_by(key=key).first()
     return bool(cfg and cfg.value is True)
 
+def _clear_done(session, date_str: str):
+    key = f"auto_results_fetched:{date_str}"
+    cfg = session.query(SystemConfig).filter_by(key=key).first()
+    if cfg:
+        cfg.value = False
+        cfg.updated_at = datetime.now()
+        session.commit()
+
 
 def _validate_date_fetched(session, race_date) -> bool:
     races = (
@@ -219,9 +227,13 @@ def main():
             )
             return
 
-        if _already_done(session, date_str):
-            print(f"已完成：{date_str}（避免重覆）")
-            return
+        force = str(os.environ.get("RESULTS_FORCE") or "").strip().lower() in ("1", "true", "yes")
+        if (not force) and _already_done(session, date_str):
+            if _validate_date_fetched(session, race_date):
+                print(f"已完成：{date_str}（避免重覆）")
+                return
+            _clear_done(session, date_str)
+            print(f"偵測到完成標記但資料未齊，已解除標記並重跑：{date_str}")
     finally:
         session.close()
 
