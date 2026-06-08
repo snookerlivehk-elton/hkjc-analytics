@@ -10,7 +10,7 @@ if root_path not in sys.path:
     sys.path.insert(0, root_path)
 
 from database.connection import init_db, get_session
-from database.models import Race, RaceEntry, RaceResult, RaceDividend, SystemConfig
+from database.models import Race, RaceEntry, RaceResult, RaceDividend, RacePaceSnapshot, SystemConfig
 from scoring_engine.job_queue import enqueue_job
 from scripts.fetch_race_results import main as fetch_results_main
 
@@ -128,6 +128,59 @@ def _validate_date_fetched(session, race_date) -> bool:
     )
     return div_cnt >= len(race_ids) and res_cnt >= (len(race_ids) * 4)
 
+def _validate_post_bundle(session, race_date) -> dict:
+    races = (
+        session.query(Race.id, Race.race_no)
+        .filter(Race.race_date >= datetime.combine(race_date, datetime.min.time()))
+        .filter(Race.race_date < datetime.combine(race_date, datetime.min.time()) + timedelta(days=1))
+        .order_by(Race.race_no.asc(), Race.id.asc())
+        .all()
+    )
+    race_ids = [int(rid or 0) for rid, _ in races if int(rid or 0) > 0]
+    race_nos = [int(rn or 0) for _, rn in races if int(rn or 0) > 0]
+    if not race_ids or not race_nos:
+        return {"ok": False, "reason": "no_races", "races": 0}
+
+    div_cnt = session.query(RaceDividend).filter(RaceDividend.race_id.in_(race_ids)).count()
+    res_cnt = (
+        session.query(RaceResult)
+        .join(RaceEntry, RaceEntry.id == RaceResult.entry_id)
+        .filter(RaceEntry.race_id.in_(race_ids))
+        .filter(RaceResult.rank != None)
+        .count()
+    )
+    pace_cnt = session.query(RacePaceSnapshot).filter(RacePaceSnapshot.race_id.in_(race_ids)).count()
+
+    date_str = race_date.strftime("%Y/%m/%d")
+    runpos_keys = [f"race_runpos:{date_str}:{int(rn)}" for rn in race_nos]
+    event_keys = [f"race_event_report:{date_str}:{int(rn)}" for rn in race_nos]
+    got_keys = set(
+        k
+        for (k,) in session.query(SystemConfig.key)
+        .filter(SystemConfig.key.in_(list(dict.fromkeys(runpos_keys + event_keys))))
+        .all()
+        if str(k or "").strip()
+    )
+    runpos_ok = sum(1 for k in runpos_keys if k in got_keys)
+    event_ok = sum(1 for k in event_keys if k in got_keys)
+
+    ok = (
+        div_cnt >= len(race_ids)
+        and res_cnt >= (len(race_ids) * 4)
+        and pace_cnt >= len(race_ids)
+        and runpos_ok >= len(race_ids)
+        and event_ok >= len(race_ids)
+    )
+    return {
+        "ok": bool(ok),
+        "races": int(len(race_ids)),
+        "div": int(div_cnt),
+        "res": int(res_cnt),
+        "pace": int(pace_cnt),
+        "runpos": int(runpos_ok),
+        "event": int(event_ok),
+    }
+
 def _validate_event_report_fetched(session, race_date) -> bool:
     races = (
         session.query(Race.id, Race.race_no)
@@ -229,11 +282,20 @@ def main():
 
         force = str(os.environ.get("RESULTS_FORCE") or "").strip().lower() in ("1", "true", "yes")
         if (not force) and _already_done(session, date_str):
-            if _validate_date_fetched(session, race_date):
-                print(f"已完成：{date_str}（避免重覆）")
+            st = _validate_post_bundle(session, race_date)
+            if st.get("ok") is True:
+                print(
+                    f"已完成：{date_str}（避免重覆） "
+                    f"races={st.get('races')} div={st.get('div')} res={st.get('res')} "
+                    f"runpos={st.get('runpos')} pace={st.get('pace')} event={st.get('event')}"
+                )
                 return
             _clear_done(session, date_str)
-            print(f"偵測到完成標記但資料未齊，已解除標記並重跑：{date_str}")
+            print(
+                f"偵測到完成標記但賽後包未齊，已解除標記並重跑：{date_str} "
+                f"races={st.get('races')} div={st.get('div')} res={st.get('res')} "
+                f"runpos={st.get('runpos')} pace={st.get('pace')} event={st.get('event')}"
+            )
     finally:
         session.close()
 
@@ -243,9 +305,14 @@ def main():
 
     session2 = get_session()
     try:
-        if _validate_date_fetched(session2, race_date):
+        st2 = _validate_post_bundle(session2, race_date)
+        if st2.get("ok") is True:
             _mark_done(session2, date_str)
-            print(f"完成並已標記：{date_str}")
+            print(
+                f"完成並已標記：{date_str} "
+                f"races={st2.get('races')} div={st2.get('div')} res={st2.get('res')} "
+                f"runpos={st2.get('runpos')} pace={st2.get('pace')} event={st2.get('event')}"
+            )
             enabled = _env_flag_default_true("ENABLE_AUTO_AI_REFLECTION")
             if enabled and (not _already_reflect_enqueued(session2, date_str)):
                 if not _validate_event_report_fetched(session2, race_date):
@@ -265,7 +332,11 @@ def main():
                 _mark_reflect_enqueued(session2, date_str, jid, int(top_n))
                 print(f"已排隊自動賽後反思：date={date_str} top_n={int(top_n)} job_id={jid}")
         else:
-            print(f"抓取未達完成條件，保留重試：{date_str}")
+            print(
+                f"抓取未達賽後包完成條件，保留重試：{date_str} "
+                f"races={st2.get('races')} div={st2.get('div')} res={st2.get('res')} "
+                f"runpos={st2.get('runpos')} pace={st2.get('pace')} event={st2.get('event')}"
+            )
     finally:
         session2.close()
 
