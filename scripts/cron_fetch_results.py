@@ -17,7 +17,7 @@ from scripts.fetch_race_results import main as fetch_results_main
 
 HK_TZ = ZoneInfo("Asia/Hong_Kong")
 RUN_AT = time(23, 55)
-CATCH_UP_UNTIL = time(3, 0)
+CATCH_UP_UNTIL = time(12, 0)
 
 
 def _env_flag_default_true(name: str) -> bool:
@@ -52,8 +52,15 @@ def _last_post_dt(session, race_date):
     return None
 
 
-def _get_latest_race_date(session):
-    race = session.query(Race).order_by(Race.race_date.desc(), Race.race_no.desc()).first()
+def _get_latest_race_date(session, now_hk: datetime):
+    today = now_hk.date()
+    end_dt = datetime.combine(today + timedelta(days=1), datetime.min.time())
+    race = (
+        session.query(Race)
+        .filter(Race.race_date < end_dt)
+        .order_by(Race.race_date.desc(), Race.race_no.desc())
+        .first()
+    )
     if not race:
         return None
     rd = race.race_date
@@ -141,6 +148,32 @@ def should_run(now_hk: datetime, race_date) -> bool:
     if not race_date:
         return False
 
+    ignore_time = str(os.environ.get("RESULTS_IGNORE_TIME") or "").strip().lower() in ("1", "true", "yes")
+    if ignore_time:
+        return True
+
+    catch_until_s = str(os.environ.get("RESULTS_CATCH_UP_UNTIL") or "").strip()
+    catch_until = CATCH_UP_UNTIL
+    if catch_until_s:
+        try:
+            hh, mm = catch_until_s.split(":")
+            hh_i = int(hh)
+            mm_i = int(mm)
+            if 0 <= hh_i <= 23 and 0 <= mm_i <= 59:
+                catch_until = time(hh_i, mm_i)
+        except Exception:
+            pass
+
+    catch_days_s = str(os.environ.get("RESULTS_CATCH_UP_DAYS") or "").strip()
+    try:
+        catch_days = int(catch_days_s) if catch_days_s else 2
+    except Exception:
+        catch_days = 2
+    if catch_days < 0:
+        catch_days = 0
+    if catch_days > 7:
+        catch_days = 7
+
     today = now_hk.date()
     if today == race_date:
         try:
@@ -157,8 +190,9 @@ def should_run(now_hk: datetime, race_date) -> bool:
         if now_hk.time() >= RUN_AT:
             return True
 
-    if today == (race_date + timedelta(days=1)) and now_hk.time() <= CATCH_UP_UNTIL:
-        return True
+    if (today > race_date) and (today <= (race_date + timedelta(days=int(catch_days)))):
+        if now_hk.time() <= catch_until:
+            return True
 
     return False
 
@@ -168,14 +202,17 @@ def main():
     session = get_session()
     try:
         now_hk = datetime.now(HK_TZ)
-        race_date = _get_latest_race_date(session)
+        race_date = _get_latest_race_date(session, now_hk)
         if not race_date:
             print("找不到任何賽事資料，略過。")
             return
 
         date_str = race_date.strftime("%Y/%m/%d")
         if not should_run(now_hk, race_date):
-            print(f"未到執行時間：now_hk={now_hk.isoformat()} latest_race_date={date_str}")
+            print(
+                f"未到執行時間：now_hk={now_hk.isoformat()} latest_finished_race_date={date_str} "
+                f"run_at={RUN_AT.strftime('%H:%M')} catch_up_until={str(os.environ.get('RESULTS_CATCH_UP_UNTIL') or CATCH_UP_UNTIL.strftime('%H:%M'))}"
+            )
             return
 
         if _already_done(session, date_str):
