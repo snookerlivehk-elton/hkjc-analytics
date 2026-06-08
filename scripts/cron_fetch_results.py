@@ -173,6 +173,7 @@ def should_run(now_hk: datetime, race_date) -> bool:
         catch_days = 0
     if catch_days > 7:
         catch_days = 7
+    catch_mode = str(os.environ.get("RESULTS_CATCH_UP_MODE") or "anytime").strip().lower()
 
     today = now_hk.date()
     if today == race_date:
@@ -191,8 +192,9 @@ def should_run(now_hk: datetime, race_date) -> bool:
             return True
 
     if (today > race_date) and (today <= (race_date + timedelta(days=int(catch_days)))):
-        if now_hk.time() <= catch_until:
-            return True
+        if catch_mode in ("until", "morning"):
+            return now_hk.time() <= catch_until
+        return True
 
     return False
 
@@ -211,7 +213,9 @@ def main():
         if not should_run(now_hk, race_date):
             print(
                 f"未到執行時間：now_hk={now_hk.isoformat()} latest_finished_race_date={date_str} "
-                f"run_at={RUN_AT.strftime('%H:%M')} catch_up_until={str(os.environ.get('RESULTS_CATCH_UP_UNTIL') or CATCH_UP_UNTIL.strftime('%H:%M'))}"
+                f"run_at={RUN_AT.strftime('%H:%M')} "
+                f"catch_up_mode={str(os.environ.get('RESULTS_CATCH_UP_MODE') or 'anytime')} "
+                f"catch_up_until={str(os.environ.get('RESULTS_CATCH_UP_UNTIL') or CATCH_UP_UNTIL.strftime('%H:%M'))}"
             )
             return
 
