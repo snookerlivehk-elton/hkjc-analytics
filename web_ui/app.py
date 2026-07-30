@@ -813,6 +813,12 @@ def main():
             st.session_state["superadmin_logout_requested"] = True
             st.rerun()
 
+    st.sidebar.markdown("### 🧾 會議文件")
+    try:
+        st.sidebar.page_link("pages/16_meeting_decision_checklist.py", label="會議決策清單", icon="🧾")
+    except Exception:
+        st.sidebar.markdown("[🧾 會議決策清單](/meeting_decision_checklist)")
+
     # Sidebar: 賽事選擇
     st.sidebar.header("🔍 賽事選擇")
 
