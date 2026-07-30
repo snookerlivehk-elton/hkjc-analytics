@@ -19,11 +19,11 @@
 3. 把文字型資料交由 AI 作二次加減權
 4. 生成最終勝出率與落敗率
 5. 把結果回傳公司系統
-6. 配合即時賠率，以 Kelly Criterion 計算最佳資金比例
+6. 提供公司系統可直接展示與後續計算的標準化輸出
 
 換句話說，系統定位應由「資料抓取分析平台」收斂為：
 
-**統計勝率引擎 + AI 文本修正引擎 + AI 報告生成引擎 + 黃金法則控制層 + 即時投注比例引擎**
+**統計勝率引擎 + AI 文本修正引擎 + AI 報告生成引擎 + 黃金法則控制層 + 對外輸出接口**
 
 ## 2. 建議的最終產品結構
 
@@ -60,6 +60,7 @@
 - `ai_win_adjustment`
 - `ai_lose_adjustment`
 - `ai_reasoning_summary`
+- `ai_adjustment_report`
 
 ### 模組 C：AI 報告生成引擎
 
@@ -95,32 +96,40 @@
 - `golden_rule_decision_trace`
 - `golden_rule_status`
 
-### 模組 E：即時賠率決策引擎
+### 模組 E：對外輸出接口
 
 輸入：
 
 - `final_win_prob`
-- 公司系統提供的即時獨贏賠率 / 位置賠率
+- `final_lose_prob`
+- `horse_labels`
+- `predicted_runstyle`
+- `runstyle_confidence`
+- `model_version`
+- `generated_at`
 
 輸出：
 
-- `edge`
-- `kelly_fraction`
-- `recommended_fraction`
+- `base_win_prob`
+- `base_lose_prob`
+- `final_win_prob`
+- `final_lose_prob`
+- `horse_labels`
+- `predicted_runstyle`
+- `runstyle_confidence`
+- `ai_reasoning_summary`
+- `ai_adjustment_report`
+- `golden_rule_hits`
+- `model_version`
+- `generated_at`
+- `reason_codes`
 
-### 模組 F：對外回傳接口
+公司系統負責：
 
-輸出給公司系統：
-
-- 每匹馬的基礎勝率
-- AI 修正後勝率
-- 基礎落敗率
-- AI 修正後落敗率
-- 賽事分析
-- 反思報告
-- 黃金法則命中與調整痕跡
-- Kelly 建議資金比例
-- 模型版本 / 時間戳 / 解釋字段
+- 展示
+- 即時賠率接入
+- Kelly 計算
+- 下注 / 風控層處理
 
 ## 3. 正確的優化重心
 
@@ -135,7 +144,7 @@
 1. **統計口徑標準化**
 2. **AI 修正邏輯可控化**
 3. **黃金法則規則化與可控化**
-4. **投注決策輸出工程化**
+4. **對外輸出工程化**
 
 ## 4. 勝出率模型建議
 
@@ -898,67 +907,77 @@ final_lose_prob = clamp(base_lose_prob + delta_lose_pp + golden_rule_delta_lose_
 1. 勝出率重新 normalize 到總和 = 1
 2. 落敗率按定義再做一致性校準
 
-## 9. Kelly Criterion 建議
+## 9. 與公司系統的邊界建議
 
-這部分是很適合接在你最終輸出之後的。
+這部分建議在會議上直接定調：
 
-## 8.1 輸入
+1. 本系統不處理即時賠率接入
+2. 本系統不負責 Kelly 計算
+3. 本系統只輸出最終概率、標籤、跑法、解釋字段與版本資訊
+4. AI 加減分分析報告應一併輸出，供公司系統展示與追溯
+5. 公司系統負責展示、賠率、Kelly 與下注 / 風控邏輯
 
-Kelly 需要的不是 score，而是：
+建議本系統對外至少輸出：
 
-1. 模型最終勝率 `p`
-2. 市場賠率 `odds`
-
-若用十進制賠率：
-
-- `b = odds - 1`
-
-Kelly 公式：
-
-`f* = (b*p - q) / b`
-
-其中：
-
-- `p = final_win_prob`
-- `q = 1 - p`
-
-## 8.2 實務建議
-
-不建議直接用 Full Kelly。
-
-建議至少用：
-
-- Half Kelly
-- Quarter Kelly
-
-也就是：
-
-- `recommended_fraction = k * f*`
-- `k` 建議先用 `0.25` 或 `0.5`
-
-## 8.3 即時賠率整合方式
-
-公司系統提供即時 odds 後，可做：
-
-1. 每次 odds 更新時重算 edge
-2. 只有當 `f* > 0` 才列為可下注
-3. 若 AI / 統計信心不足，可再乘一層 confidence discount
-
-例如：
-
-`final_bet_fraction = Kelly * model_confidence * safety_factor`
-
-## 8.4 建議輸出欄位
-
-回傳公司系統時，建議至少包含：
-
+- `base_win_prob`
+- `base_lose_prob`
 - `final_win_prob`
-- `market_odds`
-- `implied_prob`
-- `edge`
-- `kelly_fraction_raw`
-- `kelly_fraction_recommended`
+- `final_lose_prob`
+- `horse_labels`
+- `predicted_runstyle`
+- `runstyle_confidence`
+- `ai_reasoning_summary`
+- `ai_adjustment_report`
+- `golden_rule_hits`
+- `model_version`
+- `generated_at`
+- `reason_codes`
+
+其中 `ai_adjustment_report` 建議至少包含：
+
+- `horse_id`
+- `horse_name`
+- `ai_win_adjustment`
+- `ai_lose_adjustment`
+- `adjustment_direction`
 - `confidence_level`
+- `positive_factors`
+- `negative_factors`
+- `summary`
+- `evidence_refs`
+
+範例：
+
+```json
+{
+  "horse_id": "H123",
+  "horse_name": "Example Horse",
+  "ai_win_adjustment": 0.018,
+  "ai_lose_adjustment": -0.012,
+  "adjustment_direction": "net_positive",
+  "confidence_level": "medium",
+  "positive_factors": [
+    "歷史沿途走勢顯示末段追勢穩定",
+    "賽績指引對今場場形適配偏正面"
+  ],
+  "negative_factors": [
+    "歷史競賽事件報告提及受壓時穩定性一般"
+  ],
+  "summary": "AI 認為此馬匹在今場具一定後段追勢優勢，因此小幅上調勝率，並同步下調落敗率。",
+  "evidence_refs": [
+    "賽績指引",
+    "歷史競賽事件報告",
+    "歷史沿途走勢評述"
+  ]
+}
+```
+
+這樣的好處是：
+
+1. 本系統保持為純模型與解釋層
+2. 公司端可用同一套輸出對接不同展示或下注策略
+3. 模型回測與投注回測可以分開治理
+4. 系統責任邊界清晰，較易長期維護
 
 ## 10. 可行性評估
 
@@ -980,7 +999,7 @@ Kelly 公式：
 1. 落敗率定義
 2. AI 修正幅度控制
 3. 黃金法則可控化
-4. Kelly 輸出與真實下注風控銜接
+4. 對外輸出字段定稿
 
 ## 11. 建議的落地順序
 
@@ -992,7 +1011,7 @@ Kelly 公式：
 2. 落敗率定義
 3. AI 可修正的範圍
 4. 黃金法則可調整的範圍
-5. Kelly 使用 Full / Half / Quarter
+5. 公司系統如何讀取與展示本系統輸出
 
 ### Phase 2：先完成純統計版本
 
@@ -1026,13 +1045,16 @@ Kelly 公式：
 - 規則限幅
 - 規則 trace
 
-### Phase 6：接公司即時賠率
+### Phase 6：定稿對外輸出接口
 
 完成：
 
-- edge
-- Kelly
-- 推薦資金比例
+- 最終概率
+- 模型版本
+- 生成時間
+- 馬匹標籤
+- 預計跑法
+- 解釋字段
 
 ### Phase 7：建立版本化回測體系
 
@@ -1041,7 +1063,7 @@ Kelly 公式：
 - 勝率準確度
 - 落敗率準確度
 - 黃金法則命中質量
-- Kelly 實際收益表現
+- 輸出穩定性與公司端對接一致性
 
 ## 12. 我對這個方案的最終建議
 
@@ -1050,7 +1072,7 @@ Kelly 公式：
 1. **每匹馬的基礎勝率可解釋、可校準**
 2. **AI 只作有限幅度修正，而不是主導判斷**
 3. **黃金法則只作有限規則控制，而不是黑盒決策**
-4. **Kelly 只吃最終概率與即時賠率，不和統計層混在一起**
+4. **本系統只做概率與解釋輸出，不把公司端賠率 / Kelly 混進本系統**
 
 如果這三層切得清楚，整個系統會非常穩。
 
@@ -1070,7 +1092,7 @@ Kelly 公式：
 4. `GOLDEN_RULE_ENGINE_SPEC.md`
    - 定義黃金法則的規則結構、限幅、優先級、trace 與風控邊界
 
-5. `KELLY_INTEGRATION_SPEC.md`
-   - 定義賠率欄位、edge、Kelly 計算與輸出接口
+5. `OUTPUT_CONTRACT_SPEC.md`
+   - 定義最終概率、標籤、跑法、時間戳、版本與 trace 字段
 
 這五份一旦定稿，就可以開始正式拆 batch 開發。
