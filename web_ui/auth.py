@@ -178,10 +178,17 @@ def require_superadmin(page_title: str):
             else:
                 st.error("❌ 密碼錯誤")
 
-    if st.button("➡️ 前往數據管理後台", width="content"):
+    c1, c2 = st.columns(2)
+    if c1.button("➡️ 前往數據管理後台", width="content"):
         try:
             st.switch_page("pages/1_數據管理.py")
         except Exception:
             st.markdown("[➡️ 前往數據管理後台](/%E6%95%B8%E6%93%9A%E7%AE%A1%E7%90%86)")
+
+    if c2.button("🧾 查看會議文案", width="content"):
+        try:
+            st.switch_page("pages/16_meeting_decision_checklist.py")
+        except Exception:
+            st.markdown("[🧾 查看會議文案](/meeting_decision_checklist)")
 
     st.stop()
